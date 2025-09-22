@@ -35,7 +35,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications?.filter(n => !n.read).length || 0;
 
   const refreshNotifications = useCallback(async () => {
     if (!user?.id) return;
@@ -43,11 +43,19 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     try {
       setIsLoading(true);
       const result = await getUserNotifications(1, 20);
-      setNotifications(result.notifications);
-      setCurrentPage(1);
-      setHasMore(result.pagination.hasNext);
+      if (result.success) {
+        setNotifications(result.data.notifications);
+        setCurrentPage(1);
+        setHasMore(result.data.pagination.hasNext);
+      } else {
+        console.error('Failed to fetch notifications:', result.message);
+        setNotifications([]);
+        setHasMore(false);
+      }
     } catch (error) {
       console.error('Failed to refresh notifications:', error);
+      setNotifications([]);
+      setHasMore(false);
     } finally {
       setIsLoading(false);
     }
@@ -61,11 +69,17 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       const nextPage = currentPage + 1;
       const result = await getUserNotifications(nextPage, 20);
       
-      setNotifications(prev => [...prev, ...result.notifications]);
-      setCurrentPage(nextPage);
-      setHasMore(result.pagination.hasNext);
+      if (result.success) {
+        setNotifications(prev => [...prev, ...result.data.notifications]);
+        setCurrentPage(nextPage);
+        setHasMore(result.data.pagination.hasNext);
+      } else {
+        console.error('Failed to load more notifications:', result.message);
+        setHasMore(false);
+      }
     } catch (error) {
       console.error('Failed to load more notifications:', error);
+      setHasMore(false);
     } finally {
       setIsLoadingMore(false);
     }

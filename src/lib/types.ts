@@ -67,10 +67,30 @@ export interface Community {
   description: string;
   memberCount: number;
   imageUrl: string;
-  members: string[]; // Array of user IDs
-  posts?: Post[]; // Posts can be embedded
+  // Role-based membership for per-community permissions
+  members: Array<{
+    userId: string;
+    role: CommunityRole; // 'admin' | 'moderator' | 'member'
+    joinedAt: string;
+    banned?: boolean;
+    banReason?: string;
+    bannedAt?: string;
+  }>;
+  // Channel-based structure
+  channels: Array<{
+    _id: string;
+    name: string;
+    type: 'forum' | 'chat';
+    description?: string;
+    order: number;
+    createdAt: string;
+  }>;
+  // Backward compatibility: some communities might still have embedded posts until migration
+  posts?: Post[];
   createdBy: string;
 }
+
+export type CommunityRole = 'admin' | 'moderator' | 'member';
 
 export interface Post {
   _id: ObjectId | string;
@@ -80,13 +100,16 @@ export interface Post {
     name: string;
     avatarUrl?: string;
   };
-  content: string;
+  content: string; // Markdown supported
   communityId: string;
   likes: number;
   likedBy?: string[]; // Array of user IDs who liked the post
+  // Comments moved to separate collection; keep optional for legacy reads
   comments?: Comment[];
+  commentCount?: number;
   createdAt: string; // ISO 8601 date string
   editedAt?: string; // ISO 8601 date string for edited posts
+  editHistory?: Array<{ content: string; editedAt: string }>;
 }
 
 export interface Comment {
@@ -98,6 +121,28 @@ export interface Comment {
   };
   content: string;
   createdAt: string;
+  editedAt?: string;
+  postId: string;
+  parentId?: string | null; // For nested/threaded comments
+  path?: string; // Materialized path for efficient thread queries (e.g., root/child/child2)
+  reactions?: Array<{ userId: string; type: string; reactedAt: string }>; // simple emoji reactions
+  editHistory?: Array<{ content: string; editedAt: string }>;
+}
+
+export interface ChatMessage {
+  _id: ObjectId | string;
+  channelId: string;
+  author: {
+    _id: string;
+    name: string;
+    avatarUrl?: string;
+    role?: CommunityRole;
+  };
+  content: string;
+  createdAt: string;
+  editedAt?: string;
+  reactions?: Array<{ userId: string; type: string; reactedAt: string }>;
+  editHistory?: Array<{ content: string; editedAt: string }>;
 }
 
 export interface Organization {

@@ -27,6 +27,7 @@ interface CommunityWithDetails extends Community {
   postsCount: number;
   recentActivity: string;
   reportedPosts: number;
+  roleDistribution?: { admin: number; moderator: number; member: number; banned?: number };
 }
 
 export default function CommunityAdminDashboard() {
@@ -43,6 +44,7 @@ export default function CommunityAdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'moderator' | 'member' | 'banned'>('all');
   const { toast } = useToast();
 
   useEffect(() => {
@@ -53,11 +55,18 @@ export default function CommunityAdminDashboard() {
   const loadCommunities = async () => {
     try {
       setLoading(true);
-      // This would be replaced with actual API call
-      const response = await fetch('/api/admin/communities');
+      const params = new URLSearchParams();
+      if (searchQuery) params.set('search', searchQuery);
+      if (filterStatus && filterStatus !== 'all') params.set('filter', filterStatus);
+      if (roleFilter !== 'all') params.set('roleFilter', roleFilter);
+      const response = await fetch(`/api/admin/communities?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setCommunities(data.communities);
+        let items: CommunityWithDetails[] = data.communities;
+        if (roleFilter !== 'all') {
+          items = items.filter((c: any) => (c.roleDistribution?.[roleFilter] || 0) > 0);
+        }
+        setCommunities(items);
       }
     } catch (error) {
       console.error('Failed to load communities:', error);
@@ -69,7 +78,6 @@ export default function CommunityAdminDashboard() {
 
   const loadStats = async () => {
     try {
-      // This would be replaced with actual API call
       const response = await fetch('/api/admin/communities/stats');
       if (response.ok) {
         const data = await response.json();
@@ -155,8 +163,9 @@ export default function CommunityAdminDashboard() {
     const matchesSearch = community.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          community.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = filterStatus === 'all' ||
-                         (filterStatus === 'reported' && community.reportedPosts > 0) ||
-                         (filterStatus === 'active' && community.postsCount > 0);
+                         (filterStatus === 'reported' && (community as any).reportedPosts > 0) ||
+                         (filterStatus === 'active' && (community as any).postsCount > 0) ||
+                         (filterStatus === 'high_moderation' && (community as any).reportedPosts > 5);
     return matchesSearch && matchesFilter;
   });
 
@@ -198,7 +207,7 @@ export default function CommunityAdminDashboard() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active Communities</CardTitle>
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.activeCommunities}</div>
@@ -207,8 +216,8 @@ export default function CommunityAdminDashboard() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Reported Content</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Reported Communities</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.reportedCommunities}</div>
@@ -216,115 +225,115 @@ export default function CommunityAdminDashboard() {
         </Card>
       </div>
 
-      <Tabs defaultValue="communities" className="space-y-4">
+      <Tabs defaultValue="communities">
         <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="communities">Communities</TabsTrigger>
-          <TabsTrigger value="moderation">Moderation Queue</TabsTrigger>
+          <TabsTrigger value="moderation">Moderation</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="communities" className="space-y-4">
-          {/* Search and Filter */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
-              <Label htmlFor="search">Search Communities</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="search"
-                  placeholder="Search by name or description..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-            <div className="w-full sm:w-48">
-              <Label htmlFor="filter">Filter</Label>
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filter communities" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Communities</SelectItem>
-                  <SelectItem value="active">Active Only</SelectItem>
-                  <SelectItem value="reported">Reported Content</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Communities Table */}
           <Card>
             <CardHeader>
-              <CardTitle>Communities ({filteredCommunities.length})</CardTitle>
-              <CardDescription>Manage all communities on the platform</CardDescription>
+              <CardTitle>Communities</CardTitle>
+              <CardDescription>Search, filter and manage communities</CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="flex flex-col md:flex-row gap-4 md:items-end">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
+                  <div>
+                    <Label htmlFor="search">Search Communities</Label>
+                    <Input id="search" placeholder="Search by name or description" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Status</Label>
+                    <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        <SelectItem value="reported">Reported</SelectItem>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="high_moderation">High Moderation Activity</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Role Filter</Label>
+                    <Select value={roleFilter} onValueChange={(v: any) => setRoleFilter(v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All Roles" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        <SelectItem value="admin">Admins present</SelectItem>
+                        <SelectItem value="moderator">Moderators present</SelectItem>
+                        <SelectItem value="member">Members only</SelectItem>
+                        <SelectItem value="banned">Has banned users</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <Button onClick={loadCommunities}>Apply Filters</Button>
+                </div>
+              </div>
+
               {loading ? (
-                <div className="text-center py-8">Loading communities...</div>
+                <div className="p-8 text-center text-muted-foreground">Loading communities...</div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
+                      <TableHead>Description</TableHead>
                       <TableHead>Members</TableHead>
                       <TableHead>Posts</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>Reported</TableHead>
+                      <TableHead>Roles</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredCommunities.map((community) => (
                       <TableRow key={String(community._id)}>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">{community.name}</div>
-                            <div className="text-sm text-muted-foreground line-clamp-1">
-                              {community.description}
-                            </div>
-                          </div>
-                        </TableCell>
+                        <TableCell className="font-medium">{community.name}</TableCell>
+                        <TableCell>{community.description}</TableCell>
                         <TableCell>{community.memberCount}</TableCell>
-                        <TableCell>{community.postsCount}</TableCell>
+                        <TableCell>{(community as any).postsCount || 0}</TableCell>
+                        <TableCell>{(community as any).reportedPosts || 0}</TableCell>
                         <TableCell>
-                          <Badge variant={community.reportedPosts > 0 ? "destructive" : "secondary"}>
-                            {community.reportedPosts > 0 ? "Reported" : "Active"}
-                          </Badge>
+                          <div className="flex gap-2 text-xs">
+                            <Badge variant="outline">A: {(community as any).roleDistribution?.admin || 0}</Badge>
+                            <Badge variant="outline">M: {(community as any).roleDistribution?.moderator || 0}</Badge>
+                            <Badge variant="outline">B: {(community as any).roleDistribution?.banned || 0}</Badge>
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Dialog>
                               <DialogTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => loadCommunityDetails(String(community._id))}
-                                >
+                                <Button variant="outline" size="sm">
                                   <Eye className="h-4 w-4" />
                                 </Button>
                               </DialogTrigger>
-                              <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+                              <DialogContent className="max-w-4xl">
                                 <DialogHeader>
-                                  <DialogTitle>{community.name} - Details</DialogTitle>
-                                  <DialogDescription>
-                                    Manage community members and content
-                                  </DialogDescription>
+                                  <DialogTitle>{community.name}</DialogTitle>
+                                  <DialogDescription>View members and posts</DialogDescription>
                                 </DialogHeader>
-
-                                <Tabs defaultValue="members" className="mt-4">
+                                <Tabs defaultValue="members">
                                   <TabsList>
-                                    <TabsTrigger value="members">Members ({communityMembers.length})</TabsTrigger>
-                                    <TabsTrigger value="posts">Posts ({communityPosts.length})</TabsTrigger>
+                                    <TabsTrigger value="members">Members</TabsTrigger>
+                                    <TabsTrigger value="posts">Posts</TabsTrigger>
                                   </TabsList>
-
-                                  <TabsContent value="members" className="space-y-4">
+                                  <TabsContent value="members">
                                     <Table>
                                       <TableHeader>
                                         <TableRow>
                                           <TableHead>Name</TableHead>
-                                          <TableHead>Email</TableHead>
-                                          <TableHead>Role</TableHead>
                                           <TableHead>Actions</TableHead>
                                         </TableRow>
                                       </TableHeader>
@@ -332,45 +341,17 @@ export default function CommunityAdminDashboard() {
                                         {communityMembers.map((member) => (
                                           <TableRow key={String(member._id)}>
                                             <TableCell>{member.name}</TableCell>
-                                            <TableCell>{member.email}</TableCell>
                                             <TableCell>
-                                              <Badge variant="outline">
-                                                {member.role === 'admin' ? 'Admin' : 'Member'}
-                                              </Badge>
-                                            </TableCell>
-                                            <TableCell>
-                                              <AlertDialog>
-                                                <AlertDialogTrigger asChild>
-                                                  <Button variant="outline" size="sm">
-                                                    <UserMinus className="h-4 w-4" />
-                                                  </Button>
-                                                </AlertDialogTrigger>
-                                                <AlertDialogContent>
-                                                  <AlertDialogHeader>
-                                                    <AlertDialogTitle>Remove Member</AlertDialogTitle>
-                                                    <AlertDialogDescription>
-                                                      Are you sure you want to remove {member.name} from {community.name}?
-                                                      This action cannot be undone.
-                                                    </AlertDialogDescription>
-                                                  </AlertDialogHeader>
-                                                  <AlertDialogFooter>
-                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                    <AlertDialogAction
-                                                      onClick={() => removeMember(String(community._id), String(member._id))}
-                                                    >
-                                                      Remove
-                                                    </AlertDialogAction>
-                                                  </AlertDialogFooter>
-                                                </AlertDialogContent>
-                                              </AlertDialog>
+                                              <Button variant="outline" size="sm" onClick={() => removeMember(String(community._id), String(member._id))}>
+                                                <UserMinus className="h-4 w-4" />
+                                              </Button>
                                             </TableCell>
                                           </TableRow>
                                         ))}
                                       </TableBody>
                                     </Table>
                                   </TabsContent>
-
-                                  <TabsContent value="posts" className="space-y-4">
+                                  <TabsContent value="posts">
                                     <Table>
                                       <TableHeader>
                                         <TableRow>

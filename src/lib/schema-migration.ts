@@ -92,7 +92,10 @@ export class SchemaMigration {
         this.migrateWishlistSchema(),
         this.fixDuplicateWishlistItems(),
         this.normalizeExistingData(),
-        this.createMissingIndexes()
+        this.createMissingIndexes(),
+        this.migrateCommunitiesMembersRoles(),
+        this.extractEmbeddedPostsToCollections(),
+        this.fixCommunitiesChannels()
       ]);
       
       console.log('✅ Schema consistency migration completed successfully');
@@ -100,6 +103,131 @@ export class SchemaMigration {
       console.error('❌ Schema migration failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * Migrates community members from string[] to role-based objects
+   */
+  static async migrateCommunitiesMembersRoles(): Promise<void> {
+    console.log('Migrating community members to role-based schema...');
+    const client = await clientPromise;
+    const db = client.db('bookex');
+    const communities = await db.collection('communities').find({}).toArray();
+    let updated = 0;
+    for (const c of communities) {
+      if (Array.isArray(c.members) && c.members.length > 0 && typeof c.members[0] === 'string') {
+        const mapped = c.members.map((uid: string) => ({ userId: uid, role: c.createdBy === uid ? 'admin' : 'member', joinedAt: new Date().toISOString() }));
+        await db.collection('communities').updateOne({ _id: c._id }, { $set: { members: mapped } });
+        updated++;
+      }
+    }
+    console.log(`✅ Migrated ${updated} communities to role-based members`);
+  }
+
+  /**
+   * Extracts embedded posts/comments from communities into posts/comments collections
+   */
+  static async extractEmbeddedPostsToCollections(): Promise<void> {
+    console.log('Extracting embedded posts to posts/comments collections...');
+    const client = await clientPromise;
+    const db = client.db('bookex');
+    const communities = await db.collection('communities').find({ posts: { $exists: true, $ne: [] } }).toArray();
+    let movedPosts = 0;
+    let movedComments = 0;
+    for (const c of communities) {
+      for (const p of (c.posts || [])) {
+        const postDoc = {
+          communityId: c._id,
+          authorId: p.authorId || p.author,
+          author: p.author && p.author._id ? p.author : undefined,
+          content: p.content,
+          likes: p.likes || (Array.isArray(p.likedBy) ? p.likedBy.length : 0),
+          likedBy: p.likedBy || [],
+          commentCount: Array.isArray(p.comments) ? p.comments.length : 0,
+          createdAt: p.createdAt || new Date().toISOString(),
+          editedAt: p.editedAt,
+          editHistory: p.editHistory || []
+        } as any;
+        const insertRes = await db.collection('posts').insertOne(postDoc);
+        movedPosts++;
+        if (Array.isArray(p.comments)) {
+          const commentDocs = p.comments.map((cm: any) => ({
+            postId: insertRes.insertedId,
+            communityId: c._id,
+            authorId: cm.author?._id || cm.authorId || '',
+            author: cm.author,
+            content: cm.content,
+            createdAt: cm.createdAt || new Date().toISOString(),
+            editedAt: cm.editedAt,
+            parentId: null,
+            path: insertRes.insertedId.toString(),
+            reactions: cm.reactions || [],
+            editHistory: cm.editHistory || []
+          }));
+          if (commentDocs.length) {
+            await db.collection('comments').insertMany(commentDocs);
+            movedComments += commentDocs.length;
+          }
+        }
+      }
+      // Optionally clear embedded posts after migration
+      await db.collection('communities').updateOne({ _id: c._id }, { $unset: { posts: '' } });
+    }
+    console.log(`✅ Extracted ${movedPosts} posts and ${movedComments} comments to new collections`);
+  }
+
+  /**
+   * Fixes communities that don't have channels or have empty channels
+   */
+  static async fixCommunitiesChannels(): Promise<void> {
+    console.log('Fixing communities without channels...');
+    const client = await clientPromise;
+    const db = client.db('bookex');
+    
+    // Find communities without channels or with empty channels
+    const communitiesWithoutChannels = await db.collection('communities').find({
+      $or: [
+        { channels: { $exists: false } },
+        { channels: { $size: 0 } }
+      ]
+    }).toArray();
+    
+    let fixedCount = 0;
+    
+    for (const community of communitiesWithoutChannels) {
+      try {
+        const defaultChannels = [
+          {
+            _id: 'general',
+            name: 'General',
+            type: 'forum',
+            description: 'General discussion',
+            order: 0,
+            createdAt: new Date().toISOString()
+          },
+          {
+            _id: 'chat',
+            name: 'Chat',
+            type: 'chat',
+            description: 'General chat',
+            order: 1,
+            createdAt: new Date().toISOString()
+          }
+        ];
+        
+        await db.collection('communities').updateOne(
+          { _id: community._id },
+          { $set: { channels: defaultChannels } }
+        );
+        
+        fixedCount++;
+        console.log(`Fixed channels for community: ${community.name}`);
+      } catch (error) {
+        console.error(`Failed to fix channels for community ${community._id}:`, error);
+      }
+    }
+    
+    console.log(`✅ Fixed channels for ${fixedCount} communities`);
   }
 
   /**
@@ -364,12 +492,7 @@ export class SchemaMigration {
         options: { name: 'wishlist_item_id', background: true }
       },
 
-      // Book indexes for efficient lookup by ID
-      {
-        collection: 'books',
-        index: { _id: 1 } as any,
-        options: { name: 'books_id_lookup', background: true }
-      },
+      // Note: _id index is automatically created by MongoDB, skipping
 
       // Compound indexes for efficient wishlist matching
       {

@@ -191,10 +191,11 @@ async function setupIndexes() {
     
     // Index for member queries
     await db.collection('communities').createIndex({ 
-      members: 1,
+      "members.userId": 1,
+      "members.role": 1,
       memberCount: -1
     }, { 
-      name: 'communities_members_count_idx',
+      name: 'communities_members_role_count_idx',
       background: true 
     });
     
@@ -205,6 +206,30 @@ async function setupIndexes() {
       createdAt: -1 
     }, { 
       name: 'posts_community_date_idx',
+      background: true 
+    });
+    // Comments Collection Indexes
+    console.log('  💬 Creating Comments indexes...');
+    await db.collection('comments').createIndex({ 
+      postId: 1, 
+      createdAt: 1 
+    }, { 
+      name: 'comments_post_created_idx',
+      background: true 
+    });
+
+    await db.collection('comments').createIndex({ 
+      communityId: 1, 
+      createdAt: -1 
+    }, { 
+      name: 'comments_community_date_idx',
+      background: true 
+    });
+
+    await db.collection('comments').createIndex({ 
+      path: 1 
+    }, { 
+      name: 'comments_path_idx',
       background: true 
     });
     

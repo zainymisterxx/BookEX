@@ -52,32 +52,50 @@ export interface CommunityDocument {
   name: string;
   description: string;
   createdBy: string;
-  members: string[];
+  // Role-based members
+  members: Array<{
+    userId: string;
+    role: 'admin' | 'moderator' | 'member';
+    joinedAt: string;
+    banned?: boolean;
+    banReason?: string;
+    bannedAt?: string;
+  }>;
   memberCount: number;
-  posts: PostDocument[];
+  // Legacy embedded posts (will be deprecated after migration)
+  posts?: PostDocument[];
   city: string;
   createdAt: string;
 }
 
+// New collections
 export interface PostDocument {
   _id: ObjectId;
-  content: string;
-  author: string;
-  authorName: string;
-  authorImage?: string;
+  communityId: ObjectId;
+  authorId: string;
+  author?: { _id: string; name: string; avatarUrl?: string };
+  content: string; // Markdown
   likes: number;
   likedBy: string[];
-  comments: CommentDocument[];
+  commentCount: number;
   createdAt: string;
+  editedAt?: string;
+  editHistory?: Array<{ content: string; editedAt: string }>;
 }
 
 export interface CommentDocument {
   _id: ObjectId;
-  content: string;
-  author: string;
-  authorName: string;
-  authorImage?: string;
+  postId: ObjectId;
+  communityId: ObjectId;
+  authorId: string;
+  author?: { _id: string; name: string; avatarUrl?: string };
+  content: string; // Markdown
   createdAt: string;
+  editedAt?: string;
+  parentId?: ObjectId | null;
+  path?: string;
+  reactions?: Array<{ userId: string; type: string; reactedAt: string }>;
+  editHistory?: Array<{ content: string; editedAt: string }>;
 }
 
 export interface WishlistItem {

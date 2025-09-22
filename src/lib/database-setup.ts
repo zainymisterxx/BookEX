@@ -77,8 +77,8 @@ export async function ensureDatabaseIndexes() {
     // Communities - Performance indexes
     await createIndexSafely(
       db.collection('communities'),
-      { members: 1 }, 
-      { background: true, name: 'communities_members' }
+      { "members.userId": 1, "members.role": 1 }, 
+      { background: true, name: 'communities_members_role' }
     );
     
     await createIndexSafely(
@@ -100,6 +100,38 @@ export async function ensureDatabaseIndexes() {
       { background: true, name: 'communities_text_search' }
     );
     
+    // Posts - New collection
+    await createIndexSafely(
+      db.collection('posts'),
+      { communityId: 1, createdAt: -1 },
+      { background: true, name: 'posts_community_createdAt' }
+    );
+
+    await createIndexSafely(
+      db.collection('posts'),
+      { authorId: 1, createdAt: -1 },
+      { background: true, name: 'posts_author_createdAt' }
+    );
+
+    // Comments - New collection
+    await createIndexSafely(
+      db.collection('comments'),
+      { postId: 1, createdAt: 1 },
+      { background: true, name: 'comments_post_createdAt' }
+    );
+
+    await createIndexSafely(
+      db.collection('comments'),
+      { communityId: 1, createdAt: -1 },
+      { background: true, name: 'comments_community_createdAt' }
+    );
+
+    await createIndexSafely(
+      db.collection('comments'),
+      { path: 1 },
+      { background: true, name: 'comments_path' }
+    );
+
     // Chats - Message system performance
     await createIndexSafely(
       db.collection('chats'),

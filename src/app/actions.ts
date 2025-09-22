@@ -1,4 +1,3 @@
-
 'use server';
 
 import { revalidatePath } from 'next/cache';
@@ -12,16 +11,17 @@ import { validateImageDataUri, sanitizeInput, validateOrganizationData, sanitize
 import { validatePasswordStrength, isPasswordStrong, getPasswordRequirementsMessage } from '@/lib/password-validation';
 import { logActivity, detectSuspiciousActivity } from '@/lib/activity-logging';
 import { getCurrentTimestamp, formatForDatabase, addDays, addHours } from '@/lib/date-utils';
-import { validateBookData } from '@/lib/validation';
 import { OptimizedQueries } from '@/lib/database-optimization';
 import { runDatabaseMaintenance, DatabaseMaintenance } from '@/lib/database-maintenance';
 import { ConsistentWishlistOperations, normalizeText, SchemaMigration } from '@/lib/schema-migration';
 import { saveImageFile, validateFileFromFormData } from '@/lib/file-storage';
 import { ensureDatabaseIndexes, checkIndexHealth, createMissingIndexes } from '@/lib/database-setup';
-import { withErrorHandling, createAppError, ErrorType, logError } from '@/lib/error-handling';
+import { createAppError, ErrorType, logError } from '@/lib/error-handling';
 import { checkUserRateLimit, RATE_LIMITS } from '@/lib/rate-limiting';
 import { validateResourceAccess, ResourceAuthority, type AuthorizedUser } from '@/lib/resource-authorization';
 import { checkAuthRateLimit, recordAuthResult } from '@/lib/auth-rate-limiting';
+import { withAuthenticatedAction, withAuthenticatedUserFull } from '@/lib/action-utils';
+import { bookSchema, communitySchema, postSchema, commentSchema, organizationSchema, reportSchema, reviewSchema, userProfileSchema, exchangeSchema, chatMessageSchema, paginationSchema, searchQuerySchema, validateWithSchema } from '@/lib/schemas';
 import crypto from 'crypto';
 import { 
   createCommunityMemberAddOperation, 
@@ -37,34 +37,6 @@ import {
   type CommentDocument
 } from '@/lib/mongodb-types';
 
-// Helper to check for an authenticated user session
-async function getAuthenticatedUser(role?: 'user' | 'admin'): Promise<AuthorizedUser> {
-    const session = await getSession();
-    if (!session?.user?.id) {
-        throw createAppError(ErrorType.AUTHENTICATION, "You must be logged in to perform this action.");
-    }
-    if (role && session.user.role !== role) {
-        throw createAppError(ErrorType.AUTHORIZATION, "You do not have permission to perform this action.");
-    }
-    
-    return {
-        id: session.user.id,
-        role: (session.user.role as 'user' | 'admin') || 'user',
-        status: (session.user.status as 'active' | 'suspended' | 'deactivated') || 'active'
-    };
-}
-
-// Helper to get full user data for operations that need it
-async function getAuthenticatedUserFull(role?: 'user' | 'admin') {
-    const session = await getSession();
-    if (!session?.user?.id) {
-        throw createAppError(ErrorType.AUTHENTICATION, "You must be logged in to perform this action.");
-    }
-    if (role && session.user.role !== role) {
-        throw createAppError(ErrorType.AUTHORIZATION, "You do not have permission to perform this action.");
-    }
-    return session.user;
-}
 
 /**
  * Signs up a new user. The first user to sign up will be an admin.
@@ -309,23 +281,17 @@ export async function resetPassword(token: string, newPassword: string) {
  * @returns The user data or null.
  */
 export async function getUserForUpdate(userId: string) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         if (user.id !== userId) throw new Error("Unauthorized");
         
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        const userData = await db.collection<User>("users").findOne({ _id: new ObjectId(user.id) });
+        const userData = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!userData) return null;
         return {
             name: userData.name,
             city: userData.city,
             avatarUrl: userData.avatarUrl
         };
-    } catch (error) {
-        console.error("Error fetching user for update:", error);
-        return null;
-    }
+    });
 }
 
 /**
@@ -334,47 +300,37 @@ export async function getUserForUpdate(userId: string) {
  * @returns An object with the result of the operation and the new user data for session update.
  */
 export async function updateUserProfile(profileData: { userId: string, name: string, city: string, avatarUrl?: string }) {
-    try {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Validate authorization using resource authorization system
         await validateResourceAccess(user, 'user', profileData.userId, 'update');
 
-        // Validate and sanitize profile data
-        if (!profileData.name || profileData.name.trim().length === 0) {
-            throw new Error("Name is required");
+        // Validate input data with Zod schema
+        const validation = validateWithSchema(userProfileSchema, profileData);
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
         }
-        if (!profileData.city || profileData.city.trim().length === 0) {
-            throw new Error("City is required");
-        }
-        if (profileData.name.length > 100) {
-            throw new Error("Name too long (max 100 characters)");
-        }
+        const validatedData = validation.data;
 
         // Validate avatar if provided
         if (profileData.avatarUrl) {
             const imageValidation = validateImageDataUri(profileData.avatarUrl);
             if (!imageValidation.isValid) {
-                throw new Error(imageValidation.error);
+                throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
             }
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
-        const currentUser = await db.collection<User>("users").findOne({ _id: new ObjectId(user.id) });
+        const currentUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!currentUser) throw new Error("User not found");
 
         const updateData: Partial<User> = {
-            name: sanitizeInput(profileData.name),
-            city: sanitizeInput(profileData.city),
+            name: sanitizeInput(validatedData.name),
+            city: sanitizeInput(validatedData.city),
         };
         
         // Handle avatar update
         if (profileData.avatarUrl) {
             updateData.avatarUrl = profileData.avatarUrl;
         }
-
 
         await db.collection("users").updateOne(
             { _id: new ObjectId(user.id) },
@@ -408,10 +364,7 @@ export async function updateUserProfile(profileData: { userId: string, name: str
                 image: updateData.avatarUrl || currentUser.avatarUrl,
             }
         };
-    } catch (error) {
-        console.error("Error updating user profile:", error);
-        return { success: false, message: "Failed to update profile." };
-    }
+    });
 }
 
 
@@ -421,26 +374,25 @@ export async function updateUserProfile(profileData: { userId: string, name: str
  * @returns An object with the result of the operation.
  */
 export async function listBook(bookData: { title: string, author: string, description: string, genre: BookGenre, condition: 'new' | 'like-new' | 'used' | 'worn', type: 'sell' | 'exchange', price?: number, imageUrl: string, city: string }) {
-  return withErrorHandling(async () => {
-    const user = await getAuthenticatedUser();
-
+  return withAuthenticatedAction(async ({ db, user, userId }) => {
     // Check rate limit
     const rateLimitResult = await checkUserRateLimit(user.id, 'LIST_BOOK', RATE_LIMITS.LIST_BOOK);
     if (!rateLimitResult.allowed) {
       throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || "Rate limit exceeded");
     }
 
-    // Validate and sanitize input data
-    const validatedBookData = await validateBookData(bookData);
+    // Validate input data with Zod schema
+    const validation = validateWithSchema(bookSchema, bookData);
+    if (!validation.success) {
+      throw createAppError(ErrorType.VALIDATION, validation.message);
+    }
+    const validatedBookData = validation.data;
 
     // Validate image data URI
     const imageValidation = validateImageDataUri(bookData.imageUrl);
     if (!imageValidation.isValid) {
       throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
     }
-
-    const client = await clientPromise;
-    const db = client.db("bookex");
 
     // Create deduplication fields
     const titleNormalized = normalizeForDeduplication(bookData.title);
@@ -470,6 +422,7 @@ export async function listBook(bookData: { title: string, author: string, descri
     }
 
     // Start a transaction for data consistency
+    const client = await clientPromise;
     const session = client.startSession();
     let insertedId: any;
     
@@ -481,11 +434,11 @@ export async function listBook(bookData: { title: string, author: string, descri
           title: validatedBookData.title,
           author: validatedBookData.author,
           description: validatedBookData.description || '',
-          genre: (validatedBookData.genre as BookGenre) || 'other',
+          genre: validatedBookData.genre || 'other',
           condition: validatedBookData.condition,
           type: validatedBookData.type,
-          price: bookData.price, // Price not validated by validateBookData
-          imageUrl: bookData.imageUrl, // Image URL not validated by validateBookData
+          price: bookData.price, // Price not validated by schema
+          imageUrl: bookData.imageUrl, // Image URL not validated by schema
           sellerId: user.id,
           city: validatedBookData.city,
           status: 'active',
@@ -595,7 +548,7 @@ export async function listBook(bookData: { title: string, author: string, descri
     }
 
     return { bookId: insertedId?.toString() };
-  }, 'listBook');
+  });
 }
 
 /**
@@ -603,18 +556,12 @@ export async function listBook(bookData: { title: string, author: string, descri
  * @returns The city or null.
  */
 export async function getUserCity(userId: string) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         if (user.id !== userId) throw new Error("Unauthorized");
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        const userData = await db.collection<User>("users").findOne({ _id: new ObjectId(user.id) });
+        const userData = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         return userData?.city || null;
-    } catch (error) {
-        console.error("Error fetching user city:", error);
-        return null;
-    }
+    });
 }
 
 /**
@@ -624,16 +571,11 @@ export async function getUserCity(userId: string) {
  * @returns An object with the result of the operation.
  */
 export async function toggleCommunityMembership(communityId: string, isMember: boolean) {
-    try {
-        const user = await getAuthenticatedUser();
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Rate limiting for community membership operations
         const rateLimitResult = await checkUserRateLimit(user.id, 'CREATE_COMMUNITY', RATE_LIMITS.CREATE_COMMUNITY);
         if (!rateLimitResult.allowed) {
-            return { 
-                success: false, 
-                message: rateLimitResult.feedback || 'Too many membership changes. Please try again later.' 
-            };
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.feedback || 'Too many membership changes. Please try again later.');
         }
 
         // Validate ObjectId to prevent NoSQL injection
@@ -641,40 +583,70 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
             throw new Error("Invalid community ID format");
         }
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
         const communityObjectId = new ObjectId(communityId);
 
+        // First, get the current community to understand its member structure
+        const community = await db.collection("communities").findOne({ _id: communityObjectId });
+        if (!community) {
+            throw new Error("Community not found");
+        }
+
+        // Check if user is already a member using both possible data structures
+        const isCurrentlyMember = Array.isArray(community.members) && 
+            community.members.some((m: any) => 
+                (typeof m === 'string' && m === user.id) || 
+                (typeof m === 'object' && m.userId === user.id)
+            );
+
+        // If the current membership status matches what we're trying to do, return early
+        if (isCurrentlyMember === isMember) {
+            return { success: true, message: isMember ? 'Already a member' : 'Not a member' };
+        }
+
         // Use MongoDB transaction for atomic operations
+        const client = await clientPromise;
         const session = client.startSession();
         let result;
 
         try {
             result = await session.withTransaction(async () => {
-                const updateOperation = isMember
-                    ? createCommunityMemberRemoveOperation(user.id)
-                    : createCommunityMemberAddOperation(user.id);
-                
-                // Update both members array and memberCount atomically to fix consistency issue
-                return await db.collection("communities").updateOne(
-                    { _id: communityObjectId },
-                    [
+                if (isMember) {
+                    // User wants to leave - remove from members array
+                    return await db.collection("communities").updateOne(
+                        { _id: communityObjectId },
                         {
-                            $set: {
-                                members: isMember 
-                                    ? { $filter: { input: "$members", cond: { $ne: ["$$this", user.id] } } }
-                                    : { $concatArrays: ["$members", [user.id]] },
-                                memberCount: isMember
-                                    ? { $subtract: ["$memberCount", 1] }
-                                    : { $add: ["$memberCount", 1] }
-                            }
-                        }
-                    ],
-                    { session }
-                );
+                            $pull: { 
+                                members: { 
+                                    $or: [
+                                        { userId: user.id },
+                                        user.id  // Handle both object and string formats
+                                    ]
+                                } 
+                            },
+                            $inc: { memberCount: -1 }
+                        },
+                        { session }
+                    );
+                } else {
+                    // User wants to join - add to members array
+                    const memberData = { userId: user.id, role: 'member', joinedAt: new Date().toISOString() };
+                    return await db.collection("communities").updateOne(
+                        { _id: communityObjectId },
+                        {
+                            $addToSet: { members: memberData },
+                            $inc: { memberCount: 1 }
+                        },
+                        { session }
+                    );
+                }
             });
         } finally {
             await session.endSession();
+        }
+
+        // Verify the operation was successful
+        if (result.modifiedCount === 0) {
+            throw new Error("Failed to update community membership");
         }
 
         revalidatePath('/community');
@@ -689,10 +661,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
         }
 
         return { success: true };
-    } catch (error) {
-        console.error("Error toggling community membership:", error);
-        return { success: false, message: 'Failed to update membership.' };
-    }
+    });
 }
 
 /**
@@ -702,37 +671,37 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
  * @returns An object with the result of the operation.
  */
 export async function createPost(communityId: string, postData: { authorId: string, content: string; }) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== postData.authorId) throw new Error("Unauthorized");
 
         // Rate limiting for post creation
         const rateLimitResult = await checkUserRateLimit(user.id, 'ADD_POST', RATE_LIMITS.ADD_POST);
         if (!rateLimitResult.allowed) {
-            return { 
-                success: false, 
-                message: rateLimitResult.feedback || 'Too many posts. Please try again later.' 
-            };
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.feedback || 'Too many posts. Please try again later.');
         }
+
+        // Validate input data with Zod schema
+        const validation = validateWithSchema(postSchema, { ...postData, communityId });
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
+        }
+        const validatedData = validation.data;
 
         // Validate ObjectId to prevent NoSQL injection
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         // Check if user is a member of the community before allowing post creation
-        const community = await db.collection<Community>("communities").findOne(
-            { _id: new ObjectId(communityId), members: user.id }
+        const community = await db.collection("communities").findOne(
+            { _id: new ObjectId(communityId), "members.userId": user.id } as any
         );
         
         if (!community) {
             throw new Error("You must be a member to create posts in this community");
         }
         
-        const authorInfo = await db.collection<User>('users').findOne({_id: new ObjectId(user.id)}, { projection: { name: 1, avatarUrl: 1 }});
+        const authorInfo = await db.collection('users').findOne({_id: new ObjectId(user.id)}, { projection: { name: 1, avatarUrl: 1 }});
 
         const newPost = {
             _id: new ObjectId(), // Explicitly create ObjectId for the post
@@ -742,7 +711,7 @@ export async function createPost(communityId: string, postData: { authorId: stri
                 name: authorInfo?.name || "Anonymous",
                 avatarUrl: authorInfo?.avatarUrl || ""
             },
-            content: postData.content,
+            content: validatedData.content,
             likes: 0,
             likedBy: [],
             comments: [],
@@ -754,28 +723,32 @@ export async function createPost(communityId: string, postData: { authorId: stri
         const moderationResult = await ContentModerationSystem.moderateCommunityContent(
             newPost._id.toString(),
             'post',
-            postData.content,
+            validatedData.content,
             user.id
         );
 
         if (!moderationResult.approved && moderationResult.action === 'reject') {
-            return { 
-                success: false, 
-                message: 'Your post contains content that violates our community guidelines.' 
-            };
+            throw createAppError(ErrorType.VALIDATION, 'Your post contains content that violates our community guidelines.');
         }
 
-        await db.collection("communities").updateOne(
-            { _id: new ObjectId(communityId) },
-            { $push: { posts: { $each: [newPost], $sort: { createdAt: -1 } } } } as any
-        );
+        // Save to posts collection instead of embedding
+        const postInsert = await db.collection("posts").insertOne({
+            communityId: new ObjectId(communityId),
+            authorId: user.id,
+            author: newPost.author,
+            content: validatedData.content,
+            likes: 0,
+            likedBy: [],
+            commentCount: 0,
+            createdAt: new Date().toISOString(),
+        } as any);
 
         revalidatePath(`/community/${communityId}`);
 
         // Emit real-time update for new post
         try {
             const { emitCommunityPostCreated } = await import('../../server');
-            await emitCommunityPostCreated(communityId, newPost);
+            await emitCommunityPostCreated(communityId, { ...newPost, _id: postInsert.insertedId, communityId });
         } catch (emitError) {
             console.warn('Failed to emit real-time update for new post:', emitError);
         }
@@ -811,11 +784,8 @@ export async function createPost(communityId: string, postData: { authorId: stri
             console.warn('Failed to emit notifications for new post:', notificationError);
         }
 
-        return { success: true, newPost: JSON.parse(JSON.stringify(newPost)) };
-    } catch (error) {
-        console.error("Error creating post:", error);
-        return { success: false, message: 'Failed to create post.' };
-    }
+        return { success: true, data: { newPost: JSON.parse(JSON.stringify(newPost)) } };
+    });
 }
 
 /**
@@ -826,79 +796,36 @@ export async function createPost(communityId: string, postData: { authorId: stri
  * @returns An object with the result of the operation.
  */
 export async function togglePostLike(communityId: string, postId: string, isLiked: boolean) {
-    try {
-        const user = await getAuthenticatedUserFull();
-
-        // Validate communityId (must be ObjectId format)
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
-
-        // postId validation - it might be ObjectId or string, so we'll validate it exists in the query
         if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
             throw new Error("Invalid post ID format");
         }
+        
+        const postObjectId = ObjectId.isValid(postId) ? new ObjectId(postId) : null;
+        if (!postObjectId) throw new Error('Invalid post id');
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
-        // Check if user is a member of the community and post exists
-        // We'll use a more flexible query that works with either ObjectId or string postId
-        let community;
-        
-        // Try finding post with ObjectId first (if postId is valid ObjectId)
-        if (ObjectId.isValid(postId)) {
-            community = await db.collection<Community>("communities").findOne({ 
-                _id: new ObjectId(communityId), 
-                members: user.id,
-                "posts._id": new ObjectId(postId) 
-            });
-        }
-        
-        // If not found and postId is not ObjectId, try finding with string comparison
-        if (!community) {
-            community = await db.collection<Community>("communities").findOne({ 
-                _id: new ObjectId(communityId), 
-                members: user.id,
-                posts: { $elemMatch: { _id: postId } }
-            });
-        }
-        
-        if (!community) {
-            throw new Error("You must be a member to interact with posts in this community or post not found");
-        }
-        
-        // Find the specific post - handle both ObjectId and string formats
-        const post = community.posts?.find(p => 
-            String(p._id) === postId || 
-            (ObjectId.isValid(postId) && ObjectId.isValid(String(p._id)) && 
-             new ObjectId(String(p._id)).equals(new ObjectId(postId)))
-        );
-        
-        if (!post) {
-            throw new Error("Post not found");
-        }
+        // Ensure member
+        const isMember = await db.collection("communities").findOne({ _id: new ObjectId(communityId), "members.userId": user.id });
+        if (!isMember) throw new Error('You must be a member to interact with posts in this community');
         
         const updateOperation = isLiked
-            ? { $pull: { "posts.$.likedBy": user.id }, $inc: { "posts.$.likes": -1 } }
-            : { $addToSet: { "posts.$.likedBy": user.id }, $inc: { "posts.$.likes": 1 } };
-        
-        // Create flexible query for post update - handle both ObjectId and string formats
-        let updateQuery;
-        if (ObjectId.isValid(postId)) {
-            updateQuery = { _id: new ObjectId(communityId), "posts._id": new ObjectId(postId) };
-        } else {
-            updateQuery = { _id: new ObjectId(communityId), "posts._id": postId };
-        }
-        
-        await db.collection("communities").updateOne(
-            updateQuery,
+            ? { $pull: { likedBy: user.id }, $inc: { likes: -1 } }
+            : { $addToSet: { likedBy: user.id }, $inc: { likes: 1 } };
+
+        const result = await db.collection("posts").updateOne(
+            { _id: postObjectId, communityId: new ObjectId(communityId) } as any,
             updateOperation as any
         );
+        if (!result.matchedCount) throw new Error('Post not found');
         
-        if (!isLiked && post.authorId !== user.id) {
+        // Notify author if needed
+        const postDoc = await db.collection("posts").findOne({ _id: postObjectId });
+        if (!isLiked && postDoc && postDoc.authorId !== user.id) {
             const notification: Omit<Notification, '_id'> = {
-                userId: post.authorId,
+                userId: postDoc.authorId,
                 type: 'community' as const,
                 title: 'Post Interaction',
                 message: `${sanitizeInput(user.name || 'Someone')} liked your post.`,
@@ -916,7 +843,6 @@ export async function togglePostLike(communityId: string, postId: string, isLike
 
         revalidatePath(`/community/${communityId}`);
         
-        // Emit real-time update for like toggle
         try {
             const { emitCommunityPostLiked } = await import('../../server');
             await emitCommunityPostLiked(communityId, postId, user.id, !isLiked);
@@ -925,10 +851,7 @@ export async function togglePostLike(communityId: string, postId: string, isLike
         }
         
         return { success: true };
-    } catch (error) {
-        console.error("Error toggling post like:", error);
-        return { success: false, message: 'Failed to update like.' };
-    }
+    });
 }
 
 
@@ -939,155 +862,85 @@ export async function togglePostLike(communityId: string, postId: string, isLike
  * @param content The content of the comment.
  * @returns An object with the result of the operation and the new comment.
  */
-export async function addComment(communityId: string, postId: string, content: string) {
-    try {
-        const user = await getAuthenticatedUserFull();
-        
-        // Rate limiting for comment creation
+export async function addComment(communityId: string, postId: string, content: string, parentId?: string) {
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const rateLimitResult = await checkUserRateLimit(user.id, 'ADD_COMMENT', RATE_LIMITS.ADD_COMMENT);
         if (!rateLimitResult.allowed) {
-            return { 
-                success: false, 
-                message: rateLimitResult.feedback || 'Too many comments. Please try again later.' 
-            };
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.feedback || 'Too many comments. Please try again later.');
         }
         
-        // Validate communityId (must be ObjectId format)
-        if (!ObjectId.isValid(communityId)) {
-            throw new Error("Invalid community ID format");
+        // Validate input data with Zod schema
+        const validation = validateWithSchema(commentSchema, { content, postId, parentId });
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
         }
+        const validatedData = validation.data;
 
-        // postId validation - it might be ObjectId or string
-        if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
-            throw new Error("Invalid post ID format");
-        }
-        
-        // Validate and sanitize comment content
-        if (!content || content.trim().length === 0) {
-            throw new Error("Comment content is required");
-        }
-        if (content.length > 1000) {
-            throw new Error("Comment too long (max 1000 characters)");
-        }
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID format');
+        if (!ObjectId.isValid(postId)) throw new Error('Invalid post ID format');
 
-        // Check if user is a member of the community and post exists
-        let community;
-        
-        // Try finding post with ObjectId first (if postId is valid ObjectId)
-        if (ObjectId.isValid(postId)) {
-            community = await db.collection<Community>("communities").findOne({ 
-                _id: new ObjectId(communityId), 
-                members: user.id,
-                "posts._id": new ObjectId(postId) 
-            });
-        }
-        
-        // If not found and postId is not ObjectId, try finding with string comparison
-        if (!community) {
-            community = await db.collection<Community>("communities").findOne({ 
-                _id: new ObjectId(communityId), 
-                members: user.id,
-                posts: { $elemMatch: { _id: postId } }
-            });
-        }
-        
-        if (!community) {
-            throw new Error("You must be a member to comment in this community or post not found");
-        }
-        
-        // Find the specific post - handle both ObjectId and string formats
-        const post = community.posts?.find(p => 
-            String(p._id) === postId || 
-            (ObjectId.isValid(postId) && ObjectId.isValid(String(p._id)) && 
-             new ObjectId(String(p._id)).equals(new ObjectId(postId)))
-        );
+        // Ensure membership
+        const membership = await db.collection('communities').findOne({ _id: new ObjectId(communityId), "members.userId": user.id });
+        if (!membership) throw new Error('You must be a member to comment in this community');
 
-        if (!post) {
-            throw new Error("Post not found");
-        }
-        
-        const authorInfo = await db.collection<User>('users').findOne({_id: new ObjectId(user.id)}, { projection: { name: 1, avatarUrl: 1 }});
-
-        const newComment: Comment = {
-            _id: new ObjectId(),
-            author: {
-                _id: user.id,
-                name: authorInfo?.name || "Anonymous",
-                avatarUrl: authorInfo?.avatarUrl || "",
-            },
-            content: sanitizeInput(content),
-            createdAt: new Date().toISOString(),
-        };
-
-        // Moderate comment content before saving
+        // Moderate content
         const { ContentModerationSystem } = await import('@/lib/content-moderation');
         const moderationResult = await ContentModerationSystem.moderateCommunityContent(
-            newComment._id.toString(),
+            postId,
             'comment',
-            content,
+            validatedData.content,
             user.id
         );
-
         if (!moderationResult.approved && moderationResult.action === 'reject') {
-            return { 
-                success: false, 
-                message: 'Your comment contains content that violates our community guidelines.' 
-            };
+            throw createAppError(ErrorType.VALIDATION, 'Your comment contains content that violates our community guidelines.');
         }
 
-        // Create flexible query for comment update - handle both ObjectId and string formats
-        let updateQuery;
-        if (ObjectId.isValid(postId)) {
-            updateQuery = { _id: new ObjectId(communityId), "posts._id": new ObjectId(postId) };
-        } else {
-            updateQuery = { _id: new ObjectId(communityId), "posts._id": postId };
-        }
+        const postObjectId = new ObjectId(postId);
+        const parentObjectId = parentId && ObjectId.isValid(parentId) ? new ObjectId(parentId) : null;
+        const now = new Date().toISOString();
+        const authorInfo = await db.collection('users').findOne({ _id: new ObjectId(user.id) }, { projection: { name: 1, avatarUrl: 1 } });
 
-        const result = await db.collection("communities").updateOne(
-            updateQuery,
-            { $push: { "posts.$.comments": newComment } } as any
-        );
-        
-        if (result.modifiedCount === 0) {
-            throw new Error("Could not find the post to add a comment to.");
-        }
-        
-        if (post.authorId !== user.id) {
+        const commentDoc = {
+            postId: postObjectId,
+            communityId: new ObjectId(communityId),
+            authorId: user.id,
+            author: { _id: user.id, name: authorInfo?.name || 'Anonymous', avatarUrl: authorInfo?.avatarUrl || '' },
+            content: sanitizeInput(validatedData.content),
+            createdAt: now,
+            parentId: parentObjectId,
+            path: parentObjectId ? `${postId}/${parentId}` : postId,
+            reactions: [],
+        } as any;
+
+        const insertRes = await db.collection('comments').insertOne(commentDoc);
+        await db.collection('posts').updateOne({ _id: postObjectId }, { $inc: { commentCount: 1 } });
+
+        // Notify post author (if not self)
+        const postDoc = await db.collection('posts').findOne({ _id: postObjectId });
+        if (postDoc && postDoc.authorId !== user.id) {
             const notification: Omit<Notification, '_id'> = {
-                userId: post.authorId,
-                type: 'community' as const,
+                userId: postDoc.authorId,
+                type: 'community',
                 title: 'New Comment',
-                message: `${sanitizeInput(user.name || 'Someone')} commented on your post.`,
+                message: `${sanitizeInput(user.name || 'Someone')} commented on your post`,
                 link: `/community/${communityId}`,
                 read: false,
-                createdAt: new Date().toISOString(),
-                metadata: {
-                    communityId,
-                    postId,
-                    actionType: 'comment'
-                }
+                createdAt: now,
+                metadata: { communityId, postId, actionType: 'comment' }
             };
-            await db.collection("notifications").insertOne(notification);
+            await db.collection('notifications').insertOne(notification);
         }
 
         revalidatePath(`/community/${communityId}`);
-
-        // Emit real-time update for new comment
         try {
             const { emitCommunityCommentCreated } = await import('../../server');
-            await emitCommunityCommentCreated(communityId, postId, newComment);
+            await emitCommunityCommentCreated(communityId, postId, { ...commentDoc, _id: insertRes.insertedId });
         } catch (emitError) {
             console.warn('Failed to emit real-time update for new comment:', emitError);
         }
 
-        return { success: true, newComment: JSON.parse(JSON.stringify(newComment)) };
-    } catch (error) {
-        console.error("Error adding comment:", error);
-        return { success: false, message: "Failed to add comment." };
-    }
+        return { success: true, comment: { ...commentDoc, _id: insertRes.insertedId } };
+    });
 }
 
 
@@ -1098,9 +951,7 @@ export async function addComment(communityId: string, postId: string, content: s
  * @returns An object with the result of the operation.
  */
 export async function deletePost(communityId: string, postId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Validate communityId (must be ObjectId format)
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
@@ -1110,16 +961,13 @@ export async function deletePost(communityId: string, postId: string) {
         if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
             throw new Error("Invalid post ID format");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         // Check if community and post exist - flexible query for different post ID formats
         let community;
         
         // Try finding post with ObjectId first (if postId is valid ObjectId)
         if (ObjectId.isValid(postId)) {
-            community = await db.collection<Community>("communities").findOne({ 
+            community = await db.collection("communities").findOne({ 
                 _id: new ObjectId(communityId),
                 "posts._id": new ObjectId(postId)
             });
@@ -1127,7 +975,7 @@ export async function deletePost(communityId: string, postId: string) {
         
         // If not found and postId is not ObjectId, try finding with string comparison
         if (!community) {
-            community = await db.collection<Community>("communities").findOne({ 
+            community = await db.collection("communities").findOne({ 
                 _id: new ObjectId(communityId),
                 posts: { $elemMatch: { _id: postId } }
             });
@@ -1138,7 +986,7 @@ export async function deletePost(communityId: string, postId: string) {
         }
         
         // Find the specific post - handle both ObjectId and string formats
-        const post = community.posts?.find(p => 
+        const post = community.posts?.find((p: any) => 
             String(p._id) === postId || 
             (ObjectId.isValid(postId) && ObjectId.isValid(String(p._id)) && 
              new ObjectId(String(p._id)).equals(new ObjectId(postId)))
@@ -1169,10 +1017,7 @@ export async function deletePost(communityId: string, postId: string) {
 
         revalidatePath(`/community/${communityId}`);
         return { success: true };
-    } catch (error) {
-        console.error("Error deleting post:", error);
-        return { success: false, message: String(error) };
-    }
+    });
 }
 
 /**
@@ -1183,9 +1028,7 @@ export async function deletePost(communityId: string, postId: string) {
  * @returns An object with the result of the operation.
  */
 export async function editPost(communityId: string, postId: string, newContent: string) {
-    try {
-        const user = await getAuthenticatedUser();
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Validate communityId (must be ObjectId format)
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
@@ -1203,9 +1046,6 @@ export async function editPost(communityId: string, postId: string, newContent: 
         if (newContent.length > 5000) {
             throw new Error("Post too long (max 5000 characters)");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         // Check if user is the post author, community creator, or admin - flexible query for different post ID formats
         const isAdmin = user.role === 'admin';
@@ -1213,7 +1053,7 @@ export async function editPost(communityId: string, postId: string, newContent: 
         
         // Try finding post with ObjectId first (if postId is valid ObjectId)
         if (ObjectId.isValid(postId)) {
-            community = await db.collection<Community>("communities").findOne({ 
+            community = await db.collection("communities").findOne({ 
                 _id: new ObjectId(communityId),
                 "posts._id": new ObjectId(postId),
                 $or: [
@@ -1226,7 +1066,7 @@ export async function editPost(communityId: string, postId: string, newContent: 
         
         // If not found and postId is not ObjectId, try finding with string comparison
         if (!community) {
-            community = await db.collection<Community>("communities").findOne({ 
+            community = await db.collection("communities").findOne({ 
                 _id: new ObjectId(communityId),
                 posts: { $elemMatch: { 
                     _id: postId, 
@@ -1263,10 +1103,7 @@ export async function editPost(communityId: string, postId: string, newContent: 
 
         revalidatePath(`/community/${communityId}`);
         return { success: true };
-    } catch (error) {
-        console.error("Error editing post:", error);
-        return { success: false, message: String(error) };
-    }
+    });
 }
 
 /**
@@ -1301,41 +1138,48 @@ export async function searchCommunities(searchQuery: string) {
  * @returns An object with the result of the operation.
  */
 export async function createCommunity(communityData: { name: string, description: string, imageUrl: string, createdBy: string }) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== communityData.createdBy) throw new Error("Unauthorized");
 
-        // Validate and sanitize input data
-        if (!communityData.name || communityData.name.trim().length === 0) {
-            throw new Error("Community name is required");
+        // Validate input data with Zod schema
+        const validation = validateWithSchema(communitySchema, communityData);
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
         }
-        if (!communityData.description || communityData.description.trim().length === 0) {
-            throw new Error("Community description is required");
-        }
-        if (communityData.name.length > 100) {
-            throw new Error("Community name too long (max 100 characters)");
-        }
-        if (communityData.description.length > 500) {
-            throw new Error("Community description too long (max 500 characters)");
-        }
+        const validatedData = validation.data;
 
         // Validate image data URI
         const imageValidation = validateImageDataUri(communityData.imageUrl);
         if (!imageValidation.isValid) {
-            throw new Error(imageValidation.error);
+            throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
         }
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
         const newCommunity: Omit<Community, '_id'> = {
-            name: sanitizeInput(communityData.name),
-            description: sanitizeInput(communityData.description),
+            name: sanitizeInput(validatedData.name),
+            description: sanitizeInput(validatedData.description),
             imageUrl: communityData.imageUrl,
             createdBy: user.id,
-            members: [user.id],
+            members: [{ userId: user.id, role: 'admin', joinedAt: new Date().toISOString() }] as any,
             memberCount: 1,
             posts: [],
+            channels: [
+                {
+                    _id: 'general',
+                    name: 'General',
+                    type: 'forum',
+                    description: 'General discussion',
+                    order: 0,
+                    createdAt: new Date().toISOString()
+                },
+                {
+                    _id: 'chat',
+                    name: 'Chat',
+                    type: 'chat',
+                    description: 'General chat',
+                    order: 1,
+                    createdAt: new Date().toISOString()
+                }
+            ]
         };
         const result = await db.collection("communities").insertOne(newCommunity);
 
@@ -1352,10 +1196,7 @@ export async function createCommunity(communityData: { name: string, description
         }
 
         return { success: true, communityId: result.insertedId.toString() };
-    } catch (error) {
-        console.error("Error creating community:", error);
-        return { success: false, message: "Failed to create community." };
-    }
+    });
 }
 
 
@@ -1366,9 +1207,7 @@ export async function createCommunity(communityData: { name: string, description
  * @returns An object with the result of the operation and the chat ID.
  */
 export async function startChat(otherUserId: string, bookId?: string) {
-    try {
-        const user = await getAuthenticatedUserFull();
-        
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
         
@@ -1381,18 +1220,15 @@ export async function startChat(otherUserId: string, bookId?: string) {
             throw new ValidationError("Cannot start a conversation with yourself.");
         }
         
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
         // Verify other user exists
-        const otherUser = await db.collection<User>("users").findOne({ _id: validatedOtherUserId });
+        const otherUser = await db.collection("users").findOne({ _id: validatedOtherUserId });
         if (!otherUser) {
             throw new ValidationError("User not found.");
         }
         
         // If bookId provided, verify book exists and is available for sale
         if (validatedBookId) {
-            const book = await db.collection<Book>("books").findOne({ _id: validatedBookId });
+            const book = await db.collection("books").findOne({ _id: validatedBookId });
             if (!book) {
                 throw new ValidationError("Book not found.");
             }
@@ -1404,7 +1240,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
         const participantIds = [user.id, validatedOtherUserId.toString()].sort();
 
         // Find existing chat
-        let chat = await db.collection<Chat>("chats").findOne({ 
+        let chat = await db.collection("chats").findOne({ 
             participantIds: { $all: participantIds },
             bookId: validatedBookId
         });
@@ -1426,7 +1262,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
         // Send email notification to book seller (if they have email notifications enabled)
         if (validatedBookId && chat === null) { // Only for new chats about books
             try {
-                const book = await db.collection<Book>("books").findOne({ _id: validatedBookId });
+                const book = await db.collection("books").findOne({ _id: validatedBookId });
                 if (book) {
                     const otherUserEmailPrefs = otherUser.emailPreferences;
                     if (!otherUserEmailPrefs || otherUserEmailPrefs.contactNotifications !== false) {
@@ -1450,17 +1286,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
         console.log(`Chat initiated: User ${user.id} -> User ${otherUserId}${bookId ? ` for book ${bookId}` : ''}`);
         
         return { success: true, chatId: result.insertedId.toString() };
-
-    } catch (error) {
-        // Handle validation errors specifically
-        if (error instanceof Error && error.name === 'ValidationError') {
-            console.warn("Chat validation error:", error.message);
-            return { success: false, message: error.message };
-        }
-        
-        console.error("Error contacting user:", error);
-        return { success: false, message: "Could not initiate conversation." };
-    }
+    });
 }
 
 /**
@@ -1470,23 +1296,18 @@ export async function startChat(otherUserId: string, bookId?: string) {
  * @returns An object with the result of the operation and the chat ID.
  */
 export async function startExchangeChat(otherUserId: string, bookId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateChatParams, validateUserCity, ValidationError } = await import('@/lib/validation');
         
         // Validate and sanitize input parameters
         const validatedParams = validateChatParams(otherUserId, bookId, user.id);
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Fetch all required data with proper validation
         const [currentUser, targetBook, otherUser] = await Promise.all([
-            db.collection<User>("users").findOne({ _id: validatedParams.currentUserId }),
-            db.collection<Book>("books").findOne({ _id: validatedParams.bookId }),
-            db.collection<User>("users").findOne({ _id: validatedParams.otherUserId })
+            db.collection("users").findOne({ _id: validatedParams.currentUserId }),
+            db.collection("books").findOne({ _id: validatedParams.bookId }),
+            db.collection("users").findOne({ _id: validatedParams.otherUserId })
         ]);
 
         // Comprehensive validation checks
@@ -1512,7 +1333,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         }
 
         // Check if current user has any exchange books
-        const userExchangeBook = await db.collection<Book>("books").findOne({ 
+        const userExchangeBook = await db.collection("books").findOne({ 
             sellerId: user.id, 
             type: 'exchange' 
         });
@@ -1546,7 +1367,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         // Check if chat already exists
         const participantIds = [user.id, otherUserId].sort();
         
-        let chat = await db.collection<Chat>("chats").findOne({ 
+        let chat = await db.collection("chats").findOne({ 
             participantIds: { $all: participantIds },
             bookId: validatedParams.bookId
         });
@@ -1579,17 +1400,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         console.log(`Exchange chat initiated: User ${user.id} -> User ${otherUserId} for book ${bookId}`);
         
         return { success: true, chatId: result.insertedId.toString() };
-
-    } catch (error) {
-        // Handle validation errors specifically
-        if (error instanceof Error && error.name === 'ValidationError') {
-            console.warn("Exchange chat validation error:", error.message);
-            return { success: false, message: error.message };
-        }
-        
-        console.error("Error starting exchange chat:", error);
-        return { success: false, message: "Could not initiate exchange. Please try again." };
-    }
+    });
 }
 
 /**
@@ -1599,21 +1410,24 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
  */
 export async function isBookWishlisted(bookId: string): Promise<boolean> {
     try {
-        const user = await getAuthenticatedUser();
+        const result = await withAuthenticatedAction(async ({ db, user, userId }) => {
+            // Validate input
+            if (!bookId || typeof bookId !== 'string') {
+                return false;
+            }
 
-        // Validate input
-        if (!bookId || typeof bookId !== 'string') {
-            return false;
+            // Check if book exists in wishlist by bookId
+            const existsQuery = ConsistentWishlistOperations.createExistsQuery(user.id, bookId);
+            const userWithWishlistItem = await db.collection("users").findOne(existsQuery);
+
+            return !!userWithWishlistItem;
+        });
+        
+        // Handle the wrapper's return type
+        if (typeof result === 'boolean') {
+            return result;
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
-        // Check if book exists in wishlist by bookId
-        const existsQuery = ConsistentWishlistOperations.createExistsQuery(user.id, bookId);
-        const userWithWishlistItem = await db.collection("users").findOne(existsQuery);
-
-        return !!userWithWishlistItem;
+        return false;
     } catch (error) {
         return false;
     }
@@ -1626,9 +1440,7 @@ export async function isBookWishlisted(bookId: string): Promise<boolean> {
  * @returns An object with the result of the operation.
  */
 export async function toggleWishlist(bookId: string, isWishlisted: boolean) {
-    return withErrorHandling(async () => {
-        const user = await getAuthenticatedUser();
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Check rate limit
         const rateLimitResult = await checkUserRateLimit(user.id, 'TOGGLE_WISHLIST', RATE_LIMITS.TOGGLE_WISHLIST);
         if (!rateLimitResult.allowed) {
@@ -1641,9 +1453,6 @@ export async function toggleWishlist(bookId: string, isWishlisted: boolean) {
         }
 
         // Verify book exists
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
         if (!book) {
             throw createAppError(ErrorType.NOT_FOUND, "Book not found");
@@ -1665,7 +1474,7 @@ export async function toggleWishlist(bookId: string, isWishlisted: boolean) {
 
         revalidatePath('/profile/me');
         return { message: isWishlisted ? 'Removed from wishlist' : 'Added to wishlist' };
-    }, 'toggleWishlist');
+    });
 }
 
 /**
@@ -1676,7 +1485,7 @@ export async function getApprovedOrganizations(): Promise<Organization[]> {
     try {
         const client = await clientPromise;
         const db = client.db("bookex");
-        const orgs = await db.collection<Organization>("organizations").find({ status: "approved" }).toArray();
+        const orgs = await db.collection("organizations").find({ status: "approved" }).toArray();
         return JSON.parse(JSON.stringify(orgs));
     } catch (error) {
         console.error("Error fetching organizations:", error);
@@ -1706,7 +1515,7 @@ export async function getApprovedOrganizationsCached(): Promise<Organization[]> 
         console.log('📡 Cache miss - fetching approved organizations from database');
         const client = await clientPromise;
         const db = client.db("bookex");
-        const orgs = await db.collection<Organization>("organizations").find({ status: "approved" }).toArray();
+        const orgs = await db.collection("organizations").find({ status: "approved" }).toArray();
         const serializedOrgs = JSON.parse(JSON.stringify(orgs));
 
         // Cache the result
@@ -1731,8 +1540,7 @@ export async function getApprovedOrganizationsCached(): Promise<Organization[]> 
  * @returns An object with the result of the operation.
  */
 export async function applyForOrganization(orgData: Omit<Organization, '_id' | 'status' | 'createdAt'>) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== orgData.submittedBy) throw new Error("Unauthorized");
         
         // Log organization application attempt
@@ -1761,9 +1569,6 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
         if (!validation.isValid) {
             return { success: false, message: validation.error };
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Check for duplicate organization names (case-insensitive)
         const sanitizedName = sanitizeOrganizationName(orgData.name);
@@ -1833,10 +1638,7 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
         );
 
         return { success: true };
-    } catch (error) {
-        console.error("Error applying for organization:", error);
-        return { success: false, message: "Failed to submit application." };
-    }
+    });
 }
 
 /**
@@ -1845,9 +1647,7 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
  * @returns Result of the operation
  */
 export async function applyForOrganizationWithFile(formData: FormData) {
-    try {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Extract form data
         const name = formData.get('name') as string;
         const description = formData.get('description') as string;
@@ -1881,9 +1681,6 @@ export async function applyForOrganizationWithFile(formData: FormData) {
         if (!fileResult.success || !fileResult.url) {
             return { success: false, message: fileResult.error || 'Failed to save image' };
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Check for duplicate organization names
         const sanitizedName = sanitizeOrganizationName(name);
@@ -1933,10 +1730,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
         }
         
         return { success: true };
-    } catch (error) {
-        console.error("Error applying for organization:", error);
-        return { success: false, message: "Failed to submit application." };
-    }
+    });
 }
 
 /**
@@ -1945,9 +1739,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
  * @returns An object with the result and chatId.
  */
 export async function initiateDonation(organizationId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Log donation initiation
         await logActivity(
             user.id,
@@ -1965,10 +1757,7 @@ export async function initiateDonation(organizationId: string) {
             return { success: false, message: "Invalid organization ID." };
         }
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
-        const org = await db.collection<Organization>("organizations").findOne({ 
+        const org = await db.collection("organizations").findOne({ 
             _id: new ObjectId(organizationId),
             status: 'approved'  // Only allow donations to approved organizations
         });
@@ -1982,7 +1771,7 @@ export async function initiateDonation(organizationId: string) {
         const orgParticipantId = `donation_org_${organizationId}`;
         const participantIds = [user.id, orgParticipantId].sort();
 
-        let chat = await db.collection<Chat>("chats").findOne({ participantIds: { $all: participantIds } });
+        let chat = await db.collection("chats").findOne({ participantIds: { $all: participantIds } });
 
         if (!chat) {
             const newChat: Omit<Chat, '_id'> = {
@@ -2026,10 +1815,7 @@ export async function initiateDonation(organizationId: string) {
         );
 
         return { success: true, chatId: chat._id.toString() };
-    } catch (error) {
-        console.error("Error initiating donation:", error);
-        return { success: false, message: "Failed to initiate donation." };
-    }
+    });
 }
 
 
@@ -2039,12 +1825,8 @@ export async function initiateDonation(organizationId: string) {
  * @returns An object with the result of the operation.
  */
 export async function submitReport(reportData: Omit<Report, '_id' | 'status' | 'createdAt'>) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== reportData.reporterId) throw new Error("Unauthorized");
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         const newReport: Omit<Report, '_id'> = {
             ...reportData,
@@ -2068,10 +1850,7 @@ export async function submitReport(reportData: Omit<Report, '_id' | 'status' | '
         }
         
         return { success: true };
-    } catch (error) {
-        console.error("Error submitting report:", error);
-        return { success: false, message: "Failed to submit report." };
-    }
+    });
 }
 
 /**
@@ -2080,12 +1859,8 @@ export async function submitReport(reportData: Omit<Report, '_id' | 'status' | '
  * @returns An object with the result of the operation.
  */
 export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== reviewData.reviewerId) throw new Error("Unauthorized");
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // First, insert the new review document.
         const newReview: Omit<Review, '_id'> = {
@@ -2108,10 +1883,7 @@ export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>
 
         revalidatePath(`/profile/${reviewData.revieweeId}`);
         return { success: true };
-    } catch (error) {
-        console.error("Error submitting review:", error);
-        return { success: false, message: "Failed to submit review." };
-    }
+    });
 }
 
 /**
@@ -2247,12 +2019,7 @@ export async function canUserReview(reviewerId: string, revieweeId: string): Pro
  * @returns An object with the result of the operation.
  */
 export async function deleteReview(reviewId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Find the review to check ownership
         const review = await db.collection("reviews").findOne({ _id: new ObjectId(reviewId) });
         if (!review) {
@@ -2284,10 +2051,7 @@ export async function deleteReview(reviewId: string) {
 
         revalidatePath(`/profile/${review.revieweeId}`);
         return { success: true };
-    } catch (error) {
-        console.error("Error deleting review:", error);
-        return { success: false, message: "Failed to delete review." };
-    }
+    });
 }
 
 /**
@@ -2297,12 +2061,7 @@ export async function deleteReview(reviewId: string) {
  * @returns An object with the result of the operation.
  */
 export async function updateReview(reviewId: string, updates: { rating?: number; comment?: string }) {
-    try {
-        const user = await getAuthenticatedUser();
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Find the review to check ownership
         const review = await db.collection("reviews").findOne({ _id: new ObjectId(reviewId) });
         if (!review) {
@@ -2346,10 +2105,7 @@ export async function updateReview(reviewId: string, updates: { rating?: number;
 
         revalidatePath(`/profile/${review.revieweeId}`);
         return { success: true };
-    } catch (error) {
-        console.error("Error updating review:", error);
-        return { success: false, message: "Failed to update review." };
-    }
+    });
 }
 
 /**
@@ -2413,12 +2169,7 @@ export async function getUserReviewStats(userId: string): Promise<{
  * @returns An object with the result of the operation.
  */
 export async function reportCommunityContent(contentId: string, contentType: 'post' | 'comment' | 'community', reason: string, details?: string) {
-    try {
-        const user = await getAuthenticatedUser();
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Validate content exists based on type
         let contentExists = false;
         let reportedUserId = '';
@@ -2465,10 +2216,7 @@ export async function reportCommunityContent(contentId: string, contentType: 'po
         await db.collection("reports").insertOne(newReport);
 
         return { success: true };
-    } catch (error) {
-        console.error("Error reporting community content:", error);
-        return { success: false, message: "Failed to submit report." };
-    }
+    });
 }
 
 /**
@@ -2493,99 +2241,114 @@ export async function getAdminReports(status?: 'pending' | 'resolved' | 'dismiss
     };
 }> {
     try {
-        const user = await getAuthenticatedUser();
-        if (user.role !== 'admin') {
-            throw new Error("Unauthorized");
-        }
+        const result = await withAuthenticatedAction(async ({ db, user, userId }) => {
+            if (user.role !== 'admin') {
+                throw new Error("Unauthorized");
+            }
 
-        const sanitizedPage = Math.max(1, Math.floor(page));
-        const sanitizedLimit = Math.min(100, Math.max(1, Math.floor(limit)));
-        const skip = (sanitizedPage - 1) * sanitizedLimit;
+            const sanitizedPage = Math.max(1, Math.floor(page));
+            const sanitizedLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+            const skip = (sanitizedPage - 1) * sanitizedLimit;
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
+            // Build filter
+            const filter: any = {};
+            if (status) filter.status = status;
+            if (contentType) filter.reportedContentType = contentType;
 
-        // Build filter
-        const filter: any = {};
-        if (status) filter.status = status;
-        if (contentType) filter.reportedContentType = contentType;
-
-        // Get total count and reports
-        const [totalCount, reports] = await Promise.all([
-            db.collection("reports").countDocuments(filter),
-            db.collection("reports")
-                .aggregate([
-                    { $match: filter },
-                    { $sort: { createdAt: -1 } },
-                    { $skip: skip },
-                    { $limit: sanitizedLimit },
-                    {
-                        $lookup: {
-                            from: "users",
-                            localField: "reporterId",
-                            foreignField: "_id",
-                            as: "reporter"
-                        }
-                    },
-                    {
-                        $lookup: {
-                            from: "users",
-                            localField: "reportedUserId",
-                            foreignField: "_id",
-                            as: "reportedUser"
-                        }
-                    },
-                    {
-                        $unwind: {
-                            path: "$reporter",
-                            preserveNullAndEmptyArrays: true
-                        }
-                    },
-                    {
-                        $unwind: {
-                            path: "$reportedUser",
-                            preserveNullAndEmptyArrays: true
-                        }
-                    },
-                    {
-                        $project: {
-                            _id: 1,
-                            reporterId: 1,
-                            reportedUserId: 1,
-                            reportedContentId: 1,
-                            reportedContentType: 1,
-                            reason: 1,
-                            details: 1,
-                            status: 1,
-                            createdAt: 1,
-                            resolvedAt: 1,
-                            resolvedBy: 1,
-                            resolutionNotes: 1,
-                            severity: 1,
-                            reporter: {
+            // Get total count and reports
+            const [totalCount, reports] = await Promise.all([
+                db.collection("reports").countDocuments(filter),
+                db.collection("reports")
+                    .aggregate([
+                        { $match: filter },
+                        { $sort: { createdAt: -1 } },
+                        { $skip: skip },
+                        { $limit: sanitizedLimit },
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "reporterId",
+                                foreignField: "_id",
+                                as: "reporter"
+                            }
+                        },
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "reportedUserId",
+                                foreignField: "_id",
+                                as: "reportedUser"
+                            }
+                        },
+                        {
+                            $unwind: {
+                                path: "$reporter",
+                                preserveNullAndEmptyArrays: true
+                            }
+                        },
+                        {
+                            $unwind: {
+                                path: "$reportedUser",
+                                preserveNullAndEmptyArrays: true
+                            }
+                        },
+                        {
+                            $project: {
                                 _id: 1,
-                                name: 1
-                            },
-                            reportedUser: {
-                                _id: 1,
-                                name: 1
+                                reporterId: 1,
+                                reportedUserId: 1,
+                                reportedContentId: 1,
+                                reportedContentType: 1,
+                                reason: 1,
+                                details: 1,
+                                status: 1,
+                                createdAt: 1,
+                                resolvedAt: 1,
+                                resolvedBy: 1,
+                                resolutionNotes: 1,
+                                severity: 1,
+                                reporter: {
+                                    _id: 1,
+                                    name: 1
+                                },
+                                reportedUser: {
+                                    _id: 1,
+                                    name: 1
+                                }
                             }
                         }
-                    }
-                ])
-                .toArray()
-        ]);
+                    ])
+                    .toArray()
+            ]);
 
-        const totalPages = Math.ceil(totalCount / sanitizedLimit);
+            const totalPages = Math.ceil(totalCount / sanitizedLimit);
 
+            return {
+                reports: JSON.parse(JSON.stringify(reports)),
+                pagination: {
+                    currentPage: sanitizedPage,
+                    totalPages,
+                    totalCount,
+                    hasNext: sanitizedPage < totalPages,
+                    hasPrev: sanitizedPage > 1
+                }
+            };
+        }, 'admin');
+        
+        // Handle the wrapper's return type
+        if (result && typeof result === 'object' && 'reports' in result && 'pagination' in result) {
+            return result as any;
+        }
+        
+        // Return empty result on error
         return {
-            reports: JSON.parse(JSON.stringify(reports)),
+            reports: [],
             pagination: {
-                currentPage: sanitizedPage,
-                totalPages,
-                totalCount,
-                hasNext: sanitizedPage < totalPages,
-                hasPrev: sanitizedPage > 1
+                currentPage: 1,
+                totalPages: 0,
+                totalCount: 0,
+                hasNext: false,
+                hasPrev: false
             }
         };
     } catch (error) {
@@ -2610,14 +2373,10 @@ export async function getAdminReports(status?: 'pending' | 'resolved' | 'dismiss
  * @returns An object with the result of the operation.
  */
 export async function resolveReportWithNotes(reportId: string, resolutionNotes?: string) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.role !== 'admin') {
             throw new Error("Unauthorized");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         const result = await db.collection("reports").updateOne(
             { _id: new ObjectId(reportId) },
@@ -2636,10 +2395,7 @@ export async function resolveReportWithNotes(reportId: string, resolutionNotes?:
         }
 
         return { success: true };
-    } catch (error) {
-        console.error("Error resolving report:", error);
-        return { success: false, message: "Failed to resolve report." };
-    }
+    }, 'admin');
 }
 
 /**
@@ -2654,87 +2410,99 @@ export async function getReviewAnalytics(): Promise<{
     topRatedUsers: { userId: string; name: string; averageRating: number; reviewCount: number }[];
 }> {
     try {
-        const user = await getAuthenticatedUser();
-        if (user.role !== 'admin') {
-            throw new Error("Unauthorized");
-        }
+        const result = await withAuthenticatedAction(async ({ db, user, userId }) => {
+            if (user.role !== 'admin') {
+                throw new Error("Unauthorized");
+            }
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
+            // Get all reviews
+            const reviews = await db.collection("reviews").find({}).toArray();
+            const totalReviews = reviews.length;
 
-        // Get all reviews
-        const reviews = await db.collection("reviews").find({}).toArray();
-        const totalReviews = reviews.length;
+            // Calculate overall statistics
+            const totalRating = reviews.reduce((sum: number, r: any) => sum + r.rating, 0);
+            const averageRating = totalReviews > 0 ? parseFloat((totalRating / totalReviews).toFixed(1)) : 0;
 
-        // Calculate overall statistics
-        const totalRating = reviews.reduce((sum, r) => sum + r.rating, 0);
-        const averageRating = totalReviews > 0 ? parseFloat((totalRating / totalReviews).toFixed(1)) : 0;
-
-        // Rating distribution
-        const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-        reviews.forEach(review => {
-            ratingDistribution[review.rating] = (ratingDistribution[review.rating] || 0) + 1;
-        });
-
-        // Reviews by month (last 12 months)
-        const reviewsByMonth = [];
-        const now = new Date();
-        for (let i = 11; i >= 0; i--) {
-            const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
-            const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-
-            const count = reviews.filter(r => {
-                const reviewDate = new Date(r.createdAt);
-                return reviewDate >= monthStart && reviewDate <= monthEnd;
-            }).length;
-
-            reviewsByMonth.push({
-                month: date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' }),
-                count
+            // Rating distribution
+            const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+            reviews.forEach((review: any) => {
+                ratingDistribution[review.rating] = (ratingDistribution[review.rating] || 0) + 1;
             });
-        }
 
-        // Top rated users
-        const userStats = new Map();
-        reviews.forEach(review => {
-            if (!userStats.has(review.revieweeId)) {
-                userStats.set(review.revieweeId, {
-                    totalRating: 0,
-                    count: 0,
-                    userId: review.revieweeId
+            // Reviews by month (last 12 months)
+            const reviewsByMonth = [];
+            const now = new Date();
+            for (let i = 11; i >= 0; i--) {
+                const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+                const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+                const count = reviews.filter((r: any) => {
+                    const reviewDate = new Date(r.createdAt);
+                    return reviewDate >= monthStart && reviewDate <= monthEnd;
+                }).length;
+
+                reviewsByMonth.push({
+                    month: date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' }),
+                    count
                 });
             }
-            const stats = userStats.get(review.revieweeId);
-            stats.totalRating += review.rating;
-            stats.count += 1;
-        });
 
-        const topRatedUsers = Array.from(userStats.values())
-            .map(stats => ({
-                userId: stats.userId,
-                name: '',
-                averageRating: parseFloat((stats.totalRating / stats.count).toFixed(1)),
-                reviewCount: stats.count
-            }))
-            .sort((a, b) => b.averageRating - a.averageRating)
-            .slice(0, 10);
+            // Top rated users
+            const userStats = new Map();
+            reviews.forEach((review: any) => {
+                if (!userStats.has(review.revieweeId)) {
+                    userStats.set(review.revieweeId, {
+                        totalRating: 0,
+                        count: 0,
+                        userId: review.revieweeId
+                    });
+                }
+                const stats = userStats.get(review.revieweeId);
+                stats.totalRating += review.rating;
+                stats.count += 1;
+            });
 
-        // Get user names for top rated users
-        for (const user of topRatedUsers) {
-            const userDoc = await db.collection("users").findOne(
-                { _id: new ObjectId(user.userId) },
-                { projection: { name: 1 } }
-            );
-            user.name = userDoc?.name || 'Unknown User';
+            const topRatedUsers = Array.from(userStats.values())
+                .map(stats => ({
+                    userId: stats.userId,
+                    name: '',
+                    averageRating: parseFloat((stats.totalRating / stats.count).toFixed(1)),
+                    reviewCount: stats.count
+                }))
+                .sort((a, b) => b.averageRating - a.averageRating)
+                .slice(0, 10);
+
+            // Get user names for top rated users
+            for (const user of topRatedUsers) {
+                const userDoc = await db.collection("users").findOne(
+                    { _id: new ObjectId(user.userId) },
+                    { projection: { name: 1 } }
+                );
+                user.name = userDoc?.name || 'Unknown User';
+            }
+
+            return {
+                totalReviews,
+                averageRating,
+                ratingDistribution,
+                reviewsByMonth,
+                topRatedUsers
+            };
+        }, 'admin');
+        
+        // Handle the wrapper's return type
+        if (result && typeof result === 'object' && 'totalReviews' in result) {
+            return result as any;
         }
-
+        
+        // Return empty result on error
         return {
-            totalReviews,
-            averageRating,
-            ratingDistribution,
-            reviewsByMonth,
-            topRatedUsers
+            totalReviews: 0,
+            averageRating: 0,
+            ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+            reviewsByMonth: [],
+            topRatedUsers: []
         };
     } catch (error) {
         console.error("Error fetching review analytics:", error);
@@ -2845,6 +2613,8 @@ export async function validateReviewData(reviewData: Omit<Review, '_id' | 'creat
  * @returns User's reviews with pagination.
  */
 export async function getMyReviews(page: number = 1, limit: number = 10): Promise<{
+    success: true;
+    data: {
     reviews: (Review & { reviewee?: { _id: string; name: string } })[];
     pagination: {
         currentPage: number;
@@ -2853,16 +2623,12 @@ export async function getMyReviews(page: number = 1, limit: number = 10): Promis
         hasNext: boolean;
         hasPrev: boolean;
     };
-}> {
-    try {
-        const user = await getAuthenticatedUser();
-
+    };
+} | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const sanitizedPage = Math.max(1, Math.floor(page));
         const sanitizedLimit = Math.min(50, Math.max(1, Math.floor(limit)));
         const skip = (sanitizedPage - 1) * sanitizedLimit;
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Get total count and reviews
         const [totalCount, reviews] = await Promise.all([
@@ -2917,19 +2683,7 @@ export async function getMyReviews(page: number = 1, limit: number = 10): Promis
                 hasPrev: sanitizedPage > 1
             }
         };
-    } catch (error) {
-        console.error("Error fetching user reviews:", error);
-        return {
-            reviews: [],
-            pagination: {
-                currentPage: 1,
-                totalPages: 0,
-                totalCount: 0,
-                hasNext: false,
-                hasPrev: false
-            }
-        };
-    }
+    });
 }
 
 /**
@@ -2939,14 +2693,10 @@ export async function getMyReviews(page: number = 1, limit: number = 10): Promis
  * @returns Bulk operation result.
  */
 export async function bulkResolveReports(reportIds: string[], resolutionNotes?: string) {
-    try {
-        const user = await getAuthenticatedUser();
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.role !== 'admin') {
             throw new Error("Unauthorized");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         const result = await db.collection("reports").updateMany(
             { _id: { $in: reportIds.map(id => new ObjectId(id)) } },
@@ -2964,14 +2714,7 @@ export async function bulkResolveReports(reportIds: string[], resolutionNotes?: 
             success: true,
             modifiedCount: result.modifiedCount
         };
-    } catch (error) {
-        console.error("Error bulk resolving reports:", error);
-        return {
-            success: false,
-            message: "Failed to resolve reports.",
-            modifiedCount: 0
-        };
-    }
+    }, 'admin');
 }
 
 /**
@@ -2979,37 +2722,32 @@ export async function bulkResolveReports(reportIds: string[], resolutionNotes?: 
  * @returns Report analytics data.
  */
 export async function getReportAnalytics(): Promise<{
+    success: true;
+    data: {
     totalReports: number;
     pendingReports: number;
     resolvedReports: number;
     reportsByType: { [key: string]: number };
     reportsByReason: { [key: string]: number };
     reportsByMonth: { month: string; count: number }[];
-}> {
-    try {
-        const user = await getAuthenticatedUser();
-        if (user.role !== 'admin') {
-            throw new Error("Unauthorized");
-        }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+    };
+} | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Get all reports
         const reports = await db.collection("reports").find({}).toArray();
         const totalReports = reports.length;
-        const pendingReports = reports.filter(r => r.status === 'pending').length;
-        const resolvedReports = reports.filter(r => r.status === 'resolved').length;
+        const pendingReports = reports.filter((r: any) => r.status === 'pending').length;
+        const resolvedReports = reports.filter((r: any) => r.status === 'resolved').length;
 
         // Reports by type
         const reportsByType: { [key: string]: number } = {};
-        reports.forEach(report => {
+        reports.forEach((report: any) => {
             reportsByType[report.reportedContentType] = (reportsByType[report.reportedContentType] || 0) + 1;
         });
 
         // Reports by reason
         const reportsByReason: { [key: string]: number } = {};
-        reports.forEach(report => {
+        reports.forEach((report: any) => {
             reportsByReason[report.reason] = (reportsByReason[report.reason] || 0) + 1;
         });
 
@@ -3021,7 +2759,7 @@ export async function getReportAnalytics(): Promise<{
             const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
             const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
 
-            const count = reports.filter(r => {
+            const count = reports.filter((r: any) => {
                 const reportDate = new Date(r.createdAt);
                 return reportDate >= monthStart && reportDate <= monthEnd;
             }).length;
@@ -3040,17 +2778,7 @@ export async function getReportAnalytics(): Promise<{
             reportsByReason,
             reportsByMonth
         };
-    } catch (error) {
-        console.error("Error fetching report analytics:", error);
-        return {
-            totalReports: 0,
-            pendingReports: 0,
-            resolvedReports: 0,
-            reportsByType: {},
-            reportsByReason: {},
-            reportsByMonth: []
-        };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3058,23 +2786,16 @@ export async function getReportAnalytics(): Promise<{
  * Fetches all data for the admin dashboard.
  * @returns An object containing counts, organizations, and reports.
  */
-export async function getAdminDashboardData() {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+export async function getAdminDashboardData(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const userCount = await db.collection("users").countDocuments();
         const listingCount = await db.collection("books").countDocuments();
-        const organizations = await db.collection<Organization>("organizations").find({}).sort({ createdAt: -1 }).toArray();
-        const reports = await db.collection<Report>("reports").find({}).sort({ createdAt: -1 }).toArray();
+        const organizations = await db.collection("organizations").find({}).sort({ createdAt: -1 }).toArray();
+        const reports = await db.collection("reports").find({}).sort({ createdAt: -1 }).toArray();
         const users = await db.collection("users").find({}, { projection: { password: 0 } }).sort({ name: 1 }).toArray();
 
         return JSON.parse(JSON.stringify({ userCount, listingCount, organizations, reports, users }));
-    } catch (error) {
-        console.error("Error fetching admin data:", error);
-        return { userCount: 0, listingCount: 0, organizations: [], reports: [], users: [] };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3082,17 +2803,12 @@ export async function getAdminDashboardData() {
  * @param reportId The ID of the report to resolve.
  * @returns An object with the result of the operation.
  */
-export async function resolveReport(reportId: string) {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
+export async function resolveReport(reportId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         await db.collection("reports").updateOne({ _id: new ObjectId(reportId) }, { $set: { status: 'resolved' } });
         revalidatePath('/admin');
         return { success: true };
-    } catch (error) {
-        return { success: false, message: "Failed to resolve report." };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3102,11 +2818,9 @@ export async function resolveReport(reportId: string) {
  * @param contentType The type of content to remove.
  * @returns An object with the result of the operation.
  */
-export async function removeContentAndResolveReport(reportId: string, contentId: string, contentType: 'book' | 'user' | 'post' | 'comment' | 'community') {
-    try {
-        const user = await getAuthenticatedUser('admin');
+export async function removeContentAndResolveReport(reportId: string, contentId: string, contentType: 'book' | 'user' | 'post' | 'comment' | 'community'): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Start a transaction
         const session = await client.startSession();
@@ -3170,19 +2884,12 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
             });
 
             revalidatePath('/admin');
-            return { success: true, message: 'Content removed and report resolved successfully' };
+            return { message: 'Content removed and report resolved successfully' };
 
         } finally {
             await session.endSession();
         }
-
-    } catch (error) {
-        console.error('Error removing content and resolving report:', error);
-        return {
-            success: false,
-            message: error instanceof Error ? error.message : 'Failed to remove content and resolve report'
-        };
-    }
+    }, 'admin');
 }
 
 
@@ -3191,21 +2898,17 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
  * @param organizationId The ID of the organization to approve.
  * @returns An object with the result of the operation.
  */
-export async function approveOrganization(organizationId: string) {
-    try {
-        const adminUser = await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function approveOrganization(organizationId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Get organization details before updating for email notification
-        const org = await db.collection<Organization>("organizations").findOne({ _id: new ObjectId(organizationId) });
+        const org = await db.collection("organizations").findOne({ _id: new ObjectId(organizationId) });
         if (!org) {
-            return { success: false, message: "Organization not found." };
+            throw new Error("Organization not found.");
         }
         
         // Log organization approval attempt
         await logActivity(
-            adminUser.id,
+            user.id,
             'organization_approval',
             'high',
             `Admin approved organization: ${org.name}`,
@@ -3213,7 +2916,7 @@ export async function approveOrganization(organizationId: string) {
                 organizationId,
                 organizationName: org.name,
                 submittedBy: org.submittedBy,
-                adminId: adminUser.id
+                adminId: user.id
             }
         );
         
@@ -3248,7 +2951,7 @@ export async function approveOrganization(organizationId: string) {
         
         // Log successful organization approval
         await logActivity(
-            adminUser.id,
+            user.id,
             'organization_approval',
             'medium',
             `Successfully approved organization: ${org.name}`,
@@ -3260,10 +2963,7 @@ export async function approveOrganization(organizationId: string) {
         );
 
         return { success: true };
-    } catch (error) {
-        console.error("Error approving organization:", error);
-        return { success: false, message: "Failed to approve organization." };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3271,21 +2971,17 @@ export async function approveOrganization(organizationId: string) {
  * @param organizationId The ID of the organization to reject.
  * @returns An object with the result of the operation.
  */
-export async function rejectOrganization(organizationId: string) {
-    try {
-        const adminUser = await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function rejectOrganization(organizationId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Get organization details before updating for email notification
-        const org = await db.collection<Organization>("organizations").findOne({ _id: new ObjectId(organizationId) });
+        const org = await db.collection("organizations").findOne({ _id: new ObjectId(organizationId) });
         if (!org) {
-            return { success: false, message: "Organization not found." };
+            throw new Error("Organization not found.");
         }
         
         // Log organization rejection attempt
         await logActivity(
-            adminUser.id,
+            user.id,
             'organization_rejection',
             'high',
             `Admin rejected organization: ${org.name}`,
@@ -3293,7 +2989,7 @@ export async function rejectOrganization(organizationId: string) {
                 organizationId,
                 organizationName: org.name,
                 submittedBy: org.submittedBy,
-                adminId: adminUser.id
+                adminId: user.id
             }
         );
         
@@ -3327,7 +3023,7 @@ export async function rejectOrganization(organizationId: string) {
         
         // Log successful organization rejection
         await logActivity(
-            adminUser.id,
+            user.id,
             'organization_rejection',
             'medium',
             `Successfully rejected organization: ${org.name}`,
@@ -3339,10 +3035,7 @@ export async function rejectOrganization(organizationId: string) {
         );
 
         return { success: true };
-    } catch (error) {
-        console.error("Error rejecting organization:", error);
-        return { success: false, message: "Failed to reject organization." };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3358,13 +3051,11 @@ export async function addOrganizationByAdmin(orgData: {
     contactEmail?: string,
     contactPhone?: string,
     website?: string 
-}) {
-    try {
-        const admin = await getAuthenticatedUser('admin');
-        
+}): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Log admin organization addition attempt
         await logActivity(
-            admin.id,
+            user.id,
             'organization_admin_add',
             'high',
             `Admin adding new organization: ${orgData.name}`,
@@ -3372,7 +3063,7 @@ export async function addOrganizationByAdmin(orgData: {
                 organizationName: orgData.name,
                 location: orgData.location,
                 contactEmail: orgData.contactEmail,
-                adminId: admin.id
+                adminId: user.id
             }
         );
         
@@ -3387,11 +3078,8 @@ export async function addOrganizationByAdmin(orgData: {
         });
 
         if (!validation.isValid) {
-            return { success: false, message: validation.error };
+            throw new Error(validation.error);
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Check for duplicate organization names
         const sanitizedName = sanitizeOrganizationName(orgData.name);
@@ -3405,7 +3093,7 @@ export async function addOrganizationByAdmin(orgData: {
         });
 
         if (existingOrg) {
-            return { success: false, message: "An organization with this name already exists." };
+            throw new Error("An organization with this name already exists.");
         }
 
         const newOrg: Omit<Organization, '_id'> = {
@@ -3417,7 +3105,7 @@ export async function addOrganizationByAdmin(orgData: {
             contactPhone: orgData.contactPhone?.trim(),
             website: orgData.website?.trim(),
             status: 'approved',
-            submittedBy: admin.id,
+            submittedBy: user.id,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
@@ -3437,22 +3125,19 @@ export async function addOrganizationByAdmin(orgData: {
         
         // Log successful admin organization addition
         await logActivity(
-            admin.id,
+            user.id,
             'organization_admin_add',
             'medium',
             `Successfully added organization by admin: ${orgData.name}`,
             { 
                 organizationName: orgData.name,
                 status: 'approved',
-                adminId: admin.id
+                adminId: user.id
             }
         );
 
         return { success: true };
-    } catch (error) {
-        console.error("Error adding organization by admin:", error);
-        return { success: false, message: "Failed to add organization." };
-    }
+    }, 'admin');
 }
 
 
@@ -3461,12 +3146,8 @@ export async function addOrganizationByAdmin(orgData: {
  * @param userId The ID of the user to suspend.
  * @returns An object with the result of the operation.
  */
-export async function suspendUser(userId: string) {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function suspendUser(userId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         await db.collection("users").updateOne(
             { _id: new ObjectId(userId) },
             { $set: { status: 'suspended' } }
@@ -3474,10 +3155,7 @@ export async function suspendUser(userId: string) {
         
         revalidatePath('/admin');
         return { success: true };
-    } catch (error) {
-        console.error("Error suspending user:", error);
-        return { success: false, message: "Failed to suspend user." };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3485,12 +3163,8 @@ export async function suspendUser(userId: string) {
  * @param userId The ID of the user to activate.
  * @returns An object with the result of the operation.
  */
-export async function activateUser(userId: string) {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function activateUser(userId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         await db.collection("users").updateOne(
             { _id: new ObjectId(userId) },
             { $set: { status: 'active' } }
@@ -3498,10 +3172,7 @@ export async function activateUser(userId: string) {
         
         revalidatePath('/admin');
         return { success: true };
-    } catch (error) {
-        console.error("Error activating user:", error);
-        return { success: false, message: "Failed to activate user." };
-    }
+    }, 'admin');
 }
 
 /**
@@ -3510,17 +3181,14 @@ export async function activateUser(userId: string) {
  * @param userId The ID of the user to delete.
  * @returns An object with the result of the operation.
  */
-export async function deleteUser(userId: string) {
-    try {
-        const adminUser = await getAuthenticatedUser('admin');
-
+export async function deleteUser(userId: string): Promise<{ success: true; data: { message: string; deletedCounts: any } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         // Prevent admin from deleting themselves
-        if (adminUser.id === userId) {
-            return { success: false, message: "Cannot delete your own admin account." };
+        if (user.id === userId) {
+            throw new Error("Cannot delete your own admin account.");
         }
 
         const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Start a transaction for atomicity
         const session = client.startSession();
@@ -3662,7 +3330,6 @@ export async function deleteUser(userId: string) {
 
             revalidatePath('/admin');
             return {
-                success: true,
                 message: `User deleted successfully. Cleaned up ${Object.values(deletedCounts).reduce((a, b) => a + b, 0)} related records.`,
                 deletedCounts
             };
@@ -3670,14 +3337,7 @@ export async function deleteUser(userId: string) {
         } finally {
             await session.endSession();
         }
-
-    } catch (error) {
-        console.error("Error deleting user:", error);
-        return {
-            success: false,
-            message: error instanceof Error ? error.message : "Failed to delete user."
-        };
-    }
+    }, 'admin');
 }
 
 
@@ -3686,24 +3346,19 @@ export async function deleteUser(userId: string) {
  * @param userId The ID of the user.
  * @returns Profile data for the logged-in user.
  */
-export async function getMyProfileData(userId: string): Promise<any | null> {
-    try {
-        const user = await getAuthenticatedUser();
-        
+export async function getMyProfileData(userId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         // Validate authorization for accessing private profile data
         if (!ResourceAuthority.canAccessPrivateUserData(user, userId)) {
             throw createAppError(ErrorType.AUTHORIZATION, "You can only access your own profile data");
         }
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
-        const profileUser = await db.collection<User>("users").findOne({ _id: new ObjectId(user.id) });
+        const profileUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!profileUser) throw new Error("User not found");
         
-        const userListings = await db.collection<Book>("books").find({ sellerId: user.id }).toArray();
+        const userListings = await db.collection("books").find({ sellerId: user.id }).toArray();
         
-        const userCommunities = await db.collection<Community>("communities").find({ members: user.id }).toArray();
+        const userCommunities = await db.collection("communities").find({ "members.userId": user.id } as any).toArray();
 
         // Fetch wishlist books by their IDs
         const wishlistBooks: Book[] = [];
@@ -3713,8 +3368,8 @@ export async function getMyProfileData(userId: string): Promise<any | null> {
             ).filter(Boolean);
             
             if (wishlistBookIds.length > 0) {
-                const books = await db.collection<Book>("books").find({ 
-                    _id: { $in: wishlistBookIds.map(id => new ObjectId(id)) }
+                const books = await db.collection("books").find({ 
+                    _id: { $in: wishlistBookIds.map((id: any) => new ObjectId(id)) }
                 }).toArray();
                 wishlistBooks.push(...books);
             }
@@ -3726,10 +3381,7 @@ export async function getMyProfileData(userId: string): Promise<any | null> {
             wishlist: wishlistBooks,
             userCommunities: userCommunities,
         }));
-    } catch (error) {
-        console.error("Error fetching my profile data:", error);
-        return null;
-    }
+    });
 }
 
 /**
@@ -3737,31 +3389,27 @@ export async function getMyProfileData(userId: string): Promise<any | null> {
  * @param userId The ID of the user.
  * @returns An array of Chat objects.
  */
-export async function getUserChats(userId: string) {
-    try {
-        const user = await getAuthenticatedUser();
+export async function getUserChats(userId: string): Promise<{ success: true; data: Chat[] } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         if (user.id !== userId) throw new Error("Unauthorized");
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
-        const chats = await db.collection<Chat>("chats")
+        const chats = await db.collection("chats")
             .find({ participantIds: user.id })
             .sort({ updatedAt: -1 })
             .toArray();
         
         for (const chat of chats) {
-            const otherId = chat.participantIds.find(id => id !== user.id && !id.startsWith('org_'));
+            const otherId = chat.participantIds.find((id: any) => id !== user.id && !id.startsWith('org_'));
             if (otherId && ObjectId.isValid(otherId)) {
-                const otherUser = await db.collection<User>("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
+                const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
                 chat.otherParticipant = otherUser || undefined;
             }
             if (chat.bookId && ObjectId.isValid(chat.bookId)) {
-                const book = await db.collection<Book>("books").findOne({ _id: new ObjectId(chat.bookId) });
+                const book = await db.collection("books").findOne({ _id: new ObjectId(chat.bookId) });
                 chat.book = book || undefined;
             }
             if (chat.organizationId && ObjectId.isValid(String(chat.organizationId))) {
-                const organization = await db.collection<Organization>("organizations").findOne({ _id: new ObjectId(chat.organizationId) });
+                const organization = await db.collection("organizations").findOne({ _id: new ObjectId(chat.organizationId) });
                 chat.organization = organization || undefined;
                  if(chat.organization && !chat.otherParticipant) {
                     chat.otherParticipant = {
@@ -3773,10 +3421,7 @@ export async function getUserChats(userId: string) {
             }
         }
         return JSON.parse(JSON.stringify(chats));
-    } catch (error) {
-        console.error("Error fetching user chats:", error);
-        return [];
-    }
+    });
 }
 
 /**
@@ -3785,35 +3430,30 @@ export async function getUserChats(userId: string) {
  * @param userId The ID of the user requesting the chat.
  * @returns A Chat object or null.
  */
-export async function getChatDetails(chatId: string, userId: string): Promise<Chat | null> {
-    try {
-        const user = await getAuthenticatedUser();
-        
+export async function getChatDetails(chatId: string, userId: string): Promise<{ success: true; data: Chat | null } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         // Validate authorization using resource authorization system
         await validateResourceAccess(user, 'chat', chatId, 'read');
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
-        const chat = await db.collection<Chat>("chats").findOne({ 
+        const chat = await db.collection("chats").findOne({ 
             _id: new ObjectId(chatId), 
             participantIds: user.id 
         });
 
         if (!chat) return null;
 
-        const otherId = chat.participantIds.find(id => id !== user.id && !id.startsWith('org_'));
+        const otherId = chat.participantIds.find((id: any) => id !== user.id && !id.startsWith('org_'));
 
         if (otherId && ObjectId.isValid(otherId)) {
-            const otherUser = await db.collection<User>("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
+            const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
             chat.otherParticipant = otherUser || undefined;
         }
         if (chat.bookId && ObjectId.isValid(chat.bookId)) {
-            const book = await db.collection<Book>("books").findOne({ _id: new ObjectId(chat.bookId) });
+            const book = await db.collection("books").findOne({ _id: new ObjectId(chat.bookId) });
             chat.book = book || undefined;
         }
         if (chat.organizationId && ObjectId.isValid(String(chat.organizationId))) {
-            const organization = await db.collection<Organization>("organizations").findOne({ _id: new ObjectId(chat.organizationId) });
+            const organization = await db.collection("organizations").findOne({ _id: new ObjectId(chat.organizationId) });
             chat.organization = organization || undefined;
             if(chat.organization && !chat.otherParticipant) {
                 chat.otherParticipant = {
@@ -3824,10 +3464,7 @@ export async function getChatDetails(chatId: string, userId: string): Promise<Ch
             }
         }
         return JSON.parse(JSON.stringify(chat));
-    } catch (error) {
-        console.error("Error fetching chat details:", error);
-        return null;
-    }
+    });
 }
 
 /**
@@ -3837,6 +3474,8 @@ export async function getChatDetails(chatId: string, userId: string): Promise<Ch
  * @returns A promise that resolves to a paginated result with notifications and metadata.
  */
 export async function getUserNotifications(page: number = 1, limit: number = 10): Promise<{
+    success: true;
+    data: {
     notifications: Notification[];
     pagination: {
         currentPage: number;
@@ -3845,18 +3484,15 @@ export async function getUserNotifications(page: number = 1, limit: number = 10)
         hasNext: boolean;
         hasPrev: boolean;
     };
-}> {
-    try {
-        const user = await getAuthenticatedUser();
-        
+    };
+} | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Input validation
         const sanitizedPage = Math.max(1, Math.floor(page));
         const sanitizedLimit = Math.min(50, Math.max(1, Math.floor(limit)));
         const skip = (sanitizedPage - 1) * sanitizedLimit;
         
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        const notificationCollection = db.collection<Notification>("notifications");
+        const notificationCollection = db.collection("notifications");
         
         // Get notifications with pagination - use a single query for better performance
         const notifications = await notificationCollection
@@ -3884,19 +3520,7 @@ export async function getUserNotifications(page: number = 1, limit: number = 10)
                 hasPrev: sanitizedPage > 1
             }
         };
-    } catch (error) {
-        console.error("Error fetching notifications:", error);
-        return {
-            notifications: [],
-            pagination: {
-                currentPage: 1,
-                totalPages: 0,
-                totalCount: 0,
-                hasNext: false,
-                hasPrev: false
-            }
-        };
-    }
+    });
 }
 
 /**
@@ -3906,7 +3530,7 @@ export async function getUserNotifications(page: number = 1, limit: number = 10)
 export async function getNotifications(): Promise<Notification[]> {
     try {
         const result = await getUserNotifications(1, 20);
-        return result.notifications;
+        return result.success ? result.data.notifications : [];
     } catch (error) {
         console.error("Error in legacy getNotifications:", error);
         return [];
@@ -3917,12 +3541,8 @@ export async function getNotifications(): Promise<Notification[]> {
  * Marks all unread notifications for the logged-in user as read.
  * @returns An object with the result of the operation.
  */
-export async function markNotificationsAsRead() {
-    try {
-        const user = await getAuthenticatedUser();
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function markNotificationsAsRead(): Promise<{ success: true; data: { modifiedCount: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Ensure we only update the authenticated user's notifications
         const result = await db.collection("notifications").updateMany(
             { userId: user.id, read: false },
@@ -3930,11 +3550,8 @@ export async function markNotificationsAsRead() {
         );
         
         revalidatePath('/'); // Revalidate to update header
-        return { success: true, modifiedCount: result.modifiedCount };
-    } catch (error) {
-        console.error("Error marking notifications as read:", error);
-        return { success: false, message: "Could not update notifications." };
-    }
+        return { modifiedCount: result.modifiedCount };
+    });
 }
 
 /**
@@ -3942,12 +3559,8 @@ export async function markNotificationsAsRead() {
  * @param notificationId The ID of the notification to mark as read
  * @returns Result of the operation
  */
-export async function markNotificationAsRead(notificationId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function markNotificationAsRead(notificationId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Verify notification belongs to user before updating
         const result = await db.collection("notifications").updateOne(
             { _id: new ObjectId(notificationId), userId: user.id },
@@ -3955,15 +3568,12 @@ export async function markNotificationAsRead(notificationId: string) {
         );
         
         if (result.matchedCount === 0) {
-            return { success: false, message: "Notification not found or access denied." };
+            throw new Error("Notification not found or access denied.");
         }
         
         revalidatePath('/');
         return { success: true };
-    } catch (error) {
-        console.error("Error marking notification as read:", error);
-        return { success: false, message: "Could not update notification." };
-    }
+    });
 }
 
 /**
@@ -3971,27 +3581,20 @@ export async function markNotificationAsRead(notificationId: string) {
  * @param notificationId The ID of the notification to delete
  * @returns Result of the operation
  */
-export async function deleteNotification(notificationId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function deleteNotification(notificationId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Verify notification belongs to user before deleting
         const result = await db.collection("notifications").deleteOne(
             { _id: new ObjectId(notificationId), userId: user.id }
         );
         
         if (result.deletedCount === 0) {
-            return { success: false, message: "Notification not found or access denied." };
+            throw new Error("Notification not found or access denied.");
         }
         
         revalidatePath('/');
         return { success: true };
-    } catch (error) {
-        console.error("Error deleting notification:", error);
-        return { success: false, message: "Could not delete notification." };
-    }
+    });
 }
 
 /**
@@ -4014,13 +3617,9 @@ export async function completeUserProfile({
         avatarUrl?: string;
         birthDate?: string;
     };
-}) {
-    try {
-        const user = await getAuthenticatedUser();
+}): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         if (user.id !== userId) throw new Error("Unauthorized");
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         const updateData: any = {
             name: profileData.name,
@@ -4043,23 +3642,15 @@ export async function completeUserProfile({
         
         revalidatePath('/');
         return { success: true };
-    } catch (error) {
-        console.error('Error completing user profile:', error);
-        return { success: false, error: 'Failed to complete profile' };
-    }
+    });
 }
 
 /**
  * Migration function to set profileCompleted for existing users.
  * This function should be run once to update existing users.
  */
-export async function migrateExistingUsersProfileCompleted() {
-    try {
-        await getAuthenticatedUser('admin'); // Only admins can run migrations
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+export async function migrateExistingUsersProfileCompleted(): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Set profileCompleted to true for all existing users who have a city
         // and false for those who don't have a city
         const result = await db.collection("users").updateMany(
@@ -4080,13 +3671,9 @@ export async function migrateExistingUsersProfileCompleted() {
         );
         
         return { 
-            success: true, 
             message: `Updated ${result.modifiedCount} users` 
         };
-    } catch (error) {
-        console.error('Error migrating existing users:', error);
-        return { success: false, error: 'Failed to migrate users' };
-    }
+    }, 'admin');
 }
 
 // ===== EXCHANGE MANAGEMENT FUNCTIONS =====
@@ -4102,10 +3689,8 @@ export async function proposeExchange(
     proposerBookId: string,
     responderBookId: string,
     proposalMessage?: string
-) {
-    try {
-        const user = await getAuthenticatedUser();
-        
+): Promise<{ success: true; data: { exchangeId: string; chatId: string; message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
         
@@ -4114,15 +3699,12 @@ export async function proposeExchange(
         const validatedProposerBookId = validateObjectId(proposerBookId);
         const validatedResponderBookId = validateObjectId(responderBookId);
         
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
         // Fetch all required data with validation
         const [proposer, responder, proposerBook, responderBook] = await Promise.all([
-            db.collection<User>("users").findOne({ _id: new ObjectId(user.id) }),
-            db.collection<User>("users").findOne({ _id: validatedResponderId }),
-            db.collection<Book>("books").findOne({ _id: validatedProposerBookId }),
-            db.collection<Book>("books").findOne({ _id: validatedResponderBookId })
+            db.collection("users").findOne({ _id: new ObjectId(user.id) }),
+            db.collection("users").findOne({ _id: validatedResponderId }),
+            db.collection("books").findOne({ _id: validatedProposerBookId }),
+            db.collection("books").findOne({ _id: validatedResponderBookId })
         ]);
         
         // Comprehensive validation
@@ -4146,17 +3728,11 @@ export async function proposeExchange(
         
         // Same-city validation (reuse existing logic)
         if (!proposer.city || !responder.city) {
-            return {
-                success: false,
-                message: "Both users must have their city set in their profile to exchange books."
-            };
+            throw new Error("Both users must have their city set in their profile to exchange books.");
         }
         
         if (proposer.city.toLowerCase().trim() !== responder.city.toLowerCase().trim()) {
-            return {
-                success: false,
-                message: `Book exchanges are only available within the same city. You are in ${proposer.city}, but the other user is in ${responder.city}.`
-            };
+            throw new Error(`Book exchanges are only available within the same city. You are in ${proposer.city}, but the other user is in ${responder.city}.`);
         }
         
         // Check if there's already an active exchange between these books
@@ -4180,15 +3756,12 @@ export async function proposeExchange(
         });
         
         if (existingExchange) {
-            return {
-                success: false,
-                message: "There is already an active exchange proposal between these books."
-            };
+            throw new Error("There is already an active exchange proposal between these books.");
         }
         
         // Find or create chat for communication
         const participantIds = [user.id, responderUserId].sort();
-        let chat = await db.collection<Chat>("chats").findOne({
+        let chat = await db.collection("chats").findOne({
             participantIds: { $all: participantIds },
             bookId: validatedResponderBookId
         });
@@ -4300,35 +3873,21 @@ export async function proposeExchange(
         }
         
         return { 
-            success: true, 
             exchangeId: exchangeResult.insertedId.toString(),
             chatId: chat._id.toString(),
             message: "Exchange proposal sent successfully!"
         };
-        
-    } catch (error) {
-        if (error instanceof Error && error.name === 'ValidationError') {
-            console.warn("Exchange proposal validation error:", error.message);
-            return { success: false, message: error.message };
-        }
-        
-        console.error("Error proposing exchange:", error);
-        return { success: false, message: "Could not send exchange proposal. Please try again." };
-    }
+    });
 }
 
 /**
  * Accepts a pending exchange proposal
  */
-export async function acceptExchange(exchangeId: string) {
-    try {
-        const user = await getAuthenticatedUserFull();
+export async function acceptExchange(exchangeId: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
         
         const validatedExchangeId = validateObjectId(exchangeId);
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         // Find the exchange
         const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
@@ -4344,10 +3903,7 @@ export async function acceptExchange(exchangeId: string) {
         
         // Validate exchange is in proposed status
         if (exchange.status !== 'proposed') {
-            return {
-                success: false,
-                message: `Cannot accept exchange in ${exchange.status} status`
-            };
+            throw new Error(`Cannot accept exchange in ${exchange.status} status`);
         }
         
         // Update exchange status
@@ -4395,8 +3951,8 @@ export async function acceptExchange(exchangeId: string) {
         
         // Send email notification to proposer (if they have email notifications enabled)
         try {
-            const proposer = await db.collection<User>("users").findOne({ _id: new ObjectId(exchange.proposerId) });
-            const responderBook = await db.collection<Book>("books").findOne({ _id: new ObjectId(exchange.responderBookId) });
+            const proposer = await db.collection("users").findOne({ _id: new ObjectId(exchange.proposerId) });
+            const responderBook = await db.collection("books").findOne({ _id: new ObjectId(exchange.responderBookId) });
             
             if (proposer && responderBook) {
                 const proposerEmailPrefs = proposer.emailPreferences;
@@ -4430,32 +3986,19 @@ export async function acceptExchange(exchangeId: string) {
         }
         
         return {
-            success: true,
             message: "Exchange accepted successfully! Coordinate with the other user to complete the exchange."
         };
-        
-    } catch (error) {
-        if (error instanceof Error && error.name === 'ValidationError') {
-            return { success: false, message: error.message };
-        }
-        
-        console.error("Error accepting exchange:", error);
-        return { success: false, message: "Could not accept exchange. Please try again." };
-    }
+    });
 }
 
 /**
  * Confirms completion of an exchange (both users must confirm)
  */
-export async function confirmExchangeCompletion(exchangeId: string) {
-    try {
-        const user = await getAuthenticatedUser();
+export async function confirmExchangeCompletion(exchangeId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
         
         const validatedExchangeId = validateObjectId(exchangeId);
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         // Find the exchange
         const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
@@ -4471,10 +4014,7 @@ export async function confirmExchangeCompletion(exchangeId: string) {
         
         // Validate exchange is accepted or in progress
         if (!['accepted', 'in_progress'].includes(exchange.status)) {
-            return {
-                success: false,
-                message: `Cannot confirm completion for exchange in ${exchange.status} status`
-            };
+            throw new Error(`Cannot confirm completion for exchange in ${exchange.status} status`);
         }
         
         const now = new Date().toISOString();
@@ -4564,35 +4104,22 @@ export async function confirmExchangeCompletion(exchangeId: string) {
         }
         
         return {
-            success: true,
             completed: bothConfirmed,
             message: bothConfirmed 
                 ? "Exchange completed successfully! You can now rate your exchange partner."
                 : "Your confirmation has been recorded. Waiting for the other user to confirm."
         };
-        
-    } catch (error) {
-        if (error instanceof Error && error.name === 'ValidationError') {
-            return { success: false, message: error.message };
-        }
-        
-        console.error("Error confirming exchange completion:", error);
-        return { success: false, message: "Could not confirm completion. Please try again." };
-    }
+    });
 }
 
 /**
  * Cancels an exchange (can be done by either participant before completion)
  */
-export async function cancelExchange(exchangeId: string, reason?: string) {
-    try {
-        const user = await getAuthenticatedUser();
+export async function cancelExchange(exchangeId: string, reason?: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
         
         const validatedExchangeId = validateObjectId(exchangeId);
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
         
         // Find the exchange
         const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
@@ -4608,10 +4135,7 @@ export async function cancelExchange(exchangeId: string, reason?: string) {
         
         // Validate exchange can be cancelled
         if (['completed', 'cancelled'].includes(exchange.status)) {
-            return {
-                success: false,
-                message: `Cannot cancel exchange in ${exchange.status} status`
-            };
+            throw new Error(`Cannot cancel exchange in ${exchange.status} status`);
         }
         
         const now = new Date().toISOString();
@@ -4668,18 +4192,9 @@ export async function cancelExchange(exchangeId: string, reason?: string) {
         }
         
         return {
-            success: true,
             message: "Exchange cancelled successfully."
         };
-        
-    } catch (error) {
-        if (error instanceof Error && error.name === 'ValidationError') {
-            return { success: false, message: error.message };
-        }
-        
-        console.error("Error cancelling exchange:", error);
-        return { success: false, message: "Could not cancel exchange. Please try again." };
-    }
+    });
 }
 
 /**
@@ -4689,13 +4204,8 @@ export async function getUserExchanges(
     page: number = 1,
     limit: number = 10,
     status?: ExchangeStatus
-) {
-    try {
-        const user = await getAuthenticatedUser();
-        
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+): Promise<{ success: true; data: { exchanges: any[]; totalCount: number; hasMore: boolean; currentPage: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Build query
         const query: any = {
             $or: [
@@ -4782,16 +4292,7 @@ export async function getUserExchanges(
             hasMore,
             currentPage: page
         };
-        
-    } catch (error) {
-        console.error("Error fetching user exchanges:", error);
-        return {
-            exchanges: [],
-            totalCount: 0,
-            hasMore: false,
-            currentPage: 1
-        };
-    }
+    });
 }
 
 /**
@@ -4859,13 +4360,9 @@ export async function getChatExchangeDetails(chatId: string) {
 /**
  * Gets user email preferences
  */
-export async function getUserEmailPreferences() {
-    try {
-        const user = await getAuthenticatedUser();
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
-        const userData = await db.collection<User>("users").findOne(
+export async function getUserEmailPreferences(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        const userData = await db.collection("users").findOne(
             { _id: new ObjectId(user.id) },
             { projection: { emailPreferences: 1 } }
         );
@@ -4879,16 +4376,7 @@ export async function getUserEmailPreferences() {
         };
         
         return userData?.emailPreferences || defaultPreferences;
-        
-    } catch (error) {
-        console.error("Error fetching email preferences:", error);
-        return {
-            exchangeProposals: true,
-            exchangeUpdates: true,
-            contactNotifications: true,
-            weeklyDigest: false
-        };
-    }
+    });
 }
 
 /**
@@ -4899,12 +4387,8 @@ export async function updateEmailPreferences(preferences: {
     exchangeUpdates: boolean;
     contactNotifications: boolean;
     weeklyDigest: boolean;
-}) {
-    try {
-        const user = await getAuthenticatedUser();
-        const client = await clientPromise;
-        const db = client.db("bookex");
-        
+}): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         await db.collection("users").updateOne(
             { _id: new ObjectId(user.id) },
             { 
@@ -4917,100 +4401,67 @@ export async function updateEmailPreferences(preferences: {
         
         revalidatePath('/profile/settings');
         return { success: true };
-        
-    } catch (error) {
-        console.error("Error updating email preferences:", error);
-        return { success: false, message: "Failed to update email preferences" };
-    }
+    });
 }
 
 /**
  * Optimizes database performance by ensuring all indexes exist (Admin only)
  * @returns Result of the database optimization
  */
-export async function optimizeDatabasePerformance() {
-    try {
-        await getAuthenticatedUser('admin');
-        
+export async function optimizeDatabasePerformance(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log('🚀 Starting database optimization...');
         const result = await ensureDatabaseIndexes();
         
         if (result.success) {
             console.log('✅ Database optimization completed successfully');
             return { 
-                success: true, 
                 message: "Database performance optimization completed successfully!" 
             };
         } else {
             throw new Error(result.error || 'Unknown error during optimization');
         }
-    } catch (error) {
-        console.error("Error optimizing database:", error);
-        return { 
-            success: false, 
-            message: "Failed to optimize database performance. Please try again." 
-        };
-    }
+    }, 'admin');
 }
 
 /**
  * Checks database index health and performance (Admin only)
  * @returns Database health report
  */
-export async function checkDatabaseHealth() {
-    try {
-        await getAuthenticatedUser('admin');
-        
+export async function checkDatabaseHealth(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const healthCheck = await checkIndexHealth();
         
         return {
-            success: true,
-            data: {
                 healthy: healthCheck.healthy,
                 missingIndexes: healthCheck.missingIndexes || [],
                 totalChecked: healthCheck.totalChecked || 0,
                 message: healthCheck.healthy 
                     ? "Database indexes are healthy and optimized!" 
                     : `Found ${healthCheck.missingIndexes?.length || 0} missing indexes that need attention.`
-            }
         };
-    } catch (error) {
-        console.error("Error checking database health:", error);
-        return { 
-            success: false, 
-            message: "Failed to check database health. Please try again." 
-        };
-    }
+    }, 'admin');
 }
 
 /**
  * Creates only the missing critical indexes (Admin only)
  * @returns Result of creating missing indexes
  */
-export async function createMissingDatabaseIndexes() {
-    try {
-        await getAuthenticatedUser('admin');
-        
+export async function createMissingDatabaseIndexes(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log('🔧 Creating missing database indexes...');
         const result = await createMissingIndexes();
         
         if (result.success) {
             console.log('✅ Missing indexes created successfully');
             return { 
-                success: true, 
                 message: result.message || "Missing indexes created successfully!",
                 createdCount: result.createdCount || 0
             };
         } else {
             throw new Error(result.error || 'Unknown error during index creation');
         }
-    } catch (error) {
-        console.error("Error creating missing indexes:", error);
-        return { 
-            success: false, 
-            message: "Failed to create missing indexes. Please try again." 
-        };
-    }
+    }, 'admin');
 }
 
 /**
@@ -5018,15 +4469,8 @@ export async function createMissingDatabaseIndexes() {
  * @param mode The maintenance mode to run
  * @returns Result of the maintenance operation
  */
-export async function initializeDatabaseMaintenance(mode: 'full' | 'indexes' | 'cleanup' | 'migration' = 'full') {
-    try {
-        const user = await getAuthenticatedUser();
-        
-        // Only allow admin users to run database maintenance
-        if (user.role !== 'admin') {
-            throw createAppError(ErrorType.AUTHORIZATION, "Only administrators can run database maintenance");
-        }
-
+export async function initializeDatabaseMaintenance(mode: 'full' | 'indexes' | 'cleanup' | 'migration' = 'full'): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log(`🔧 Starting database maintenance in ${mode} mode...`);
 
         switch (mode) {
@@ -5057,35 +4501,19 @@ export async function initializeDatabaseMaintenance(mode: 'full' | 'indexes' | '
         console.log(`✅ Database maintenance (${mode}) completed successfully`);
         
         return { 
-            success: true, 
             message: `Database maintenance (${mode} mode) completed successfully!`,
             mode,
             timestamp: new Date().toISOString()
         };
-    } catch (error) {
-        console.error(`❌ Database maintenance (${mode}) failed:`, error);
-        return { 
-            success: false, 
-            message: `Database maintenance failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            mode,
-            timestamp: new Date().toISOString()
-        };
-    }
+    }, 'admin');
 }
 
 /**
  * Emergency database cleanup for critical storage issues
  * @returns Result of the emergency cleanup operation
  */
-export async function emergencyDatabaseCleanup() {
-    try {
-        const user = await getAuthenticatedUser();
-        
-        // Only allow admin users to run emergency cleanup
-        if (user.role !== 'admin') {
-            throw createAppError(ErrorType.AUTHORIZATION, "Only administrators can run emergency cleanup");
-        }
-
+export async function emergencyDatabaseCleanup(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log('🚨 Starting emergency database cleanup...');
         
         await DatabaseMaintenance.emergencyCleanup();
@@ -5093,29 +4521,17 @@ export async function emergencyDatabaseCleanup() {
         console.log('✅ Emergency cleanup completed');
         
         return { 
-            success: true, 
             message: "Emergency database cleanup completed successfully!",
             timestamp: new Date().toISOString()
         };
-    } catch (error) {
-        console.error('❌ Emergency cleanup failed:', error);
-        return { 
-            success: false, 
-            message: `Emergency cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            timestamp: new Date().toISOString()
-        };
-    }
+    }, 'admin');
 }
 
 /**
  * Gets security statistics for admin dashboard
  */
-export async function getSecurityStats() {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+export async function getSecurityStats(): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Get authentication statistics
         const failedLogins = await db.collection("authenticationAttempts").countDocuments({
             success: false,
@@ -5169,73 +4585,49 @@ export async function getSecurityStats() {
                 duplicatesBlocked: 0 // Would need separate tracking
             }
         };
-    } catch (error) {
-        console.error("Error fetching security stats:", error);
-        return {
-            authentication: { failedLogins: 0, blockedAccounts: 0, rateLimitHits: 0 },
-            contentModeration: { flaggedContent: 0, bannedUsers: 0, pendingReview: 0 },
-            fileSecurity: { quarantinedFiles: 0, virusDetected: 0 },
-            businessLogic: { activeLocks: 0, duplicatesBlocked: 0 }
-        };
-    }
+    }, 'admin');
 }
 
 /**
  * Gets recent security alerts for admin dashboard
  */
-export async function getSecurityAlerts() {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+export async function getSecurityAlerts(): Promise<{ success: true; data: any[] } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         const alerts = await db.collection("securityAlerts").find({
             resolved: false,
             createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }
         }).sort({ createdAt: -1 }).limit(10).toArray();
 
         return JSON.parse(JSON.stringify(alerts));
-    } catch (error) {
-        console.error("Error fetching security alerts:", error);
-        return [];
-    }
+    }, 'admin');
 }
 
 /**
  * Resolves a security alert
  */
-export async function resolveSecurityAlert(alertId: string) {
-    try {
-        await getAuthenticatedUser('admin');
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
+export async function resolveSecurityAlert(alertId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         await db.collection("securityAlerts").updateOne(
             { _id: new ObjectId(alertId) },
             { 
                 $set: { 
                     resolved: true,
                     resolvedAt: new Date().toISOString(),
-                    resolvedBy: "admin" // Would get actual admin ID
+                    resolvedBy: user.id
                 }
             }
         );
 
         revalidatePath('/admin');
         return { success: true };
-    } catch (error) {
-        console.error("Error resolving security alert:", error);
-        return { success: false, message: "Failed to resolve security alert" };
-    }
+    }, 'admin');
 }
 
 /**
  * Triggers security maintenance tasks
  */
-export async function runSecurityMaintenance(category: string) {
-    try {
-        await getAuthenticatedUser('admin');
-        
+export async function runSecurityMaintenance(category: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         let result;
         switch (category) {
             case 'content':
@@ -5254,28 +4646,21 @@ export async function runSecurityMaintenance(category: string) {
                 throw new Error('Invalid maintenance category');
         }
 
-        return { success: true, result };
-    } catch (error) {
-        console.error("Error running security maintenance:", error);
-        return { success: false, message: "Security maintenance failed" };
-    }
+        return result;
+    }, 'admin');
 }
 
 /**
  * Deletes a book listing (only by the owner)
  */
 export async function deleteBookListing(bookId: string) {
-    try {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
         }
 
-        const client = await clientPromise;
-        const db = client.db("bookex");
-
         // Use transaction for data consistency
+        const client = await clientPromise;
         const session = client.startSession();
         
         try {
@@ -5344,28 +4729,14 @@ export async function deleteBookListing(bookId: string) {
         revalidatePath(`/books/${bookId}`);
         
         return { success: true, message: "Book listing deleted successfully" };
-        
-    } catch (error) {
-        console.error("Error deleting book listing:", error);
-        
-        if (error instanceof Error && error.message.includes('You can only delete')) {
-            return { success: false, message: "You can only delete your own listings" };
-        }
-        
-        return { success: false, message: "Failed to delete book listing" };
-    }
+    });
 }
 
 export async function updateBookStatus(bookId: string, status: BookStatus) {
-    return withErrorHandling(async () => {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Get current book data
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
@@ -5411,19 +4782,14 @@ export async function updateBookStatus(bookId: string, status: BookStatus) {
         }
         
         return { success: true, message: "Book status updated successfully" };
-    }, 'updateBookStatus');
+    });
 }
 
 export async function renewBookListing(bookId: string) {
-    return withErrorHandling(async () => {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Get current book data
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
@@ -5464,22 +4830,17 @@ export async function renewBookListing(bookId: string) {
         }
         
         return { success: true, message: "Book listing renewed successfully" };
-    }, 'renewBookListing');
+    });
 }
 
 /**
  * Gets a book's data for editing (only by the owner)
  */
 export async function getBookForEdit(bookId: string) {
-    return withErrorHandling(async () => {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Get book data
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
@@ -5493,7 +4854,7 @@ export async function getBookForEdit(bookId: string) {
         }
 
         return JSON.parse(JSON.stringify(book));
-    }, 'getBookForEdit');
+    });
 }
 
 /**
@@ -5510,9 +4871,7 @@ export async function updateBookListing(bookId: string, bookData: {
     imageUrl?: string; 
     city: string;
 }) {
-    return withErrorHandling(async () => {
-        const user = await getAuthenticatedUser();
-        
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
         }
@@ -5523,8 +4882,12 @@ export async function updateBookListing(bookId: string, bookData: {
             throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || "Rate limit exceeded");
         }
 
-        // Validate and sanitize input data
-        const validatedBookData = await validateBookData(bookData);
+        // Validate input data with Zod schema
+        const validation = validateWithSchema(bookSchema, bookData);
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
+        }
+        const validatedBookData = validation.data;
 
         // Validate image data URI if provided
         if (bookData.imageUrl) {
@@ -5533,9 +4896,6 @@ export async function updateBookListing(bookId: string, bookData: {
                 throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
             }
         }
-
-        const client = await clientPromise;
-        const db = client.db("bookex");
 
         // Get current book data
         const existingBook = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
@@ -5629,7 +4989,7 @@ export async function updateBookListing(bookId: string, bookData: {
         }
         
         return { success: true, message: "Book listing updated successfully" };
-    }, 'updateBookListing');
+    });
 }
 
 /**
@@ -5709,4 +5069,132 @@ export async function checkProfileCompletion() {
         console.error('Error checking profile completion:', error);
         return { isAuthenticated: false, profileCompleted: false };
     }
+}
+
+/**
+ * Community role management actions
+ */
+export async function promoteToModerator(communityId: string, targetUserId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        if (!community) throw new Error('Community not found');
+        const current = (community as any).members?.find((m: any) => m.userId === user.id);
+        if (!(current?.role === 'admin' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        await db.collection('communities').updateOne(
+          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+          { $set: { 'members.$.role': 'moderator' } }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { success: true };
+    });
+}
+
+export async function demoteModerator(communityId: string, targetUserId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        if (!community) throw new Error('Community not found');
+        const current = (community as any).members?.find((m: any) => m.userId === user.id);
+        if (!(current?.role === 'admin' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        await db.collection('communities').updateOne(
+          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+          { $set: { 'members.$.role': 'member' } }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { success: true };
+    });
+}
+
+export async function banMember(communityId: string, targetUserId: string, reason?: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        if (!community) throw new Error('Community not found');
+        const current = (community as any).members?.find((m: any) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        await db.collection('communities').updateOne(
+          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+          { $set: { 'members.$.banned': true, 'members.$.banReason': reason || '', 'members.$.bannedAt': new Date().toISOString() } }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { success: true };
+    });
+}
+
+export async function unbanMember(communityId: string, targetUserId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        if (!community) throw new Error('Community not found');
+        const current = (community as any).members?.find((m: any) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        await db.collection('communities').updateOne(
+          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+          { $set: { 'members.$.banned': false }, $unset: { 'members.$.banReason': '', 'members.$.bannedAt': '' } as any }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { success: true };
+    });
+}
+
+/**
+ * Creates a new channel in a community.
+ * @param communityId The ID of the community.
+ * @param channelData The data for the new channel.
+ * @returns An object with the result of the operation.
+ */
+export async function createChannel(communityId: string, channelData: { name: string; type: 'forum' | 'chat'; description?: string }): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        // Validate input
+        if (!channelData.name || !channelData.type || !['forum', 'chat'].includes(channelData.type)) {
+            throw new Error('Invalid channel data');
+        }
+
+        if (!ObjectId.isValid(communityId)) {
+            throw new Error('Invalid community ID');
+        }
+
+        // Check if user has moderation privileges
+        const { getUserCommunityRole, hasModerationPrivileges } = await import('@/lib/community-permissions');
+        const userRole = await getUserCommunityRole(communityId, user.id);
+        if (!hasModerationPrivileges(userRole)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        // Get community to check existing channels
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) });
+        if (!community) {
+            throw new Error('Community not found');
+        }
+
+        // Check if channel name already exists
+        const existingChannel = community.channels?.find((c: any) => c.name.toLowerCase() === channelData.name.toLowerCase());
+        if (existingChannel) {
+            throw new Error('Channel name already exists');
+        }
+
+        // Create new channel
+        const newChannel = {
+            _id: new ObjectId().toString(),
+            name: channelData.name.trim(),
+            type: channelData.type,
+            description: channelData.description?.trim() || '',
+            order: (community.channels?.length || 0),
+            createdAt: new Date().toISOString()
+        };
+
+        // Add channel to community
+        const result = await db.collection('communities').updateOne(
+            { _id: new ObjectId(communityId) },
+            { $push: { channels: newChannel } } as any
+        );
+
+        if (result.modifiedCount > 0) {
+            revalidatePath(`/community/${communityId}`);
+            return { success: true, channel: newChannel };
+        } else {
+            throw new Error('Failed to create channel');
+        }
+    });
 }

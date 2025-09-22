@@ -43,9 +43,10 @@ export async function GET(request: NextRequest) {
     }
 
     // Get communities with pagination
+    const sort: any = filter === 'high_moderation' ? { reportedPosts: -1 } : { createdAt: -1 };
     const communities = await db.collection('communities')
       .find(query)
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
       .toArray();
@@ -58,14 +59,17 @@ export async function GET(request: NextRequest) {
       communities.map(async (community) => {
         const communityData = community as Community;
 
-        const postsCount = await db.collection('posts').countDocuments({
-          communityId: community._id
-        });
+        const postsCount = await db.collection('posts').countDocuments({ communityId: community._id });
 
-        const reportedPosts = await db.collection('posts').countDocuments({
-          communityId: community._id,
-          reported: true
-        });
+        const reportedPosts = await db.collection('posts').countDocuments({ communityId: community._id, reported: true });
+
+        const members = (community as any).members || [];
+        const roleDistribution = members.reduce((acc: any, m: any) => {
+          const role = m?.role || 'member';
+          acc[role] = (acc[role] || 0) + 1;
+          if (m?.banned) acc.banned = (acc.banned || 0) + 1;
+          return acc;
+        }, { admin: 0, moderator: 0, member: 0, banned: 0 });
 
         const recentActivity = await db.collection('posts')
           .find({ communityId: community._id })
@@ -73,11 +77,30 @@ export async function GET(request: NextRequest) {
           .limit(1)
           .toArray();
 
+        // Get channel information
+        const channels = (community as any).channels || [];
+        const forumChannels = channels.filter((c: any) => c.type === 'forum').length;
+        const chatChannels = channels.filter((c: any) => c.type === 'chat').length;
+
+        // Get recent chat messages count
+        const recentChatMessages = await db.collection('chatMessages')
+          .countDocuments({ 
+            channelId: { $in: channels.map((c: any) => c._id) },
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }
+          });
+
         return {
           ...communityData,
           postsCount,
           reportedPosts,
-          recentActivity: recentActivity[0]?.createdAt || communityData.createdAt
+          roleDistribution,
+          recentActivity: recentActivity[0]?.createdAt || communityData.createdAt,
+          channelsInfo: {
+            total: channels.length,
+            forum: forumChannels,
+            chat: chatChannels
+          },
+          recentChatMessages
         };
       })
     );

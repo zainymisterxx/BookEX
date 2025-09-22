@@ -7,6 +7,14 @@ import { Server } from 'socket.io';
 import { ObjectId } from 'mongodb';
 import clientPromise from './src/lib/mongodb';
 import redisCache from './src/lib/redis-cache';
+import jwt from 'jsonwebtoken';
+
+// Extend Socket type to include userId
+declare module 'socket.io' {
+  interface Socket {
+    userId: string | null;
+  }
+}
 
 // Initialize Redis connection (non-blocking)
 redisCache.connect().catch(() => {
@@ -23,6 +31,23 @@ const io = new Server(httpServer, {
 
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
+  
+  // Store user ID in socket for authorization
+  socket.userId = null;
+
+  // Handle authentication
+  socket.on('authenticate', (token) => {
+    try {
+      if (token && process.env.NEXTAUTH_SECRET) {
+        const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET) as any;
+        socket.userId = decoded.sub || decoded.id;
+        console.log(`User ${socket.userId} authenticated`);
+      }
+    } catch (error) {
+      console.error('Authentication error:', error);
+      socket.emit('error', { message: 'Authentication failed' });
+    }
+  });
 
   socket.on('joinChat', (chatId) => {
     socket.join(chatId);
@@ -76,6 +101,49 @@ io.on('connection', (socket) => {
   socket.on('leaveCommunity', (communityId) => {
     socket.leave(`community_${communityId}`);
     console.log(`User ${socket.id} left community ${communityId}`);
+  });
+
+  // Channel events with authorization
+  socket.on('joinChannel', async (data) => {
+    const { channelId, communityId } = data;
+    
+    try {
+      if (!socket.userId) {
+        socket.emit('error', { message: 'Not authenticated' });
+        return;
+      }
+
+      // Verify user is member of community
+      const client = await clientPromise;
+      const db = client.db('bookex');
+      const community = await db.collection('communities').findOne({
+        _id: new ObjectId(communityId),
+        'members.userId': socket.userId
+      });
+
+      if (!community) {
+        socket.emit('error', { message: 'Not a member of this community' });
+        return;
+      }
+
+      // Check if channel exists in community
+      const channel = community.channels?.find((c: any) => c._id === channelId);
+      if (!channel) {
+        socket.emit('error', { message: 'Channel not found' });
+        return;
+      }
+
+      socket.join(`channel_${channelId}`);
+      console.log(`User ${socket.id} joined channel ${channelId}`);
+    } catch (error) {
+      console.error('Error joining channel:', error);
+      socket.emit('error', { message: 'Failed to join channel' });
+    }
+  });
+
+  socket.on('leaveChannel', (channelId) => {
+    socket.leave(`channel_${channelId}`);
+    console.log(`User ${socket.id} left channel ${channelId}`);
   });
 
   socket.on('joinUserRoom', (userId) => {
@@ -146,6 +214,23 @@ io.on('connection', (socket) => {
 
     } catch (error) {
         console.error("Error broadcasting like update:", error);
+    }
+  });
+
+  // Chat message events
+  socket.on('chatMessage', async (data) => {
+    const { channelId, message } = data;
+    
+    try {
+        // Broadcast new chat message to all channel members
+        io.to(`channel_${channelId}`).emit('newChatMessage', {
+            channelId,
+            message,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error("Error broadcasting chat message:", error);
     }
   });
 

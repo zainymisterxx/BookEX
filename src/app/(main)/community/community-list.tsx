@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { toggleCommunityMembership, searchCommunities } from '@/app/actions';
 import { useSession } from 'next-auth/react';
 import { AuthModal } from '@/components/auth-modal';
+import { isUserMember as checkUserMembership, addMember, removeMember, updateMemberCount } from '@/lib/community-utils';
 
 export function CommunityList({ initialCommunities }: { initialCommunities: Community[] }) {
   const [communities, setCommunities] = useState(initialCommunities);
@@ -68,32 +69,41 @@ export function CommunityList({ initialCommunities }: { initialCommunities: Comm
     // Store current state for proper revert on failure
     const currentCommunities = [...communities];
     
-    // Optimistic update
+    // Optimistic update using utility functions
     setCommunities(prev => prev.map(c => {
         if (String(c._id) === communityId) {
-            const newMemberCount = isMember ? c.memberCount - 1 : c.memberCount + 1;
             const newMembers = isMember 
-                ? c.members.filter(id => id !== user.id)
-                : [...c.members, user.id];
+                ? removeMember(c.members || [], user.id)
+                : addMember(c.members || [], user.id);
+            const newMemberCount = updateMemberCount(c.memberCount || 0, !isMember);
+            
             return { ...c, members: newMembers, memberCount: newMemberCount };
         }
         return c;
     }));
 
     startTransition(async () => {
-        const result = await toggleCommunityMembership(communityId, isMember);
-        if(result.success) {
-            toast({ title: isMember ? `You have left ${communityName}` : `Welcome to ${communityName}!` });
-        } else {
-             // Revert to previous state instead of initial state
+        try {
+            const result = await toggleCommunityMembership(communityId, isMember);
+            if(result.success) {
+                toast({ title: isMember ? `You have left ${communityName}` : `Welcome to ${communityName}!` });
+            } else {
+                // Revert to previous state instead of initial state
+                setCommunities(currentCommunities);
+                toast({ variant: 'destructive', title: 'Could not update membership.' });
+            }
+        } catch (error) {
+            // Revert to previous state on error
             setCommunities(currentCommunities);
-            toast({ variant: 'destructive', title: 'Could not update membership.' });
+            console.error('Error toggling membership:', error);
+            toast({ variant: 'destructive', title: 'Network error. Please try again.' });
         }
     });
   }
 
   const isUserMember = (community: Community) => {
-      return user ? community.members?.includes(user.id) : false;
+      if (!user) return false;
+      return checkUserMembership(community.members, user.id);
   }
 
   return (

@@ -490,138 +490,47 @@ export async function getCommunities(): Promise<Community[]> {
  */
 export async function getCommunityDetails(communityId: string, page: number = 1, limit: number = 20) {
     try {
-        if (!ObjectId.isValid(communityId)) return null;
+        if (!ObjectId.isValid(communityId)) {
+            console.error('Invalid communityId:', communityId);
+            return null;
+        }
 
         const client = await clientPromise;
         const db = client.db("bookex");
         
-        // First, get the community basic info and total post count
+        console.log('Fetching community details for:', communityId);
+        
+        // Community basic info
         const community = await db.collection<Community>("communities").findOne(
             { _id: new ObjectId(communityId) },
-            { projection: { posts: 0 } } // Exclude posts for now
+            { projection: { posts: 0 } }
         );
         
-        if (!community) return null;
+        console.log('Community found:', !!community);
+        if (!community) {
+            console.error('Community not found for ID:', communityId);
+            return null;
+        }
         
-        const totalPosts = community.posts?.length || 0;
-        const totalPages = Math.ceil(totalPosts / limit);
         const skip = (page - 1) * limit;
         
-        // Get paginated posts with author information
-        const postsWithAuthors = await db.collection<Community>("communities").aggregate([
-            { $match: { _id: new ObjectId(communityId) } },
-            {
-                $project: {
-                    posts: { $slice: ["$posts", skip, limit] }
-                }
-            },
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "posts.authorId",
-                    foreignField: "_id",
-                    as: "postAuthors",
-                    pipeline: [
-                        { $project: { name: 1, avatarUrl: 1 } }
-                    ]
-                }
-            },
-            {
-                $lookup: {
-                    from: "users", 
-                    localField: "posts.comments.author._id",
-                    foreignField: "_id",
-                    as: "commentAuthors",
-                    pipeline: [
-                        { $project: { name: 1, avatarUrl: 1 } }
-                    ]
-                }
-            },
-            {
-                $addFields: {
-                    posts: {
-                        $map: {
-                            input: "$posts",
-                            as: "post",
-                            in: {
-                                $mergeObjects: [
-                                    "$$post",
-                                    {
-                                        author: {
-                                            $let: {
-                                                vars: {
-                                                    author: {
-                                                        $arrayElemAt: [
-                                                            {
-                                                                $filter: {
-                                                                    input: "$postAuthors",
-                                                                    cond: { $eq: ["$$this._id", { $toObjectId: "$$post.authorId" }] }
-                                                                }
-                                                            },
-                                                            0
-                                                        ]
-                                                    }
-                                                },
-                                                in: {
-                                                    _id: { $toString: "$$author._id" },
-                                                    name: "$$author.name",
-                                                    avatarUrl: "$$author.avatarUrl"
-                                                }
-                                            }
-                                        },
-                                        comments: {
-                                            $map: {
-                                                input: { $ifNull: ["$$post.comments", []] },
-                                                as: "comment", 
-                                                in: {
-                                                    $mergeObjects: [
-                                                        "$$comment",
-                                                        {
-                                                            author: {
-                                                                $let: {
-                                                                    vars: {
-                                                                        commentAuthor: {
-                                                                            $arrayElemAt: [
-                                                                                {
-                                                                                    $filter: {
-                                                                                        input: "$commentAuthors",
-                                                                                        cond: { $eq: ["$$this._id", { $toObjectId: "$$comment.author._id" }] }
-                                                                                    }
-                                                                                },
-                                                                                0
-                                                                            ]
-                                                                        }
-                                                                    },
-                                                                    in: {
-                                                                        _id: { $toString: "$$commentAuthor._id" },
-                                                                        name: "$$commentAuthor.name", 
-                                                                        avatarUrl: "$$commentAuthor.avatarUrl"
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    ]
-                                                }
-                                            }
-                                        }
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                }
-            },
-            { $project: { postAuthors: 0, commentAuthors: 0 } }
-        ]).toArray();
+        // Fetch posts from posts collection
+        const [posts, totalPosts] = await Promise.all([
+            db.collection('posts')
+              .find({ communityId: new ObjectId(communityId) } as any)
+              .sort({ createdAt: -1 })
+              .skip(skip)
+              .limit(limit)
+              .toArray(),
+            db.collection('posts').countDocuments({ communityId: new ObjectId(communityId) } as any)
+        ]);
 
-        const posts = postsWithAuthors[0]?.posts || [];
+        // Attach minimal author projection if needed (already stored denormalized in author)
+        const totalPages = Math.ceil(totalPosts / limit);
 
         return serialize({
-            community: {
-                ...community,
-                posts: undefined // Remove posts from community object
-            },
-            posts: posts,
+            community: { ...community, posts: undefined },
+            posts,
             pagination: {
                 page,
                 limit,
@@ -633,8 +542,35 @@ export async function getCommunityDetails(communityId: string, page: number = 1,
         });
     } catch (error) {
         console.error("Error fetching community details:", error);
+        console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            communityId
+        });
         return null;
     }
+}
+
+export async function getThreadedComments(postId: string, parentId?: string | null, limit: number = 50) {
+    const client = await clientPromise;
+    const db = client.db('bookex');
+    if (!ObjectId.isValid(postId)) return [];
+
+    const basePath = parentId && ObjectId.isValid(parentId) ? `${postId}/${parentId}` : postId;
+    const query: any = { postId: new ObjectId(postId) };
+    if (parentId === undefined) {
+        query.parentId = null;
+    } else if (parentId) {
+        query.parentId = new ObjectId(parentId);
+    }
+
+    const comments = await db.collection('comments')
+      .find(query)
+      .sort({ createdAt: 1 })
+      .limit(limit)
+      .toArray();
+
+    return serialize(comments);
 }
 
 /**

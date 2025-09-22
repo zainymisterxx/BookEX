@@ -5,9 +5,12 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { MarkdownEditor } from '@/components/ui/markdown-editor';
+import { MarkdownContent } from '@/components/ui/markdown-content';
 import { Heart, MessageCircle, MoreHorizontal, UserPlus, UserMinus, Users, Send, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import React, { useState, useTransition, useEffect } from 'react';
 import type { Community, Post, User, Comment } from '@/lib/types';
+import { promoteToModerator, demoteModerator, banMember, unbanMember } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { AuthModal } from '@/components/auth-modal';
 import { cn } from '@/lib/utils';
@@ -15,6 +18,7 @@ import { toggleCommunityMembership, createPost, togglePostLike, addComment } fro
 import { Input } from '@/components/ui/input';
 import type { Session } from 'next-auth';
 import { useSocket } from '@/components/socket-provider';
+import { isUserMember as checkUserMembership, addMember, removeMember, updateMemberCount } from '@/lib/community-utils';
 
 interface CommunityDetailClientProps {
     initialCommunity: Community;
@@ -112,7 +116,10 @@ export function CommunityDetailClient({
 
   // Join/leave community room when component mounts/unmounts or user membership changes
   useEffect(() => {
-    if (isConnected && user && community.members?.includes(user.id)) {
+    const isMemberNow = Array.isArray(community.members)
+      ? (community.members as any[]).some((m: any) => (m?.userId || m) === user?.id)
+      : false;
+    if (isConnected && user && isMemberNow) {
       joinCommunity(communityId);
     }
 
@@ -211,14 +218,25 @@ export function CommunityDetailClient({
           return;
       }
       
-      const isMember = community.members?.includes(user.id) ?? false;
+      // Consistent member checking using utility function
+      const isMember = checkUserMembership(community.members, user.id);
+      
       const originalCommunity = { ...community };
       
-      // Optimistic update
+      // Optimistic update using utility functions
       setCommunity(prev => {
           if (!prev) return prev;
-          const newMembers = isMember ? prev.members.filter(id => id !== user.id) : [...prev.members, user.id];
-          return { ...prev, members: newMembers, memberCount: newMembers.length };
+          
+          const newMembers = isMember 
+            ? removeMember(prev.members || [], user.id)
+            : addMember(prev.members || [], user.id);
+          const newMemberCount = updateMemberCount(prev.memberCount || 0, !isMember);
+          
+          return { 
+            ...prev, 
+            members: newMembers, 
+            memberCount: newMemberCount
+          };
       });
 
       startTransition(async () => {
@@ -312,10 +330,10 @@ export function CommunityDetailClient({
     startTransition(async () => {
         try {
           const result = await createPost(communityId, { authorId: user.id, content: trimmedContent });
-          if (result.success && result.newPost) {
+          if (result.success && (result.data as any)?.newPost) {
               // Replace temp post with real post
               setPosts(prevPosts => prevPosts.map(p => 
-                String(p._id) === String(tempPost._id) ? result.newPost! : p
+                String(p._id) === String(tempPost._id) ? (result.data as any).newPost : p
               ));
               
               // Reload posts to get updated pagination info if needed
@@ -325,7 +343,7 @@ export function CommunityDetailClient({
               
               // Emit real-time update for new post
               try {
-                emitPostCreated(communityId, result.newPost);
+                emitPostCreated(communityId, (result.data as any).newPost);
               } catch (emitError) {
                 console.warn('Failed to emit real-time post creation:', emitError);
               }
@@ -338,7 +356,7 @@ export function CommunityDetailClient({
               toast({ 
                 variant: 'destructive', 
                 title: 'Failed to create post',
-                description: result.message || 'Please try again.' 
+                description: result.success ? 'Please try again.' : result.message || 'Please try again.'
               });
             }
         } catch (error) {
@@ -398,17 +416,19 @@ export function CommunityDetailClient({
 
     startTransition(async () => {
         const result = await addComment(communityId, postId, content);
-        if (result.success && result.newComment) {
+        if ((result as any).success && ((result as any).comment || (result as any).newComment)) {
+            const added = (result as any).comment || (result as any).newComment;
             setPosts(prevPosts => prevPosts.map(p => {
                 if (String(p._id) === postId) {
-                    return { ...p, comments: [...(p.comments || []), result.newComment!] };
+                    const nextCount = typeof (p as any).commentCount === 'number' ? (p as any).commentCount + 1 : undefined;
+                    return { ...p, comments: [...(p.comments || []), added], ...(nextCount !== undefined ? { commentCount: nextCount } : {}) } as any;
                 }
                 return p;
             }));
             
             // Emit real-time update for new comment
             try {
-              emitCommentCreated(communityId, postId, result.newComment);
+              emitCommentCreated(communityId, postId, added);
             } catch (emitError) {
               console.warn('Failed to emit real-time comment creation:', emitError);
             }
@@ -424,7 +444,7 @@ export function CommunityDetailClient({
     return date.toLocaleString();
   }
   
-  const isMember = user ? community.members?.includes(user.id) : false;
+  const isMember = user ? (Array.isArray(community.members) ? (community.members as any[]).some((m: any) => (m?.userId || m) === user.id) : false) : false;
 
   return (
     <div className="bg-secondary min-h-screen">
@@ -487,13 +507,12 @@ export function CommunityDetailClient({
                     <h2 className="font-headline text-lg md:text-xl font-semibold">Create a Post</h2>
                   </CardHeader>
                   <CardContent className="p-4 md:p-6 pt-0">
-                    <Textarea
-                      placeholder={`What's on your mind, ${user.name}?`}
-                      rows={3}
+                    <MarkdownEditor
                       value={newPostContent}
-                      onChange={(e) => setNewPostContent(e.target.value)}
+                      onChange={setNewPostContent}
                       disabled={isPending}
-                      className="resize-none text-sm md:text-base"
+                      placeholder={`What's on your mind, ${user.name}?`}
+                      className="text-sm md:text-base"
                     />
                   </CardContent>
                   <CardFooter className="p-4 md:p-6 pt-0 flex justify-end">
@@ -544,7 +563,7 @@ export function CommunityDetailClient({
               )}
               
               {posts.map((post, index) => {
-                const isLiked = user ? post.likedBy?.includes(user.id) : false;
+                const isLiked = user ? (post.likedBy || []).includes(user.id) : false;
                 const postId = String(post._id);
                 return (
                   <React.Fragment key={postId}>
@@ -581,7 +600,7 @@ export function CommunityDetailClient({
                           </div>
                       </CardHeader>
                       <CardContent className="p-4 md:p-6 pt-0">
-                          <p className="text-sm md:text-base leading-relaxed break-words">{post.content}</p>
+                          <MarkdownContent content={post.content} className="prose prose-sm md:prose-base max-w-none" />
                       </CardContent>
                       <CardFooter className="flex-col items-start gap-3 md:gap-4 border-t pt-3 md:pt-4 mt-3 md:mt-4 px-4 md:px-6 pb-4 md:pb-6">
                           <div className="flex items-center gap-2 md:gap-4 w-full">
@@ -601,7 +620,7 @@ export function CommunityDetailClient({
                                 className="flex items-center gap-2 text-muted-foreground flex-1 justify-start h-9 md:h-10"
                               >
                                   <MessageCircle className="h-4 w-4 md:h-5 md:w-5" />
-                                  <span className="text-sm">{post.comments?.length || 0}</span>
+                                  <span className="text-sm">{(post as any).commentCount ?? (post.comments?.length || 0)}</span>
                               </Button>
                           </div>
                           <div className="w-full space-y-3 md:space-y-4 pt-3 md:pt-4">
@@ -716,6 +735,41 @@ export function CommunityDetailClient({
                     <span className="text-primary font-semibold">{totalPosts.toLocaleString()}</span>
                   </div>
                 </div>
+
+                {/* Member list with roles */}
+                <div className="pt-4 border-t">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-foreground">Members</span>
+                    <span className="text-muted-foreground">{community.memberCount}</span>
+                  </div>
+                  <div className="max-h-80 overflow-auto space-y-2 pr-1">
+                    {(Array.isArray(community.members) ? (community.members as any[]) : []).map((m: any) => {
+                      const role = m?.role || 'member';
+                      const isBanned = !!m?.banned;
+                      const label = role === 'admin' ? 'Admin' : role === 'moderator' ? 'Moderator' : 'Member';
+                      return (
+                        <div key={(m?.userId || m)} className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="h-2 w-2 rounded-full bg-primary" />
+                            <span className="truncate">{m?.userId || m}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={"px-2 py-0.5 rounded text-[10px] border " + (role === 'admin' ? 'border-primary text-primary' : role === 'moderator' ? 'border-amber-600 text-amber-700' : 'border-muted-foreground/40 text-muted-foreground')}>{label}</span>
+                            {user && isMember && !isBanned && (
+                              <RoleActions
+                                currentUserId={user.id}
+                                community={community}
+                                member={m}
+                                onActionDone={() => { /* re-fetch members later if needed */ }}
+                              />
+                            )}
+                            {isBanned && <span className="text-xs text-destructive">Banned</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -724,6 +778,8 @@ export function CommunityDetailClient({
     </div>
   );
 }
+
+ 
 
 function CommentForm({ postId, onAddComment, isPending, user }: { postId: string, onAddComment: (postId: string, content: string) => void, isPending: boolean, user: Session["user"] }) {
     const [comment, setComment] = useState('');
@@ -759,4 +815,36 @@ function CommentForm({ postId, onAddComment, isPending, user }: { postId: string
             </div>
         </form>
     );
+}
+
+function RoleActions({ currentUserId, community, member, onActionDone }: { currentUserId: string, community: Community, member: any, onActionDone: () => void }) {
+  const [isBusy, startTransition] = useTransition();
+  const isSelf = member?.userId === currentUserId;
+  const myRole = Array.isArray(community.members) ? (community.members as any[]).find((m: any) => m.userId === currentUserId)?.role : undefined;
+  const canAdmin = myRole === 'admin';
+  const canMod = myRole === 'admin' || myRole === 'moderator';
+
+  if (isSelf) return null;
+
+  const doPromote = () => startTransition(async () => { await promoteToModerator(String(community._id), member.userId); onActionDone(); });
+  const doDemote = () => startTransition(async () => { await demoteModerator(String(community._id), member.userId); onActionDone(); });
+  const doBan = () => startTransition(async () => { await banMember(String(community._id), member.userId); onActionDone(); });
+  const doUnban = () => startTransition(async () => { await unbanMember(String(community._id), member.userId); onActionDone(); });
+
+  return (
+    <div className="flex items-center gap-1">
+      {canAdmin && member.role === 'member' && (
+        <Button size="sm" variant="outline" disabled={isBusy} onClick={doPromote}>Promote</Button>
+      )}
+      {canAdmin && member.role === 'moderator' && (
+        <Button size="sm" variant="outline" disabled={isBusy} onClick={doDemote}>Demote</Button>
+      )}
+      {canMod && !member.banned && (
+        <Button size="sm" variant="destructive" disabled={isBusy} onClick={doBan}>Ban</Button>
+      )}
+      {canMod && member.banned && (
+        <Button size="sm" variant="outline" disabled={isBusy} onClick={doUnban}>Unban</Button>
+      )}
+    </div>
+  );
 }
