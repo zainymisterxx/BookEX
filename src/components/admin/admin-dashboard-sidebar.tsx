@@ -40,8 +40,10 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
 
     const fetchAdminData = async () => {
         setIsLoading(true);
-        const adminData = await getAdminDashboardData();
-        setData(adminData);
+        const response = await getAdminDashboardData();
+        if (response.success) {
+            setData(response.data);
+        }
         setIsLoading(false);
     }
     
@@ -53,7 +55,11 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             );
             return { ...prevData, organizations: updatedOrgs };
         });
-        getAdminDashboardData().then(freshData => setData(freshData));
+        getAdminDashboardData().then(response => {
+            if (response.success) {
+                setData(response.data);
+            }
+        });
     }
 
     const handleReportActionCompleted = (reportId: string) => {
@@ -62,7 +68,11 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             const updatedReports = prevData.reports.filter(report => String(report._id) !== reportId);
             return { ...prevData, reports: updatedReports };
         });
-        getAdminDashboardData().then(freshData => setData(freshData));
+        getAdminDashboardData().then(response => {
+            if (response.success) {
+                setData(response.data);
+            }
+        });
     }
     
     const handleOrganizationAdded = () => {
@@ -98,14 +108,14 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             id: 'organizations', 
             label: 'Organizations', 
             icon: FileText,
-            badge: organizations.filter(org => org.status === 'pending').length
+            badge: organizations?.filter(org => org.status === 'pending').length || 0
         },
         { id: 'security', label: 'Security', icon: Shield },
         { 
             id: 'moderation', 
             label: 'Moderation', 
             icon: FileText,
-            badge: reports.filter(report => report.status === 'pending').length
+            badge: reports?.filter(report => report.status === 'pending').length || 0
         },
         { id: 'database', label: 'Database', icon: Database },
         { id: 'users', label: 'Users', icon: UserCheck },
@@ -202,7 +212,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     </div>
                                     <div className="p-6 bg-background rounded-lg border">
                                         <h3 className="text-sm font-medium text-muted-foreground">Pending Organizations</h3>
-                                        <p className="text-3xl font-bold text-yellow-600">{organizations.filter(org => org.status === 'pending').length}</p>
+                                        <p className="text-3xl font-bold text-yellow-600">{organizations?.filter(org => org.status === 'pending').length || 0}</p>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -239,7 +249,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
-                                                {organizations.map((org) => (
+                                                {organizations?.map((org) => (
                                                     <TableRow key={String(org._id)}>
                                                         <TableCell className="font-medium">{org.name}</TableCell>
                                                         <TableCell>{org.location}</TableCell>
@@ -267,7 +277,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     
                                     {/* Mobile cards */}
                                     <div className="md:hidden space-y-4">
-                                        {organizations.map((org) => (
+                                        {organizations?.map((org) => (
                                             <OrganizationMobileCard key={String(org._id)} organization={org}>
                                                 <AdminOrgActions 
                                                     organization={org} 
@@ -309,7 +319,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
-                                                {users.map((user) => (
+                                                {users?.map((user) => (
                                                     <TableRow key={String(user._id)}>
                                                         <TableCell className="font-medium">{user.name}</TableCell>
                                                         <TableCell>{user.email}</TableCell>
@@ -341,7 +351,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     
                                     {/* Mobile cards */}
                                     <div className="md:hidden space-y-4">
-                                        {users.map((user) => (
+                                        {users?.map((user) => (
                                             <UserMobileCard key={String(user._id)} user={user}>
                                                 <AdminUserActions 
                                                     user={user} 

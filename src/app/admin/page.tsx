@@ -6,7 +6,16 @@ import { AdminDashboardSidebar } from '@/components/admin/admin-dashboard-sideba
 export default async function AdminPage() {
   
   // Fetch initial data on the server
-  const initialData = await getAdminDashboardData();
+  const response = await getAdminDashboardData();
+  
+  // Extract data from the response
+  const initialData = response.success ? response.data : {
+    userCount: 0,
+    listingCount: 0,
+    organizations: [],
+    reports: [],
+    users: []
+  };
 
   // Pass server-fetched data as initial props to the client component
   return (
