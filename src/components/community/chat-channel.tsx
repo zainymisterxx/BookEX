@@ -103,7 +103,7 @@ export function ChatChannel({
   // Join/leave channel room
   useEffect(() => {
     if (isConnected && isMember) {
-      joinChannel(channelId, communityId);
+      joinChannel(channelId);
     }
 
     return () => {

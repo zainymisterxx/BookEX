@@ -86,7 +86,7 @@ export function ProfileCompletionModal({ isOpen, onClose, onForceClose, user }: 
       } else {
         toast({
           title: "Error",
-          description: result.error || "Failed to complete profile",
+          description: result.message || "Failed to complete profile",
           variant: "destructive"
         });
       }

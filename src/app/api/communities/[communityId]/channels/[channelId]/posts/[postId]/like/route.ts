@@ -47,7 +47,7 @@ export async function POST(
     const userId = session.user.id;
     const likedBy = post.likedBy || [];
 
-    let updateOperation;
+    let updateOperation: any;
     if (liked) {
       // Add like if not already liked
       if (!likedBy.includes(userId)) {

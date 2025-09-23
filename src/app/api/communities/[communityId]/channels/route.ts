@@ -59,7 +59,7 @@ export async function POST(
     // Add channel to community
     const result = await db.collection('communities').updateOne(
       { _id: new ObjectId(communityId) },
-      { $push: { channels: newChannel } }
+      { $push: { channels: newChannel } } as any
     );
 
     if (result.modifiedCount > 0) {

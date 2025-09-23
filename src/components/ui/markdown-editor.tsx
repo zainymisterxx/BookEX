@@ -28,7 +28,6 @@ export function MarkdownEditor({ value, onChange, disabled, placeholder, classNa
       {showPreview ? (
         <div className="border rounded-md px-3 py-2 bg-secondary/40">
           {/* Lazy import to avoid circular refs */}
-          {/** @ts-expect-error dynamic import in client */}
           {React.createElement(require('./markdown-content').MarkdownContent, { content: value })}
         </div>
       ) : (

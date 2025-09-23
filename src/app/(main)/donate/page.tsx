@@ -47,15 +47,18 @@ export default function DonatePage() {
     setIsDonating(orgId);
     try {
         const result = await initiateDonation(orgId);
-        if (!result.success || !result.chatId) {
+        if (!result.success) {
             throw new Error(result.message || "Failed to initiate donation.");
+        }
+        if (!result.data?.chatId) {
+            throw new Error("Failed to initiate donation.");
         }
 
         toast({
             title: "Thank you for your generosity!",
             description: "A chat has been started to coordinate the donation."
         });
-        router.push(`/messages/${result.chatId}`);
+        router.push(`/messages/${result.data.chatId}`);
 
     } catch (error) {
         console.error("Error initiating donation:", error);

@@ -52,11 +52,11 @@ export default function SettingsPage() {
       if (user?.id) {
         setIsLoading(true);
         const userData = await getUserForUpdate(user.id);
-        if (userData) {
-          setName(userData.name || '');
-          setCity(userData.city || '');
-          setAvatarPreview(userData.avatarUrl || null);
-          if (!userData.city) {
+        if (userData.success && userData.data) {
+          setName(userData.data.name || '');
+          setCity(userData.data.city || '');
+          setAvatarPreview(userData.data.avatarUrl || null);
+          if (!userData.data.city) {
             setIsProfileIncomplete(true);
           }
         }
@@ -99,14 +99,17 @@ export default function SettingsPage() {
         avatarUrl: newAvatarDataUrl,
       });
       
-      if (!result.success || !result.updatedUser) {
+      if (!result.success) {
           throw new Error(result.message);
+      }
+      if (!result.data?.updatedUser) {
+          throw new Error("Failed to update profile");
       }
 
       // This updates the session object from next-auth with the new data
       await updateSession({
-          name: result.updatedUser.name,
-          image: result.updatedUser.image,
+          name: result.data.updatedUser.name,
+          image: result.data.updatedUser.image,
       });
 
       toast({

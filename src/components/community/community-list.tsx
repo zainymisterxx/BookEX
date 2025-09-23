@@ -87,9 +87,9 @@ export function CommunityList({ initialCommunities }: { initialCommunities: Comm
         if (String(c._id) === communityId) {
             const newMemberCount = isMember ? c.memberCount - 1 : c.memberCount + 1;
             const newMembers = isMember 
-                ? c.members.filter(id => id !== user.id)
+                ? c.members.filter((member: any) => (typeof member === 'string' ? member : member.userId) !== user.id)
                 : [...c.members, user.id];
-            return { ...c, members: newMembers, memberCount: newMemberCount };
+            return { ...c, members: newMembers, memberCount: newMemberCount } as Community;
         }
         return c;
     }));
@@ -107,7 +107,9 @@ export function CommunityList({ initialCommunities }: { initialCommunities: Comm
   }
 
   const isUserMember = (community: Community) => {
-      return user ? community.members?.includes(user.id) : false;
+      return user ? community.members?.some((member: any) => 
+        typeof member === 'string' ? member === user.id : member.userId === user.id
+      ) : false;
   }
 
   return (

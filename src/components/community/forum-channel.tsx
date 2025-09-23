@@ -111,8 +111,8 @@ export function ForumChannel({
 
   // Set up real-time event listeners
   useEffect(() => {
-    const handleNewPost = (data: { channelId: string; post: Post; timestamp: string }) => {
-      if (data.channelId === channelId) {
+    const handleNewPost = (data: { communityId: string; post: Post; timestamp: string }) => {
+      if (data.communityId === communityId) {
         if (currentPage === 1) {
           setPosts(prevPosts => {
             const exists = prevPosts.some(p => String(p._id) === String(data.post._id));
@@ -125,8 +125,8 @@ export function ForumChannel({
       }
     };
 
-    const handleNewComment = (data: { channelId: string; postId: string; comment: Comment; timestamp: string }) => {
-      if (data.channelId === channelId) {
+    const handleNewComment = (data: { communityId: string; postId: string; comment: Comment; timestamp: string }) => {
+      if (data.communityId === communityId) {
         setPosts(prevPosts => prevPosts.map(p => {
           if (String(p._id) === data.postId) {
             const exists = p.comments?.some(c => String(c._id) === String(data.comment._id));
@@ -139,8 +139,8 @@ export function ForumChannel({
       }
     };
 
-    const handlePostLikeUpdate = (data: { channelId: string; postId: string; userId: string; liked: boolean; timestamp: string }) => {
-      if (data.channelId === channelId) {
+    const handlePostLikeUpdate = (data: { communityId: string; postId: string; userId: string; liked: boolean; timestamp: string }) => {
+      if (data.communityId === communityId) {
         setPosts(prevPosts => prevPosts.map(p => {
           if (String(p._id) === data.postId) {
             const likedBy = p.likedBy || [];
@@ -433,7 +433,7 @@ export function ForumChannel({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <p className="font-semibold text-sm truncate">{post.author?.name || 'Anonymous'}</p>
-                            {getRoleIcon(post.author?.role)}
+                            {getRoleIcon((post.author as any)?.role)}
                           </div>
                           <p className="text-xs text-muted-foreground">{formatDate(post.createdAt)}</p>
                         </div>
@@ -493,7 +493,7 @@ export function ForumChannel({
                           <div className="flex items-center gap-2 mb-1">
                             <div className="flex items-center gap-1">
                               <p className="font-semibold text-xs truncate">{comment.author?.name}</p>
-                              {getRoleIcon(comment.author?.role)}
+                              {getRoleIcon((comment.author as any)?.role)}
                             </div>
                             <p className="text-xs text-muted-foreground flex-shrink-0">{formatDate(comment.createdAt)}</p>
                           </div>

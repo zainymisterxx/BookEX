@@ -543,8 +543,8 @@ export async function getCommunityDetails(communityId: string, page: number = 1,
     } catch (error) {
         console.error("Error fetching community details:", error);
         console.error("Error details:", {
-            message: error.message,
-            stack: error.stack,
+            message: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
             communityId
         });
         return null;

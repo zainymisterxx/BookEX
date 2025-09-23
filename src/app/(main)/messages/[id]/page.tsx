@@ -51,9 +51,9 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     const fetchChatData = async () => {
       setIsLoading(true);
       const chatData = await getChatDetails(id, user.id);
-      if (chatData) {
-        setChat(chatData);
-        setMessages(chatData.messages || []);
+      if (chatData.success && chatData.data) {
+        setChat(chatData.data);
+        setMessages(chatData.data.messages || []);
         
         // Fetch exchange details if this chat is associated with an exchange
         const exchangeData = await getChatExchangeDetails(id);

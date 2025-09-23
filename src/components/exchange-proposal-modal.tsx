@@ -50,8 +50,8 @@ export function ExchangeProposalModal({
     setIsLoading(true);
     try {
       const profileData = await getMyProfileData(currentUserId);
-      if (profileData?.userListings) {
-        const exchangeBooks = profileData.userListings.filter(
+      if (profileData.success && profileData.data?.userListings) {
+        const exchangeBooks = profileData.data.userListings.filter(
           (book: Book) => book.type === 'exchange' && String(book._id) !== String(targetBook._id)
         );
         setMyBooks(exchangeBooks);
@@ -99,17 +99,17 @@ export function ExchangeProposalModal({
         proposalMessage.trim()
       );
 
-      if (result.success && result.chatId) {
+      if (result.success && result.data?.chatId) {
         toast({
           title: "Exchange Proposed!",
           description: "Your exchange proposal has been sent. You can continue the conversation in the chat.",
         });
         onClose();
-        router.push(`/messages/${result.chatId}`);
+        router.push(`/messages/${result.data.chatId}`);
       } else {
         toast({
           title: "Error",
-          description: result.message || "Failed to propose exchange",
+          description: "Failed to propose exchange",
           variant: "destructive",
         });
       }

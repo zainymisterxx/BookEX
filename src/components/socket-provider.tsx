@@ -53,8 +53,8 @@ export function SocketProvider({ children }: SocketProviderProps) {
         setIsConnected(true);
         
         // Authenticate with session token if available
-        if (session?.accessToken) {
-          newSocket.emit('authenticate', session.accessToken);
+        if ((session as any)?.accessToken) {
+          newSocket.emit('authenticate', (session as any).accessToken);
         }
       });
 

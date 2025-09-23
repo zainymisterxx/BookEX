@@ -31,7 +31,9 @@ export function EmailPreferencesCard() {
     const fetchPreferences = async () => {
       try {
         const prefs = await getUserEmailPreferences();
-        setPreferences(prefs);
+        if (prefs.success) {
+          setPreferences(prefs.data);
+        }
       } catch (error) {
         console.error('Error fetching email preferences:', error);
       } finally {

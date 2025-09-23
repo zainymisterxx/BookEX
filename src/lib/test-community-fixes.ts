@@ -85,7 +85,7 @@ export class CommunityFixTester {
       
       if (community) {
         const member = community.members[0];
-        const isMemberResult = isMember(member.userId, community);
+        const isMemberResult = isMember(member.userId, community as any);
         
         this.addResult(
           'isMember function works',
@@ -95,7 +95,7 @@ export class CommunityFixTester {
         );
         
         // Test with non-member
-        const nonMemberResult = isMember('nonexistent-user-id', community);
+        const nonMemberResult = isMember('nonexistent-user-id', community as any);
         this.addResult(
           'isMember function rejects non-members',
           !nonMemberResult,
@@ -103,7 +103,7 @@ export class CommunityFixTester {
         );
         
         // Test member info retrieval
-        const memberInfo = getMemberInfo(member.userId, community);
+        const memberInfo = getMemberInfo(member.userId, community as any);
         this.addResult(
           'getMemberInfo function works',
           memberInfo !== null,

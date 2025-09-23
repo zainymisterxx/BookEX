@@ -72,7 +72,7 @@ export function AdminUserActions({ user, onUserStatusChanged, onUserDeleted }: A
       const result = await deleteUser(userId);
       if (result.success) {
         onUserDeleted(userId);
-        toast({ title: 'User deleted successfully', description: result.message });
+        toast({ title: 'User deleted successfully', description: result.data?.message || 'User deleted successfully' });
       } else {
         toast({ variant: 'destructive', title: 'Failed to delete user', description: result.message });
       }

@@ -52,9 +52,13 @@ export default function ExchangeHistoryPage() {
       const statusFilter = activeTab === 'all' ? undefined : activeTab as ExchangeStatus;
       const result = await getUserExchanges(currentPage, 10, statusFilter);
       
-      setExchanges(result.exchanges);
-      setTotalCount(result.totalCount);
-      setHasMore(result.hasMore);
+      if (result.success) {
+        setExchanges(result.data.exchanges);
+        setTotalCount(result.data.totalCount);
+        setHasMore(result.data.hasMore);
+      } else {
+        console.error('Error fetching exchanges:', result.message);
+      }
     } catch (error) {
       console.error('Error fetching exchanges:', error);
     } finally {

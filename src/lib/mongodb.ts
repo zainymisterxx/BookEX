@@ -1,8 +1,11 @@
-import dotenv from 'dotenv';
-dotenv.config();
-
 import { MongoClient } from 'mongodb';
 import redisCache from './redis-cache';
+
+// Only load dotenv in development
+if (process.env.NODE_ENV !== 'production') {
+  const dotenv = require('dotenv');
+  dotenv.config();
+}
 
 if (!process.env.MONGODB_URI) {
   throw new Error('Invalid/Missing environment variable: "MONGODB_URI"');
@@ -40,11 +43,21 @@ if (process.env.NODE_ENV === 'development') {
   clientPromise = client.connect();
 }
 
-// Initialize Redis connection
-redisCache.connect().catch((error) => {
-  console.error('Failed to connect to Redis:', error);
-  console.log('Application will continue without caching');
-});
+// Initialize Redis connection with better error handling
+let redisConnected = false;
+redisCache.connect()
+  .then(() => {
+    redisConnected = true;
+    console.log('Redis connected successfully');
+  })
+  .catch((error) => {
+    console.error('Failed to connect to Redis:', error);
+    console.log('Application will continue without caching');
+    redisConnected = false;
+  });
+
+// Export Redis connection status for other modules to check
+export { redisConnected };
 
 export default clientPromise;
 

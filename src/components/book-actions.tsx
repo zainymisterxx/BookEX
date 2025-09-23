@@ -45,8 +45,8 @@ export function BookActions({ book, seller }: BookActionsProps) {
         ]);
         
         setIsWishlisted(wishlistResult);
-        if (profileData && profileData.userListings) {
-          setUserHasExchangeBooks(profileData.userListings.some((b: Book) => b.type === 'exchange'));
+        if (profileData.success && profileData.data?.userListings) {
+          setUserHasExchangeBooks(profileData.data.userListings.some((b: Book) => b.type === 'exchange'));
         }
         setIsInitialDataLoading(false);
       };
@@ -77,7 +77,7 @@ export function BookActions({ book, seller }: BookActionsProps) {
                   toast({ 
                       variant: 'destructive', 
                       title: 'Could not update wishlist.',
-                      description: result.error.userMessage || 'Please try again.' 
+                      description: result.message || 'Please try again.' 
                   });
               }
           } catch (error) {
@@ -108,10 +108,10 @@ export function BookActions({ book, seller }: BookActionsProps) {
     startTransition(async () => {
         const result = await startChat(String(seller._id), String(book._id));
         
-        if (result.success && result.chatId) {
-            router.push(`/messages/${result.chatId}`);
+        if (result.success && result.data?.chatId) {
+            router.push(`/messages/${result.data.chatId}`);
         } else {
-            toast({ variant: 'destructive', title: 'Could not start conversation.', description: result.message });
+            toast({ variant: 'destructive', title: 'Could not start conversation.', description: 'Failed to start conversation' });
         }
     });
   }

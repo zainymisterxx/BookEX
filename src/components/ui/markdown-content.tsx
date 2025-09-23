@@ -28,7 +28,7 @@ function renderBasicMarkdown(md: string): string {
   // Unordered lists: lines starting with - or *
   html = html.replace(/(^|\n)[\t ]*[-*][\t ]+(.+)(?=\n|$)/g, (_m, p1, p2) => `${p1}<li>${p2}</li>`);
   // Wrap consecutive <li> in <ul>
-  html = html.replace(/(?:<li>.*<\/li>\n?)+/gs, (match) => `<ul class="list-disc pl-6 space-y-1">${match.replace(/\n/g, '')}</ul>`);
+  html = html.replace(/(?:<li>.*<\/li>\n?)+/g, (match) => `<ul class="list-disc pl-6 space-y-1">${match.replace(/\n/g, '')}</ul>`);
   // Line breaks
   html = html.replace(/\n/g, '<br/>');
   return html;

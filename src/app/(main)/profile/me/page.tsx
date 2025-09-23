@@ -36,9 +36,11 @@ export default function MyProfilePage() {
         setIsLoading(true);
         try {
           const profileData = await getMyProfileData(user.id);
-          const { totalRatingPoints = 0, reviews = 0 } = profileData.profileUser;
-          profileData.profileUser.averageRating = reviews > 0 ? parseFloat((totalRatingPoints / reviews).toFixed(1)) : 0;
-          setData(profileData);
+          if (profileData.success) {
+            const { totalRatingPoints = 0, reviews = 0 } = profileData.data.profileUser;
+            profileData.data.profileUser.averageRating = reviews > 0 ? parseFloat((totalRatingPoints / reviews).toFixed(1)) : 0;
+            setData(profileData.data);
+          }
         } catch (error) {
             console.error("Error fetching user profile data:", error);
         } finally {

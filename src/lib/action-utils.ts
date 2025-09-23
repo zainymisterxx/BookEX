@@ -1,7 +1,7 @@
 import { getSession } from '@/lib/auth';
 import { connectToMongoDB } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
-import { createAppError, ErrorType, logError } from '@/lib/error-handling';
+import { createAppError, ErrorType, logError, normalizeError } from '@/lib/error-handling';
 import type { AuthorizedUser } from '@/lib/resource-authorization';
 
 /**
@@ -33,8 +33,7 @@ export async function withAuthenticatedAction<T>(
     const user: AuthorizedUser = {
       id: session.user.id,
       role: (session.user as any).role || 'user',
-      name: session.user.name || '',
-      email: session.user.email || ''
+      status: 'active'
     };
 
     // Check role requirement if specified
@@ -48,13 +47,13 @@ export async function withAuthenticatedAction<T>(
     return { success: true, data: result };
   } catch (error) {
     // Log the error for debugging
-    logError(error as Error, 'withAuthenticatedAction');
+    logError(normalizeError(error, 'withAuthenticatedAction'));
 
     // Return standardized error response
     if (error instanceof Error) {
       return { 
         success: false, 
-        message: error.message 
+        message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
 
@@ -103,13 +102,13 @@ export async function withAuthenticatedUserFull<T>(
     return { success: true, data: result };
   } catch (error) {
     // Log the error for debugging
-    logError(error as Error, 'withAuthenticatedUserFull');
+    logError(normalizeError(error, 'withAuthenticatedUserFull'));
 
     // Return standardized error response
     if (error instanceof Error) {
       return { 
         success: false, 
-        message: error.message 
+        message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
 

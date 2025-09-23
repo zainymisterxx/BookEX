@@ -57,8 +57,11 @@ export function CreateCommunityModal({ children }: { children: React.ReactNode }
         createdBy: user.id,
       });
 
-      if (!result.success || !result.communityId) {
+      if (!result.success) {
         throw new Error(result.message || 'Failed to create community');
+      }
+      if (!result.data?.communityId) {
+        throw new Error('Failed to create community');
       }
 
       toast({
@@ -66,7 +69,7 @@ export function CreateCommunityModal({ children }: { children: React.ReactNode }
         description: `Your new community "${name}" is now live.`,
       });
       
-      router.push(`/community/${result.communityId}`);
+      router.push(`/community/${result.data.communityId}`);
       setOpen(false);
 
     } catch (error) {

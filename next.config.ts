@@ -12,26 +12,15 @@ const nextConfig: NextConfig = {
   },
   webpack: (config, { isServer }) => {
     if (!isServer) {
-      // Exclude Node.js modules that aren't available in the browser
+      // More targeted fallbacks - only exclude modules that are actually problematic
       config.resolve.fallback = {
         ...config.resolve.fallback,
+        // Core Node.js modules that should never be used client-side
         'fs': false,
         'net': false,
         'tls': false,
         'child_process': false,
-        'crypto': false,
         'os': false,
-        'path': false,
-        'util': false,
-        'stream': false,
-        'buffer': false,
-        'events': false,
-        'url': false,
-        'querystring': false,
-        'http': false,
-        'https': false,
-        'zlib': false,
-        'dns': false,
         'cluster': false,
         'worker_threads': false,
         'perf_hooks': false,
@@ -39,21 +28,38 @@ const nextConfig: NextConfig = {
         'trace_events': false,
         'v8': false,
         'vm': false,
-        'assert': false,
-        'constants': false,
         'domain': false,
-        'punycode': false,
         'readline': false,
         'repl': false,
-        'string_decoder': false,
-        'timers': false,
         'tty': false,
+        // Keep these as polyfills for better compatibility
+        'crypto': require.resolve('crypto-browserify'),
+        'stream': require.resolve('stream-browserify'),
+        'buffer': require.resolve('buffer'),
+        'events': require.resolve('events'),
+        'url': require.resolve('url'),
+        'querystring': require.resolve('querystring-es3'),
+        'http': require.resolve('stream-http'),
+        'https': require.resolve('https-browserify'),
+        'zlib': require.resolve('browserify-zlib'),
+        'dns': false,
+        'assert': require.resolve('assert'),
+        'constants': require.resolve('constants-browserify'),
+        'punycode': require.resolve('punycode'),
+        'string_decoder': require.resolve('string_decoder'),
+        'timers': require.resolve('timers-browserify'),
+        'path': require.resolve('path-browserify'),
+        'util': require.resolve('util'),
       };
 
       // Exclude MongoDB modules that cause client-side bundling issues
       config.resolve.alias = {
         ...config.resolve.alias,
         'mongodb': false,
+        // Exclude server-only database modules
+        '@/lib/mongodb': false,
+        '@/lib/mongodb-server': false,
+        '@/lib/mongodb-client-safe': false,
       };
 
       // Exclude server-only files from client bundle
@@ -79,6 +85,18 @@ const nextConfig: NextConfig = {
         test: /mongocryptd_manager\.js$/,
         use: 'null-loader',
       });
+
+      // Handle handlebars require.extensions issue
+      config.module.rules.push({
+        test: /node_modules\/handlebars/,
+        use: 'null-loader',
+      });
+
+      // Exclude AI flows from client bundle
+      config.module.rules.push({
+        test: /src\/ai\//,
+        use: 'null-loader',
+      });
     }
     
     return config;
@@ -102,12 +120,16 @@ const nextConfig: NextConfig = {
             value: 'strict-origin-when-cross-origin',
           },
           {
-            key: 'X-XSS-Protection',
-            value: '1; mode=block',
-          },
-          {
             key: 'Strict-Transport-Security',
             value: 'max-age=31536000; includeSubDomains',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';",
+          },
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
           },
         ],
       },

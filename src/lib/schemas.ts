@@ -58,6 +58,15 @@ export const bookSchema = z.object({
     .max(100, 'City name must be 100 characters or less')
     .trim(),
   status: BookStatusSchema.optional().default('active')
+}).refine((data) => {
+  // If type is 'sell', price must be provided and positive
+  if (data.type === 'sell' && (!data.price || data.price <= 0)) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Price is required and must be positive when book type is 'sell'",
+  path: ['price']
 });
 
 // Community Schema
@@ -193,9 +202,10 @@ export const userProfileSchema = z.object({
   interests: z.array(z.string())
     .max(10, 'Maximum 10 interests allowed')
     .optional(),
-  birthDate: z.string()
-    .datetime('Birth date must be valid')
-    .optional()
+  birthDate: z.union([
+    z.string().datetime('Birth date must be valid ISO string'),
+    z.date({ message: 'Birth date must be a valid date' })
+  ]).optional()
 });
 
 // Exchange Schema
@@ -272,7 +282,7 @@ export function validateWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): {
 } | {
   success: false;
   message: string;
-  errors: z.ZodError['flatten'];
+  errors: ReturnType<z.ZodError['flatten']>;
 } {
   try {
     const result = schema.safeParse(data);

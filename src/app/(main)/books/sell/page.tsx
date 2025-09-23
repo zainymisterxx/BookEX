@@ -95,7 +95,7 @@ function SellBookForm() {
       const result = await getBookForEdit(bookId);
       
       if (!result.success) {
-        throw new Error(result.error.userMessage);
+        throw new Error(result.message);
       }
       
       const bookData = result.data;
@@ -240,7 +240,7 @@ function SellBookForm() {
 
         const result = await updateBookListing(editBookId, updateData);
         if (!result.success) {
-          throw new Error(result.error.userMessage);
+          throw new Error(result.message);
         }
         
         toast({
@@ -269,7 +269,7 @@ function SellBookForm() {
 
         const result = await listBook(bookData);
         if (!result.success || !result.data?.bookId) {
-          throw new Error(result.success ? 'Failed to create book listing' : result.error.userMessage);
+          throw new Error(result.success ? 'Failed to create book listing' : result.message);
         }
         
         toast({

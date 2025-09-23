@@ -31,7 +31,9 @@ export default function MessagesPage() {
     const fetchChats = async () => {
         setIsLoading(true);
         const userChats = await getUserChats(user.id);
-        setChats(userChats);
+        if (userChats.success) {
+            setChats(userChats.data);
+        }
         setIsLoading(false);
     };
 

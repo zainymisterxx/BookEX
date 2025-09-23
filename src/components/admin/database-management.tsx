@@ -30,7 +30,7 @@ export function DatabaseManagement() {
       if (result.success) {
         toast({
           title: "Indexes Created!",
-          description: result.message,
+          description: result.data?.message || "Indexes created successfully",
         });
         // Refresh health check after fixing indexes
         await handleCheckHealth();
@@ -57,7 +57,7 @@ export function DatabaseManagement() {
       if (result.success) {
         toast({
           title: "Database Optimized!",
-          description: result.message,
+          description: result.data?.message || "Database optimized successfully",
         });
         // Refresh health check after optimization
         await handleCheckHealth();
@@ -85,11 +85,11 @@ export function DatabaseManagement() {
         setHealthData(result.data);
         toast({
           title: "Health Check Complete",
-          description: result.data.message,
-          variant: result.data.healthy ? 'default' : 'destructive'
+          description: result.data?.message || "Health check completed",
+          variant: result.data?.healthy ? 'default' : 'destructive'
         });
       } else {
-        throw new Error(result.message);
+        throw new Error('Health check failed');
       }
     } catch (error) {
       console.error('Database health check error:', error);
