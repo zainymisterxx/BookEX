@@ -54,8 +54,12 @@ function SellBookForm() {
   useEffect(() => {
     const fetchUserData = async () => {
         if (session?.user?.id) {
-            const city = await getUserCity(session.user.id);
-            setUserCity(city);
+            const response = await getUserCity(session.user.id);
+            if (response.success) {
+                setUserCity(response.data);
+            } else {
+                setUserCity(null);
+            }
         }
     };
     fetchUserData();
