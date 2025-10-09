@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { useSession } from 'next-auth/react';
 import type { Exchange, ExchangeStatus } from '@/lib/types';
+import { getSocketUrl } from '@/lib/url-utils';
 
 interface ExchangeUpdateData {
   exchangeId: string;
@@ -36,7 +37,8 @@ export function useExchangeRealtime({
 
     // Use existing socket connection if available, otherwise create new one
     if (!socketRef.current || socketRef.current.disconnected) {
-      socketRef.current = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001', {
+      const socketUrl = getSocketUrl();
+      socketRef.current = io(socketUrl, {
         autoConnect: true,
         reconnection: true,
         reconnectionAttempts: 5,

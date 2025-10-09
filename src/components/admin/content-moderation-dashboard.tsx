@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
+import { apiFetch } from '@/lib/api-client';
 
 interface ModerationAction {
   _id: string;
@@ -54,7 +55,7 @@ export default function ContentModerationDashboard() {
       setError(null);
 
       // Load moderation queue
-      const queueResponse = await fetch('/api/moderation?action=moderationQueue&limit=50&filter=flagged');
+      const queueResponse = await apiFetch('/api/moderation?action=moderationQueue&limit=50&filter=flagged');
       if (!queueResponse.ok) throw new Error('Failed to load moderation queue');
       const queue = await queueResponse.json();
       setModerationQueue(queue);
@@ -80,7 +81,7 @@ export default function ContentModerationDashboard() {
       setMaintenanceRunning(true);
       setError(null);
 
-      const response = await fetch('/api/moderation', {
+      const response = await apiFetch('/api/moderation', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'cleanup' })
@@ -102,7 +103,7 @@ export default function ContentModerationDashboard() {
   const runBusinessMaintenance = async () => {
     try {
       setMaintenanceRunning(true);
-      const response = await fetch('/api/business-logic', {
+      const response = await apiFetch('/api/business-logic', {
         method: 'PATCH'
       });
       if (!response.ok) throw new Error('Business maintenance failed');

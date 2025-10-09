@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -16,13 +16,34 @@ import {
   Ban,
   CheckCircle,
   AlertCircle,
-  Clock
+  Clock,
+  MessageCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Community, CommunityRole } from '@/lib/types';
 import type { Session } from 'next-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useTransition } from 'react';
+import { apiFetch } from '@/lib/api-client';
+import { useSocket } from '@/components/socket-provider';
+
+interface MemberWithDetails {
+  userId: string;
+  role: CommunityRole;
+  joinedAt: string;
+  banned?: boolean;
+  banReason?: string;
+  bannedAt?: string;
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    avatarUrl?: string;
+    city?: string;
+    bio?: string;
+    createdAt: string;
+  } | null;
+}
 
 interface MemberSidebarProps {
   community: Community;
@@ -31,9 +52,59 @@ interface MemberSidebarProps {
 }
 
 export function MemberSidebar({ community, currentUser, userRole }: MemberSidebarProps) {
-  const [members, setMembers] = useState(community.members || []);
+  const [members, setMembers] = useState<MemberWithDetails[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
+  const { socket, isConnected } = useSocket();
+
+  // Fetch members with user details
+  useEffect(() => {
+    const fetchMembers = async () => {
+      try {
+        const response = await apiFetch(`/api/communities/${community._id}/members`);
+        if (response.ok) {
+          const data = await response.json();
+          setMembers(data.members || []);
+        } else {
+          console.error('Failed to fetch members');
+        }
+      } catch (error) {
+        console.error('Error fetching members:', error);
+      }
+    };
+
+    fetchMembers();
+  }, [community._id]);
+
+  // Handle socket events for online/offline status
+  useEffect(() => {
+    if (!socket || !isConnected) return;
+
+    const handleUserOnline = (data: { userId: string; communityId: string }) => {
+      if (data.communityId === community._id) {
+        setOnlineUsers(prev => new Set([...prev, data.userId]));
+      }
+    };
+
+    const handleUserOffline = (data: { userId: string; communityId: string }) => {
+      if (data.communityId === community._id) {
+        setOnlineUsers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(data.userId);
+          return newSet;
+        });
+      }
+    };
+
+    socket.on('userOnline', handleUserOnline);
+    socket.on('userOffline', handleUserOffline);
+
+    return () => {
+      socket.off('userOnline', handleUserOnline);
+      socket.off('userOffline', handleUserOffline);
+    };
+  }, [socket, isConnected, community._id]);
 
   const getRoleIcon = (role: CommunityRole) => {
     switch (role) {
@@ -57,26 +128,32 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
     }
   };
 
-  const getStatusIcon = (member: any) => {
+  const getStatusIcon = (member: MemberWithDetails) => {
     if (member.banned) {
       return <Ban className="h-3 w-3 text-red-500" />;
     }
-    // Simulate online presence (in a real app, this would come from presence system)
-    return <CheckCircle className="h-3 w-3 text-green-500" />;
+    const isOnline = onlineUsers.has(member.userId);
+    return isOnline ? 
+      <CheckCircle className="h-3 w-3 text-green-500" /> : 
+      <Clock className="h-3 w-3 text-gray-400" />;
   };
 
-  const getStatusColor = (member: any) => {
+  const getStatusColor = (member: MemberWithDetails) => {
     if (member.banned) {
       return 'bg-red-100 text-red-800 border-red-200';
     }
-    return 'bg-green-100 text-green-800 border-green-200';
+    const isOnline = onlineUsers.has(member.userId);
+    return isOnline ? 
+      'bg-green-100 text-green-800 border-green-200' : 
+      'bg-gray-100 text-gray-600 border-gray-200';
   };
 
-  const getStatusText = (member: any) => {
+  const getStatusText = (member: MemberWithDetails) => {
     if (member.banned) {
       return 'Banned';
     }
-    return 'Online';
+    const isOnline = onlineUsers.has(member.userId);
+    return isOnline ? 'Online' : 'Offline';
   };
 
   const canModerate = userRole === 'admin' || userRole === 'moderator';
@@ -87,7 +164,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
 
     startTransition(async () => {
       try {
-        const response = await fetch(`/api/communities/${community._id}/members/${member.userId}`, {
+        const response = await apiFetch(`/api/communities/${community._id}/members/${member.userId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action }),
@@ -269,15 +346,21 @@ function MemberItem({
   canModerate, 
   isAdmin 
 }: {
-  member: any;
+  member: MemberWithDetails;
   currentUser: Session["user"] | null;
   userRole: CommunityRole | null;
-  onAction: (member: any, action: string) => void;
+  onAction: (member: MemberWithDetails, action: string) => void;
   canModerate: boolean;
   isAdmin: boolean;
 }) {
   const [showActions, setShowActions] = useState(false);
   const isSelf = member.userId === currentUser?.id;
+  const { socket } = useSocket();
+
+  const handleMessageUser = () => {
+    // Navigate to messages page or open chat modal
+    window.location.href = `/messages?user=${member.userId}`;
+  };
 
   const getRoleIcon = (role: CommunityRole) => {
     switch (role) {
@@ -329,14 +412,17 @@ function MemberItem({
       onMouseLeave={() => setShowActions(false)}
     >
       <Avatar className="h-8 w-8 border-2 flex-shrink-0">
+        <AvatarImage src={member.user?.avatarUrl} />
         <AvatarFallback className="text-xs">
-          {member.userId.charAt(0).toUpperCase()}
+          {member.user?.name?.charAt(0).toUpperCase() || member.userId.charAt(0).toUpperCase()}
         </AvatarFallback>
       </Avatar>
       
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium truncate">{member.userId}</span>
+          <span className="text-sm font-medium truncate">
+            {member.user?.name || member.userId}
+          </span>
           {getRoleIcon(member.role)}
         </div>
         
@@ -352,53 +438,73 @@ function MemberItem({
       </div>
 
       {/* Member Actions */}
-      {canModerate && !isSelf && showActions && (
-        <div className="flex items-center gap-1">
-          {isAdmin && member.role === 'member' && !member.banned && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onAction(member, 'promote')}
-              className="h-6 px-2 text-xs"
-            >
-              <UserPlus className="h-3 w-3" />
-            </Button>
-          )}
-          
-          {isAdmin && member.role === 'moderator' && !member.banned && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onAction(member, 'demote')}
-              className="h-6 px-2 text-xs"
-            >
-              <UserMinus className="h-3 w-3" />
-            </Button>
-          )}
-          
-          {!member.banned && (
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => onAction(member, 'ban')}
-              className="h-6 px-2 text-xs"
-            >
-              <Ban className="h-3 w-3" />
-            </Button>
-          )}
-          
-          {member.banned && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onAction(member, 'unban')}
-              className="h-6 px-2 text-xs"
-            >
-              <CheckCircle className="h-3 w-3" />
-            </Button>
-          )}
-        </div>
-      )}
+      <div className="flex items-center gap-1">
+        {/* Message button - always visible for non-self members */}
+        {!isSelf && member.user && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleMessageUser}
+            className="h-6 px-2 text-xs"
+            title="Send message"
+          >
+            <MessageCircle className="h-3 w-3" />
+          </Button>
+        )}
+        
+        {/* Moderation actions */}
+        {canModerate && !isSelf && showActions && (
+          <>
+            {isAdmin && member.role === 'member' && !member.banned && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onAction(member, 'promote')}
+                className="h-6 px-2 text-xs"
+                title="Promote to moderator"
+              >
+                <UserPlus className="h-3 w-3" />
+              </Button>
+            )}
+            
+            {isAdmin && member.role === 'moderator' && !member.banned && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onAction(member, 'demote')}
+                className="h-6 px-2 text-xs"
+                title="Demote to member"
+              >
+                <UserMinus className="h-3 w-3" />
+              </Button>
+            )}
+            
+            {!member.banned && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => onAction(member, 'ban')}
+                className="h-6 px-2 text-xs"
+                title="Ban member"
+              >
+                <Ban className="h-3 w-3" />
+              </Button>
+            )}
+            
+            {member.banned && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onAction(member, 'unban')}
+                className="h-6 px-2 text-xs"
+                title="Unban member"
+              >
+                <CheckCircle className="h-3 w-3" />
+              </Button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

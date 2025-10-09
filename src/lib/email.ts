@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { getBaseUrl } from './url-utils';
 
 // Email configuration validation types
 export interface EmailConfigValidation {
@@ -294,7 +295,7 @@ export const sendPasswordResetEmail = async (
   name: string,
   resetToken: string
 ) => {
-  const resetUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/reset-password?token=${resetToken}`;
+  const resetUrl = `${getBaseUrl()}/reset-password?token=${resetToken}`;
   
   const mailOptions = {
     from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
@@ -412,7 +413,7 @@ export const sendWelcomeEmail = async (to: string, name: string) => {
               <p>Give back to your community by donating books to local organizations and charities.</p>
             </div>
             
-            <a href="${process.env.NEXTAUTH_URL || 'http://localhost:9002'}" class="button">Start Exploring</a>
+            <a href="${getBaseUrl()}" class="button">Start Exploring</a>
             
             <p>Happy reading!</p>
             <p>The BookEx Team</p>
@@ -442,7 +443,7 @@ export const sendExchangeProposalEmail = async (
   proposalMessage: string,
   exchangeId: string
 ) => {
-  const exchangeUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/exchange/history`;
+  const exchangeUrl = `${getBaseUrl()}/exchange/history`;
   
   const mailOptions = {
     from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
@@ -532,7 +533,7 @@ export const sendExchangeStatusUpdateEmail = async (
   newStatus: string,
   exchangeId: string
 ) => {
-  const exchangeUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/exchange/history`;
+  const exchangeUrl = `${getBaseUrl()}/exchange/history`;
   
   const statusMessages = {
     accepted: {
@@ -627,7 +628,7 @@ export const sendBookContactEmail = async (
   bookType: 'sell' | 'exchange',
   chatId: string
 ) => {
-  const chatUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/messages/${chatId}`;
+  const chatUrl = `${getBaseUrl()}/messages/${chatId}`;
   const actionType = bookType === 'exchange' ? 'exchange' : 'purchase';
   
   const mailOptions = {
@@ -698,7 +699,7 @@ export const sendOrgApplicationNotificationEmail = async (
   submittedBy: string,
   organizationId: string
 ) => {
-  const reviewUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/admin`;
+  const reviewUrl = `${getBaseUrl()}/admin`;
   
   const mailOptions = {
     from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
@@ -769,7 +770,7 @@ export const sendDonationChatConfirmationEmail = async (
   const { withEmailRetry } = await import('@/lib/utils');
   
   return withEmailRetry(async () => {
-    const chatUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/messages/${chatId}`;
+    const chatUrl = `${getBaseUrl()}/messages/${chatId}`;
     
     const mailOptions = {
       from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
@@ -836,7 +837,7 @@ export const sendOrganizationApprovalEmail = async (
   const { withEmailRetry } = await import('@/lib/utils');
   
   return withEmailRetry(async () => {
-    const donatePageUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/donate`;
+    const donatePageUrl = `${getBaseUrl()}/donate`;
     
     const mailOptions = {
       from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
@@ -909,7 +910,7 @@ export const sendOrganizationRejectionEmail = async (
   const { withEmailRetry } = await import('@/lib/utils');
   
   return withEmailRetry(async () => {
-    const applyUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:9002'}/donate/apply`;
+    const applyUrl = `${getBaseUrl()}/donate/apply`;
     
     const mailOptions = {
       from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,

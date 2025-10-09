@@ -1,0 +1,226 @@
+import { Server as SocketIOServer } from 'socket.io';
+import { Server as HTTPServer } from 'http';
+import { presenceManager } from './presence';
+import { connectToMongoDB } from './mongodb';
+import { ObjectId } from 'mongodb';
+import { getCorsOrigins } from './url-utils';
+
+interface AuthenticatedSocket extends Socket {
+  userId?: string;
+  userCommunities?: string[];
+}
+
+export function setupSocketServer(httpServer: HTTPServer) {
+  const io = new SocketIOServer(httpServer, {
+    cors: {
+      origin: getCorsOrigins(),
+      methods: ['GET', 'POST'],
+      credentials: true
+    }
+  });
+
+  // Authentication middleware
+  io.use(async (socket: AuthenticatedSocket, next) => {
+    try {
+      // In a real implementation, you'd verify the JWT token here
+      // For now, we'll use a simple approach with session data
+      const token = socket.handshake.auth.token;
+      
+      if (!token) {
+        return next(new Error('Authentication error'));
+      }
+
+      // Verify token and get user info
+      // This is a simplified version - in production, verify JWT properly
+      const { db } = await connectToMongoDB();
+      const user = await db.collection('users').findOne({ _id: new ObjectId(token) });
+      
+      if (!user) {
+        return next(new Error('User not found'));
+      }
+
+      socket.userId = user._id.toString();
+      
+      // Get user's communities
+      const communities = await db.collection('communities').find({
+        'members.userId': user._id.toString()
+      }, { projection: { _id: 1 } }).toArray();
+      
+      socket.userCommunities = communities.map(c => c._id.toString());
+      
+      next();
+    } catch (error) {
+      console.error('Socket authentication error:', error);
+      next(new Error('Authentication failed'));
+    }
+  });
+
+  io.on('connection', async (socket: AuthenticatedSocket) => {
+    console.log(`User ${socket.userId} connected with socket ${socket.id}`);
+
+    if (!socket.userId) {
+      socket.disconnect();
+      return;
+    }
+
+    // Set user as online
+    await presenceManager.setUserOnline(socket.userId, socket.userCommunities);
+
+    // Join user to their community rooms
+    socket.userCommunities?.forEach(communityId => {
+      socket.join(`community:${communityId}`);
+      socket.emit('joinedCommunity', { communityId });
+    });
+
+    // Handle joining a specific community
+    socket.on('joinCommunity', async (data: { communityId: string }) => {
+      try {
+        const { communityId } = data;
+        
+        // Verify user is member of this community
+        if (socket.userCommunities?.includes(communityId)) {
+          socket.join(`community:${communityId}`);
+          socket.emit('joinedCommunity', { communityId });
+          
+          // Update presence
+          await presenceManager.setUserOnline(socket.userId!, communityId);
+          
+          // Notify others in the community
+          socket.to(`community:${communityId}`).emit('userOnline', {
+            userId: socket.userId,
+            communityId
+          });
+        }
+      } catch (error) {
+        console.error('Error joining community:', error);
+      }
+    });
+
+    // Handle leaving a community
+    socket.on('leaveCommunity', async (data: { communityId: string }) => {
+      try {
+        const { communityId } = data;
+        socket.leave(`community:${communityId}`);
+        
+        // Notify others in the community
+        socket.to(`community:${communityId}`).emit('userOffline', {
+          userId: socket.userId,
+          communityId
+        });
+      } catch (error) {
+        console.error('Error leaving community:', error);
+      }
+    });
+
+    // Handle joining a channel
+    socket.on('joinChannel', (data: { channelId: string; communityId?: string }) => {
+      const { channelId, communityId } = data;
+      socket.join(`channel:${channelId}`);
+      socket.emit('joinedChannel', { channelId });
+    });
+
+    // Handle leaving a channel
+    socket.on('leaveChannel', (data: { channelId: string }) => {
+      const { channelId } = data;
+      socket.leave(`channel:${channelId}`);
+    });
+
+    // Handle chat messages
+    socket.on('chatMessage', async (data: { channelId: string; message: any }) => {
+      try {
+        const { channelId, message } = data;
+        
+        // Save message to database
+        const { db } = await connectToMongoDB();
+        const messageDoc = {
+          channelId,
+          authorId: socket.userId,
+          content: message.content,
+          createdAt: new Date().toISOString()
+        };
+        
+        await db.collection('chatMessages').insertOne(messageDoc);
+        
+        // Broadcast to channel
+        io.to(`channel:${channelId}`).emit('newChatMessage', {
+          channelId,
+          message: {
+            ...messageDoc,
+            author: {
+              _id: socket.userId,
+              name: message.authorName || 'Unknown User'
+            }
+          },
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error('Error handling chat message:', error);
+      }
+    });
+
+    // Handle personal messages
+    socket.on('personalMessage', async (data: { receiverId: string; message: any }) => {
+      try {
+        const { receiverId, message } = data;
+        
+        // Save message to database
+        const { db } = await connectToMongoDB();
+        const messageDoc = {
+          senderId: socket.userId,
+          receiverId,
+          content: message.content,
+          createdAt: new Date().toISOString()
+        };
+        
+        await db.collection('personalMessages').insertOne(messageDoc);
+        
+        // Send to receiver if online
+        const receiverSocket = Array.from(io.sockets.sockets.values())
+          .find(s => (s as AuthenticatedSocket).userId === receiverId);
+        
+        if (receiverSocket) {
+          receiverSocket.emit('newPersonalMessage', {
+            message: {
+              ...messageDoc,
+              sender: {
+                _id: socket.userId,
+                name: message.senderName || 'Unknown User'
+              }
+            },
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        console.error('Error handling personal message:', error);
+      }
+    });
+
+    // Handle typing indicators
+    socket.on('typing', (data: { channelId: string; isTyping: boolean }) => {
+      const { channelId, isTyping } = data;
+      socket.to(`channel:${channelId}`).emit('userTyping', {
+        userId: socket.userId,
+        isTyping,
+        channelId
+      });
+    });
+
+    // Handle disconnect
+    socket.on('disconnect', async (reason) => {
+      console.log(`User ${socket.userId} disconnected: ${reason}`);
+      
+      // Set user as offline
+      await presenceManager.setUserOffline(socket.userId!);
+      
+      // Notify all communities the user was in
+      socket.userCommunities?.forEach(communityId => {
+        socket.to(`community:${communityId}`).emit('userOffline', {
+          userId: socket.userId,
+          communityId
+        });
+      });
+    });
+  });
+
+  return io;
+}

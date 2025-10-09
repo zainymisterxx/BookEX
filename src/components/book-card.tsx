@@ -87,9 +87,18 @@ export function BookCard({ book, className, searchTerm = '', showManageOptions =
                   searchTerm={searchTerm}
                   className="text-xs sm:text-sm transition-colors duration-200 group-hover:text-muted-foreground/80 line-clamp-1"
                 />
-                <div className="flex items-center text-xs sm:text-sm text-muted-foreground">
+                <div className="flex items-center justify-between text-xs sm:text-sm text-muted-foreground">
+                  <div className="flex items-center">
                     <MapPin className="h-3 w-3 sm:h-4 sm:w-4 mr-1.5 flex-shrink-0" />
                     <span className="truncate">{book.city}</span>
+                  </div>
+                  <Link 
+                    href={`/profile/${book.sellerId}`}
+                    className="text-primary hover:text-primary/80 transition-colors"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    View Seller
+                  </Link>
                 </div>
               </div>
               <div className="flex items-center justify-between pt-2 mt-auto">

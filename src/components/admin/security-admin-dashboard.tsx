@@ -28,6 +28,7 @@ import {
   BarChart3,
   RefreshCw
 } from 'lucide-react';
+import { apiFetch } from '@/lib/api-client';
 
 interface SecurityStats {
   authentication: {
@@ -98,9 +99,9 @@ export default function SecurityAdminDashboard() {
 
       // Load real security statistics
       const [statsResponse, alertsResponse, healthResponse] = await Promise.all([
-        fetch('/api/admin/security?action=securityStats'),
-        fetch('/api/admin/security?action=securityAlerts'),
-        fetch('/api/admin/security?action=systemHealth')
+        apiFetch('/api/admin/security?action=securityStats'),
+        apiFetch('/api/admin/security?action=securityAlerts'),
+        apiFetch('/api/admin/security?action=systemHealth')
       ]);
 
       if (!statsResponse.ok || !alertsResponse.ok || !healthResponse.ok) {
@@ -128,7 +129,7 @@ export default function SecurityAdminDashboard() {
       setRefreshing(true);
       
       // Use our security API for all maintenance operations
-      const response = await fetch('/api/admin/security', {
+      const response = await apiFetch('/api/admin/security', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -156,7 +157,7 @@ export default function SecurityAdminDashboard() {
 
   const resolveAlert = async (alertId: string) => {
     try {
-      const response = await fetch('/api/admin/security', {
+      const response = await apiFetch('/api/admin/security', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

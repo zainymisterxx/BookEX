@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, ReactNod
 import { io, Socket } from 'socket.io-client';
 import { useSession } from 'next-auth/react';
 import type { Community, Post, Comment } from '@/lib/types';
+import { getSocketUrl } from '@/lib/url-utils';
 
 interface SocketContextType {
   socket: Socket | null;
@@ -16,14 +17,21 @@ interface SocketContextType {
   emitCommentCreated: (communityId: string, postId: string, comment: Comment) => void;
   emitPostLiked: (communityId: string, postId: string, userId: string, liked: boolean) => void;
   emitChatMessage: (channelId: string, message: any) => void;
+  emitPersonalMessage: (receiverId: string, message: any) => void;
   onNewPost: (callback: (data: { communityId: string; post: Post; timestamp: string }) => void) => void;
   onNewComment: (callback: (data: { communityId: string; postId: string; comment: Comment; timestamp: string }) => void) => void;
   onPostLikeUpdate: (callback: (data: { communityId: string; postId: string; userId: string; liked: boolean; timestamp: string }) => void) => void;
   onChatMessage: (callback: (data: { channelId: string; message: any; timestamp: string }) => void) => void;
+  onPersonalMessage: (callback: (data: { message: any; timestamp: string }) => void) => void;
+  onUserOnline: (callback: (data: { userId: string; communityId: string }) => void) => void;
+  onUserOffline: (callback: (data: { userId: string; communityId: string }) => void) => void;
   offNewPost: (callback: (data: { communityId: string; post: Post; timestamp: string }) => void) => void;
   offNewComment: (callback: (data: { communityId: string; postId: string; comment: Comment; timestamp: string }) => void) => void;
   offPostLikeUpdate: (callback: (data: { communityId: string; postId: string; userId: string; liked: boolean; timestamp: string }) => void) => void;
   offChatMessage: (callback: (data: { channelId: string; message: any; timestamp: string }) => void) => void;
+  offPersonalMessage: (callback: (data: { message: any; timestamp: string }) => void) => void;
+  offUserOnline: (callback: (data: { userId: string; communityId: string }) => void) => void;
+  offUserOffline: (callback: (data: { userId: string; communityId: string }) => void) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -41,9 +49,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
   useEffect(() => {
     // Initialize socket connection
     const initSocket = () => {
-      const socketUrl = process.env.NODE_ENV === 'production' 
-        ? 'https://your-production-domain.com' 
-        : 'http://localhost:3001';
+      const socketUrl = getSocketUrl();
         
       const newSocket = io(socketUrl, {
         transports: ['websocket', 'polling'],
@@ -166,6 +172,12 @@ export function SocketProvider({ children }: SocketProviderProps) {
     }
   };
 
+  const emitPersonalMessage = (receiverId: string, message: any) => {
+    if (socket && isConnected) {
+      socket.emit('personalMessage', { receiverId, message });
+    }
+  };
+
   const onNewPost = (callback: (data: { communityId: string; post: Post; timestamp: string }) => void) => {
     if (socket) {
       socket.on('newPost', callback);
@@ -214,6 +226,42 @@ export function SocketProvider({ children }: SocketProviderProps) {
     }
   };
 
+  const onPersonalMessage = (callback: (data: { message: any; timestamp: string }) => void) => {
+    if (socket) {
+      socket.on('newPersonalMessage', callback);
+    }
+  };
+
+  const offPersonalMessage = (callback: (data: { message: any; timestamp: string }) => void) => {
+    if (socket) {
+      socket.off('newPersonalMessage', callback);
+    }
+  };
+
+  const onUserOnline = (callback: (data: { userId: string; communityId: string }) => void) => {
+    if (socket) {
+      socket.on('userOnline', callback);
+    }
+  };
+
+  const offUserOnline = (callback: (data: { userId: string; communityId: string }) => void) => {
+    if (socket) {
+      socket.off('userOnline', callback);
+    }
+  };
+
+  const onUserOffline = (callback: (data: { userId: string; communityId: string }) => void) => {
+    if (socket) {
+      socket.on('userOffline', callback);
+    }
+  };
+
+  const offUserOffline = (callback: (data: { userId: string; communityId: string }) => void) => {
+    if (socket) {
+      socket.off('userOffline', callback);
+    }
+  };
+
   const value: SocketContextType = {
     socket,
     isConnected,
@@ -225,14 +273,21 @@ export function SocketProvider({ children }: SocketProviderProps) {
     emitCommentCreated,
     emitPostLiked,
     emitChatMessage,
+    emitPersonalMessage,
     onNewPost,
     onNewComment,
     onPostLikeUpdate,
     onChatMessage,
+    onPersonalMessage,
+    onUserOnline,
+    onUserOffline,
     offNewPost,
     offNewComment,
     offPostLikeUpdate,
     offChatMessage,
+    offPersonalMessage,
+    offUserOnline,
+    offUserOffline,
   };
 
   return (

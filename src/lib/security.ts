@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getBaseUrl } from './url-utils';
 
 // Rate limiting configuration
 interface RateLimitConfig {
@@ -111,8 +112,10 @@ export function validateOrigin(request: NextRequest): boolean {
   
   const allowedOrigins = [
     process.env.NEXT_PUBLIC_APP_URL,
+    getBaseUrl(),
     'http://localhost:3000',
-    'https://localhost:3000'
+    'https://localhost:3000',
+    'http://localhost:9002'
   ].filter(Boolean);
   
   return allowedOrigins.some(allowed => 

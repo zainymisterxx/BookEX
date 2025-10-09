@@ -19,6 +19,7 @@ import { ReviewModal } from '@/components/review-modal';
 import { ExchangeStatusBar } from '@/components/exchange-status-bar';
 import Link from 'next/link';
 import { getChatDetails, getChatExchangeDetails } from '@/app/actions';
+import { getSocketUrl } from '@/lib/url-utils';
 
 export default function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -65,7 +66,8 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     fetchChatData();
 
     // Initialize Socket.IO connection
-    socketRef.current = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001');
+    const socketUrl = getSocketUrl();
+    socketRef.current = io(socketUrl);
 
     socketRef.current.on('connect', () => {
       console.log('Connected to socket server');

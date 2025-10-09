@@ -15,6 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Users, Trash2, Eye, Search, Shield, AlertTriangle, MessageSquare, UserMinus, Ban } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Community, Post, User } from '@/lib/types';
+import { apiFetch } from '@/lib/api-client';
 
 interface CommunityStats {
   totalCommunities: number;
@@ -78,7 +79,7 @@ export default function CommunityAdminDashboard() {
 
   const loadStats = async () => {
     try {
-      const response = await fetch('/api/admin/communities/stats');
+      const response = await apiFetch('/api/admin/communities/stats');
       if (response.ok) {
         const data = await response.json();
         setStats(data);

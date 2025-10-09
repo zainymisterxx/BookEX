@@ -13,6 +13,7 @@ import {
   Users, BookOpen, MessageSquare, Shield, TrendingUp, 
   Activity, AlertTriangle, CheckCircle, RefreshCw
 } from 'lucide-react';
+import { apiFetch } from '@/lib/api-client';
 
 // Types for dashboard data
 interface DashboardStats {
@@ -66,7 +67,7 @@ export default function ComprehensiveAdminDashboard() {
       setError(null);
       setLoading(true);
 
-      const response = await fetch('/api/admin/comprehensive-dashboard');
+      const response = await apiFetch('/api/admin/comprehensive-dashboard');
       if (!response.ok) {
         throw new Error('Failed to load dashboard data');
       }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AdminNotification, AdminNotificationSummary } from '@/lib/types';
+import { apiFetch } from '@/lib/api-client';
 
 interface UseAdminNotificationsReturn {
   notifications: AdminNotification[];
@@ -28,8 +29,8 @@ export function useAdminNotifications(): UseAdminNotificationsReturn {
 
       // Fetch both summary and recent notifications
       const [summaryResponse, notificationsResponse] = await Promise.all([
-        fetch('/api/admin/notifications?summary=true'),
-        fetch('/api/admin/notifications?limit=10&unreadOnly=false')
+        apiFetch('/api/admin/notifications?summary=true'),
+        apiFetch('/api/admin/notifications?limit=10&unreadOnly=false')
       ]);
 
       if (!summaryResponse.ok || !notificationsResponse.ok) {
@@ -52,7 +53,7 @@ export function useAdminNotifications(): UseAdminNotificationsReturn {
 
   const markAsRead = useCallback(async (notificationIds: string[]) => {
     try {
-      const response = await fetch('/api/admin/notifications', {
+      const response = await apiFetch('/api/admin/notifications', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -92,7 +93,7 @@ export function useAdminNotifications(): UseAdminNotificationsReturn {
 
   const markAllAsRead = useCallback(async () => {
     try {
-      const response = await fetch('/api/admin/notifications', {
+      const response = await apiFetch('/api/admin/notifications', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'

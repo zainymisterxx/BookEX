@@ -7,6 +7,8 @@ import { Server } from 'socket.io';
 import { ObjectId } from 'mongodb';
 import clientPromise from './src/lib/mongodb';
 import redisCache from './src/lib/redis-cache';
+import { presenceManager } from './src/lib/presence';
+import { getCorsOrigins } from './src/lib/url-utils';
 import jwt from 'jsonwebtoken';
 
 // Extend Socket type to include userId
@@ -24,7 +26,7 @@ redisCache.connect().catch(() => {
 const httpServer = createServer();
 const io = new Server(httpServer, {
   cors: {
-    origin: ["http://localhost:9002", "http://127.0.0.1:9002"],
+    origin: getCorsOrigins(),
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
@@ -40,12 +42,29 @@ io.on('connection', (socket) => {
   socket.userId = null;
 
   // Handle authentication
-  socket.on('authenticate', (token) => {
+  socket.on('authenticate', async (token) => {
     try {
       if (token && process.env.NEXTAUTH_SECRET) {
         const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET) as any;
         socket.userId = decoded.sub || decoded.id;
         console.log(`User ${socket.userId} authenticated`);
+        
+        // Set user as online in presence system
+        await presenceManager.setUserOnline(socket.userId!);
+        
+        // Notify all communities the user is in
+        const client = await clientPromise;
+        const db = client.db('bookex');
+        const communities = await db.collection('communities').find({
+          'members.userId': socket.userId
+        }, { projection: { _id: 1 } }).toArray();
+        
+        communities.forEach(community => {
+          socket.to(`community_${community._id}`).emit('userOnline', {
+            userId: socket.userId,
+            communityId: community._id.toString()
+          });
+        });
       }
     } catch (error) {
       console.error('Authentication error:', error);
@@ -238,15 +257,83 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  // Personal messaging events
+  socket.on('personalMessage', async (data) => {
+    const { receiverId, message } = data;
+    
+    try {
+      if (!socket.userId) {
+        socket.emit('error', { message: 'Not authenticated' });
+        return;
+      }
+
+      // Save message to database
+      const client = await clientPromise;
+      const db = client.db('bookex');
+      
+      const messageDoc = {
+        senderId: socket.userId,
+        receiverId,
+        content: message.content,
+        createdAt: new Date().toISOString(),
+        read: false
+      };
+      
+      await db.collection('personalMessages').insertOne(messageDoc);
+      
+      // Send to receiver if online
+      const receiverSocket = Array.from(io.sockets.sockets.values())
+        .find(s => s.userId === receiverId);
+      
+      if (receiverSocket) {
+        receiverSocket.emit('newPersonalMessage', {
+          message: {
+            ...messageDoc,
+            sender: {
+              _id: socket.userId,
+              name: message.senderName || 'Unknown User'
+            }
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error('Error handling personal message:', error);
+    }
+  });
+
+  socket.on('disconnect', async () => {
     console.log('User disconnected:', socket.id);
+    
+    if (socket.userId) {
+      // Set user as offline in presence system
+      await presenceManager.setUserOffline(socket.userId);
+      
+      // Notify all communities the user was in
+      try {
+        const client = await clientPromise;
+        const db = client.db('bookex');
+        const communities = await db.collection('communities').find({
+          'members.userId': socket.userId
+        }, { projection: { _id: 1 } }).toArray();
+        
+        communities.forEach(community => {
+          socket.to(`community_${community._id}`).emit('userOffline', {
+            userId: socket.userId,
+            communityId: community._id.toString()
+          });
+        });
+      } catch (error) {
+        console.error('Error notifying communities of user offline:', error);
+      }
+    }
   });
 });
 
 const PORT = process.env.SOCKET_PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Socket.IO server running on port ${PORT}`);
-  console.log(`CORS configured for: http://localhost:9002`);
+  console.log(`CORS configured for:`, getCorsOrigins());
 });
 
 httpServer.on('error', (error) => {
