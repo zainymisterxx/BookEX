@@ -99,7 +99,7 @@ export function ForumChannel({
   // Join/leave channel room
   useEffect(() => {
     if (isConnected && isMember) {
-      joinChannel(channelId);
+      joinChannel(channelId, communityId);
     }
 
     return () => {
@@ -107,7 +107,7 @@ export function ForumChannel({
         leaveChannel(channelId);
       }
     };
-  }, [isConnected, isMember, channelId, joinChannel, leaveChannel]);
+  }, [isConnected, isMember, channelId, communityId, joinChannel, leaveChannel]);
 
   // Set up real-time event listeners
   useEffect(() => {

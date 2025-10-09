@@ -10,7 +10,7 @@ interface SocketContextType {
   isConnected: boolean;
   joinCommunity: (communityId: string) => void;
   leaveCommunity: (communityId: string) => void;
-  joinChannel: (channelId: string) => void;
+  joinChannel: (channelId: string, communityId?: string) => void;
   leaveChannel: (channelId: string) => void;
   emitPostCreated: (communityId: string, post: Post) => void;
   emitCommentCreated: (communityId: string, postId: string, comment: Comment) => void;
@@ -41,15 +41,25 @@ export function SocketProvider({ children }: SocketProviderProps) {
   useEffect(() => {
     // Initialize socket connection
     const initSocket = () => {
-      const newSocket = io('http://localhost:3001', {
+      const socketUrl = process.env.NODE_ENV === 'production' 
+        ? 'https://your-production-domain.com' 
+        : 'http://localhost:3001';
+        
+      const newSocket = io(socketUrl, {
         transports: ['websocket', 'polling'],
         upgrade: true,
         rememberUpgrade: true,
         timeout: 20000,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+        forceNew: true,
       });
 
       newSocket.on('connect', () => {
         console.log('Connected to Socket.IO server');
+        console.log('Socket ID:', newSocket.id);
+        console.log('Socket transport:', newSocket.io.engine.transport.name);
         setIsConnected(true);
         
         // Authenticate with session token if available
@@ -65,6 +75,25 @@ export function SocketProvider({ children }: SocketProviderProps) {
 
       newSocket.on('connect_error', (error) => {
         console.error('Socket.IO connection error:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+        setIsConnected(false);
+      });
+
+      newSocket.on('reconnect', (attemptNumber) => {
+        console.log('Reconnected to Socket.IO server after', attemptNumber, 'attempts');
+        setIsConnected(true);
+      });
+
+      newSocket.on('reconnect_error', (error) => {
+        console.error('Socket.IO reconnection error:', error);
+      });
+
+      newSocket.on('reconnect_failed', () => {
+        console.error('Socket.IO reconnection failed');
         setIsConnected(false);
       });
 
@@ -83,7 +112,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
         setIsConnected(false);
       }
     };
-  }, []);
+  }, [session]);
 
   const joinCommunity = (communityId: string) => {
     if (socket && isConnected) {

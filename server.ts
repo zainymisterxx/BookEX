@@ -24,13 +24,17 @@ redisCache.connect().catch(() => {
 const httpServer = createServer();
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:9002",
-    methods: ["GET", "POST"]
-  }
+    origin: ["http://localhost:9002", "http://127.0.0.1:9002"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
+  },
+  allowEIO3: true
 });
 
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
+  console.log('Socket transport:', socket.conn.transport.name);
   
   // Store user ID in socket for authorization
   socket.userId = null;
@@ -242,6 +246,11 @@ io.on('connection', (socket) => {
 const PORT = process.env.SOCKET_PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Socket.IO server running on port ${PORT}`);
+  console.log(`CORS configured for: http://localhost:9002`);
+});
+
+httpServer.on('error', (error) => {
+  console.error('Socket server error:', error);
 });
 
 // Export functions to emit community events from actions
