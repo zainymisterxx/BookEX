@@ -61,6 +61,20 @@ export function ChatChannel({
 
   const messagesPerPage = 50;
 
+  // Reusable dedupe helper to ensure message list has unique _id values
+  const dedupeMessagesById = (items: ChatMessage[]) => {
+    const seen = new Set<string>();
+    const out: ChatMessage[] = [];
+    for (const it of items) {
+      const id = String(it._id);
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(it);
+      }
+    }
+    return out;
+  };
+
   // Load messages for this channel
   const loadMessages = async (page: number = 1, loadMore: boolean = false) => {
     if (loadMore) {
@@ -76,12 +90,26 @@ export function ChatChannel({
       if (response.ok) {
         const data = await response.json();
         
+        // Helper to dedupe messages by _id while preserving order (first occurrence wins)
+        const dedupeMessages = (items: any[]) => {
+          const seen = new Set<string>();
+          const out: any[] = [];
+          for (const it of items) {
+            const id = String(it._id);
+            if (!seen.has(id)) {
+              seen.add(id);
+              out.push(it);
+            }
+          }
+          return out;
+        };
+
         if (loadMore) {
-          // Prepend older messages
-          setMessages(prev => [...data.messages, ...prev]);
+          // Prepend older messages and dedupe (older first)
+          setMessages(prev => dedupeMessages([...data.messages, ...prev]));
         } else {
-          // Replace with new messages
-          setMessages(data.messages);
+          // Replace with new messages (dedup just in case)
+          setMessages(dedupeMessages(data.messages));
         }
         
         setHasMoreMessages(data.pagination.hasNext);
@@ -118,11 +146,9 @@ export function ChatChannel({
     const handleNewMessage = (data: { channelId: string; message: ChatMessage; timestamp: string }) => {
       if (data.channelId === channelId) {
         setMessages(prevMessages => {
-          const exists = prevMessages.some(m => String(m._id) === String(data.message._id));
-          if (!exists) {
-            return [...prevMessages, data.message];
-          }
-          return prevMessages;
+          // Append then dedupe to be robust against races/duplicates
+          const combined = [...prevMessages, data.message];
+          return dedupeMessagesById(combined);
         });
       }
     };
@@ -199,11 +225,14 @@ export function ChatChannel({
 
         if (response.ok) {
           const result = await response.json();
-          if (result.success && result.newMessage) {
-            // Replace temp message with real message
-            setMessages(prevMessages => prevMessages.map(m => 
-              String(m._id) === String(tempMessage._id) ? result.newMessage! : m
-            ));
+            if (result.success && result.newMessage) {
+            // Replace temp message with real message and dedupe
+            setMessages(prevMessages => {
+              const replaced = prevMessages.map(m => 
+                String(m._id) === String(tempMessage._id) ? result.newMessage! : m
+              );
+              return dedupeMessagesById(replaced);
+            });
             
             // Emit real-time update
             try {

@@ -3,7 +3,7 @@
  * Ensures all API calls use absolute URLs compatible with Vercel deployment
  */
 
-import { getApiUrl } from './url-utils';
+import { getApiUrl, getBaseUrl } from './url-utils';
 
 /**
  * API Client class for making HTTP requests
@@ -12,7 +12,9 @@ export class ApiClient {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = getApiUrl();
+    // Use the application base URL (without the trailing `/api`) so
+    // buildUrl can consistently add or respect the `api/` segment.
+    this.baseUrl = getBaseUrl();
   }
 
   /**
@@ -121,13 +123,13 @@ export class ApiClient {
   private buildUrl(endpoint: string): string {
     // Remove leading slash if present
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
-    
-    // If endpoint already contains 'api/', use it as is
+
+    // If the caller already included an `api/` segment, respect it.
     if (cleanEndpoint.startsWith('api/')) {
       return `${this.baseUrl}/${cleanEndpoint}`;
     }
-    
-    // Otherwise, prepend 'api/'
+
+    // Otherwise, add the `api/` segment
     return `${this.baseUrl}/api/${cleanEndpoint}`;
   }
 }
@@ -175,9 +177,18 @@ export const api = {
  * Use this to replace existing fetch('/api/...') calls
  */
 export const apiFetch = async (endpoint: string, options?: RequestInit): Promise<Response> => {
-  const url = endpoint.startsWith('http') 
-    ? endpoint 
-    : `${getApiUrl()}/${endpoint.startsWith('/') ? endpoint.slice(1) : endpoint}`;
-  
+  // If caller passed an absolute URL, use it directly
+  if (endpoint.startsWith('http')) {
+    return fetch(endpoint, options);
+  }
+
+  // Normalize endpoint to avoid double `/api/api` when callers include `/api/...`
+  const cleaned = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+
+  // If the cleaned endpoint already starts with `api/`, join with base URL directly
+  const url = cleaned.startsWith('api/')
+    ? `${getBaseUrl()}/${cleaned}`
+    : `${getBaseUrl()}/api/${cleaned}`;
+
   return fetch(url, options);
 };

@@ -1,4 +1,4 @@
-import { Server as SocketIOServer } from 'socket.io';
+import { Server as SocketIOServer, type Socket } from 'socket.io';
 import { Server as HTTPServer } from 'http';
 import { presenceManager } from './presence';
 import { connectToMongoDB } from './mongodb';
@@ -6,7 +6,8 @@ import { ObjectId } from 'mongodb';
 import { getCorsOrigins } from './url-utils';
 
 interface AuthenticatedSocket extends Socket {
-  userId?: string;
+  // Socket already may define userId as string | null; ensure compatibility
+  userId: string | null;
   userCommunities?: string[];
 }
 
@@ -63,8 +64,8 @@ export function setupSocketServer(httpServer: HTTPServer) {
       return;
     }
 
-    // Set user as online
-    await presenceManager.setUserOnline(socket.userId, socket.userCommunities);
+  // Set user as online (let presenceManager fetch communities if none provided)
+  await presenceManager.setUserOnline(socket.userId!);
 
     // Join user to their community rooms
     socket.userCommunities?.forEach(communityId => {

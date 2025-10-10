@@ -62,7 +62,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
   useEffect(() => {
     const fetchMembers = async () => {
       try {
-        const response = await apiFetch(`/api/communities/${community._id}/members`);
+  const response = await apiFetch(`/communities/${community._id}/members`);
         if (response.ok) {
           const data = await response.json();
           setMembers(data.members || []);
@@ -164,7 +164,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
 
     startTransition(async () => {
       try {
-        const response = await apiFetch(`/api/communities/${community._id}/members/${member.userId}`, {
+  const response = await apiFetch(`/communities/${community._id}/members/${member.userId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action }),
