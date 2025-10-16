@@ -17,6 +17,13 @@ async function setupIndexes() {
     console.log('🔌 Connecting to MongoDB...');
     await client.connect();
     const db = client.db('bookex');
+
+
+    // Ensure unique username index (sparse to allow gradual backfill)
+    await db.collection('users').createIndex(
+      { username: 1 }, 
+      { unique: true, sparse: true, name: 'users_username_unique', background: true }
+    );
     
     console.log('📊 Setting up database indexes...');
     

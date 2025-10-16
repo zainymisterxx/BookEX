@@ -7,6 +7,7 @@ import { ObjectId } from 'mongodb';
 import { checkAuthRateLimit, recordAuthResult } from '@/lib/auth-rate-limiting';
 
 export const authOptions: NextAuthOptions = {
+  debug: process.env.NODE_ENV === 'development',
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -54,6 +55,7 @@ export const authOptions: NextAuthOptions = {
             id: user._id.toString(),
             email: user.email,
             name: user.name,
+            username: user.username || null,
             image: user.avatarUrl || null,
             role: user.role || 'user',
             status: user.status || 'active',
@@ -72,6 +74,7 @@ export const authOptions: NextAuthOptions = {
         token.role = (user as any).role;
         token.status = (user as any).status;
         token.profileCompleted = (user as any).profileCompleted;
+        token.username = (user as any).username;
       }
       return token;
     },
@@ -81,12 +84,17 @@ export const authOptions: NextAuthOptions = {
         session.user.role = token.role as 'user' | 'admin';
         session.user.status = token.status as 'active' | 'suspended' | 'deactivated';
         session.user.profileCompleted = token.profileCompleted as boolean;
+        session.user.username = token.username as string;
       }
       return session;
     },
   },
   pages: {
     signIn: '/', // Redirect users to homepage for login
+  },
+  session: {
+    strategy: 'jwt',
+    maxAge: 24 * 60 * 60, // 24 hours
   },
   secret: process.env.NEXTAUTH_SECRET,
 };

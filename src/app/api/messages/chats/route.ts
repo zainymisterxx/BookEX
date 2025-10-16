@@ -54,8 +54,17 @@ export async function GET(request: NextRequest) {
       {
         $lookup: {
           from: 'users',
-          localField: '_id',
-          foreignField: '_id',
+          let: { otherUserId: '$_id' },
+          pipeline: [
+            { 
+              $match: { 
+                $expr: { 
+                  $eq: ['$_id', { $toObjectId: '$$otherUserId' }] 
+                } 
+              } 
+            },
+            { $project: { name: 1, username: 1, avatarUrl: 1, image: 1 } }
+          ],
           as: 'otherParticipant'
         }
       },
@@ -68,6 +77,7 @@ export async function GET(request: NextRequest) {
       {
         $project: {
           _id: 1,
+          otherUserId: '$_id',
           participantIds: ['$_id', session.user.id],
           lastMessage: {
             _id: '$lastMessage._id',
@@ -80,7 +90,10 @@ export async function GET(request: NextRequest) {
           otherParticipant: {
             _id: '$otherParticipant._id',
             name: '$otherParticipant.name',
-            avatarUrl: '$otherParticipant.avatarUrl'
+            username: '$otherParticipant.username',
+            avatarUrl: { 
+              $ifNull: ['$otherParticipant.avatarUrl', '$otherParticipant.image'] 
+            }
           },
           unreadCount: 1
         }
@@ -88,7 +101,24 @@ export async function GET(request: NextRequest) {
       { $sort: { 'lastMessage.createdAt': -1 } }
     ]).toArray();
 
-    return NextResponse.json({ chats });
+    // Format chats with proper composite chatId
+    const formattedChats = chats.map(chat => {
+      const otherUserId = chat.otherUserId || chat._id;
+      const chatId = [session.user.id, otherUserId].sort().join('_');
+      
+      // Ensure otherParticipant._id is a string
+      if (chat.otherParticipant && chat.otherParticipant._id) {
+        chat.otherParticipant._id = chat.otherParticipant._id.toString();
+      }
+      
+      return {
+        ...chat,
+        _id: chatId,
+        participantIds: [session.user.id, otherUserId]
+      };
+    });
+
+    return NextResponse.json({ chats: formattedChats });
 
   } catch (error) {
     console.error('Error fetching chats:', error);

@@ -288,8 +288,42 @@ export async function getUserForUpdate(userId: string) {
         if (!userData) return null;
         return {
             name: userData.name,
+            username: userData.username,
             city: userData.city,
             avatarUrl: userData.avatarUrl
+        };
+    });
+}
+
+/**
+ * Checks if a username is available for registration or updating.
+ * @param username The username to check for availability.
+ * @returns An object indicating whether the username is available.
+ */
+export async function checkUsernameAvailability(username: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        // Import username validation
+        const { validateUsername } = await import('@/lib/username-utils');
+        
+        const validation = validateUsername(username);
+        if (!validation.valid) {
+            return {
+                success: true,
+                available: false,
+                error: validation.error
+            };
+        }
+        
+        // Check if username exists (excluding current user)
+        const existingUser = await db.collection("users").findOne({ 
+            username: username,
+            _id: { $ne: new ObjectId(user.id) }
+        });
+        
+        return {
+            success: true,
+            available: !existingUser,
+            error: existingUser ? 'Username is already taken' : null
         };
     });
 }
@@ -299,7 +333,7 @@ export async function getUserForUpdate(userId: string) {
  * @param profileData The data to update.
  * @returns An object with the result of the operation and the new user data for session update.
  */
-export async function updateUserProfile(profileData: { userId: string, name: string, city: string, avatarUrl?: string }) {
+export async function updateUserProfile(profileData: { userId: string, name: string, username?: string, city: string, avatarUrl?: string }) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Validate authorization using resource authorization system
         await validateResourceAccess(user, 'user', profileData.userId, 'update');
@@ -326,6 +360,29 @@ export async function updateUserProfile(profileData: { userId: string, name: str
             name: sanitizeInput(validatedData.name),
             city: sanitizeInput(validatedData.city),
         };
+        
+        // Handle username update
+        if (profileData.username !== undefined && profileData.username !== currentUser.username) {
+            // Import username validation
+            const { validateUsername } = await import('@/lib/username-utils');
+            
+            const usernameValidation = validateUsername(profileData.username);
+            if (!usernameValidation.valid) {
+                throw createAppError(ErrorType.VALIDATION, usernameValidation.error || 'Invalid username');
+            }
+            
+            // Check if username is already taken
+            const existingUser = await db.collection("users").findOne({ 
+                username: profileData.username,
+                _id: { $ne: new ObjectId(user.id) }
+            });
+            
+            if (existingUser) {
+                throw createAppError(ErrorType.VALIDATION, 'Username is already taken');
+            }
+            
+            updateData.username = profileData.username;
+        }
         
         // Handle avatar update
         if (profileData.avatarUrl) {
@@ -361,6 +418,7 @@ export async function updateUserProfile(profileData: { userId: string, name: str
             success: true,
             updatedUser: {
                 name: updateData.name,
+                username: updateData.username || currentUser.username,
                 image: updateData.avatarUrl || currentUser.avatarUrl,
             }
         };
@@ -585,24 +643,6 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
 
         const communityObjectId = new ObjectId(communityId);
 
-        // First, get the current community to understand its member structure
-        const community = await db.collection("communities").findOne({ _id: communityObjectId });
-        if (!community) {
-            throw new Error("Community not found");
-        }
-
-        // Check if user is already a member using both possible data structures
-        const isCurrentlyMember = Array.isArray(community.members) && 
-            community.members.some((m: any) => 
-                (typeof m === 'string' && m === user.id) || 
-                (typeof m === 'object' && m.userId === user.id)
-            );
-
-        // If the current membership status matches what we're trying to do, return early
-        if (isCurrentlyMember === isMember) {
-            return { success: true, message: isMember ? 'Already a member' : 'Not a member' };
-        }
-
         // Use MongoDB transaction for atomic operations
         const client = await clientPromise;
         const session = client.startSession();
@@ -610,57 +650,112 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
 
         try {
             result = await session.withTransaction(async () => {
+                // FIXED: Check community existence inside transaction
+                const community = await db.collection("communities").findOne(
+                    { _id: communityObjectId },
+                    { session, projection: { _id: 1, members: 1 } }
+                );
+                
+                if (!community) {
+                    throw new Error("Community not found");
+                }
+
                 if (isMember) {
-                    // User wants to leave - remove from members array
-                    return await db.collection("communities").updateOne(
-                        { _id: communityObjectId },
+                    // User wants to leave - use atomic operation with conditional check
+                    // Only remove if user is actually a member (prevents negative counts)
+                    const leaveResult = await db.collection("communities").updateOne(
+                        { 
+                            _id: communityObjectId,
+                            'members.userId': user.id  // Only update if user IS a member
+                        },
                         {
-                            $pull: { 
-                                members: { 
-                                    $or: [
-                                        { userId: user.id },
-                                        user.id  // Handle both object and string formats
-                                    ]
-                                } 
-                            },
+                            $pull: { members: { userId: user.id } },
                             $inc: { memberCount: -1 }
                         },
                         { session }
                     );
+                    
+                    // If no document was modified, user wasn't a member
+                    if (leaveResult.modifiedCount === 0) {
+                        // Check if it's because community doesn't exist or user not a member
+                        const stillExists = await db.collection("communities").findOne(
+                            { _id: communityObjectId },
+                            { session, projection: { _id: 1 } }
+                        );
+                        if (!stillExists) {
+                            throw new Error("Community not found");
+                        }
+                        // User wasn't a member, this is idempotent - return success
+                        return { modifiedCount: 0, wasAlreadyInDesiredState: true };
+                    }
+                    
+                    return leaveResult;
                 } else {
-                    // User wants to join - add to members array
-                    const memberData = { userId: user.id, role: 'member', joinedAt: new Date().toISOString() };
-                    return await db.collection("communities").updateOne(
-                        { _id: communityObjectId },
+                    // User wants to join - use atomic operation with conditional check
+                    // $addToSet with object requires matching on userId field
+                    const joinResult = await db.collection("communities").updateOne(
+                        { 
+                            _id: communityObjectId,
+                            'members.userId': { $ne: user.id }  // Only add if NOT already a member
+                        },
                         {
-                            $addToSet: { members: memberData },
+                            $addToSet: { 
+                                members: { 
+                                    userId: user.id, 
+                                    role: 'member', 
+                                    joinedAt: new Date(),
+                                    banned: false
+                                } 
+                            },
                             $inc: { memberCount: 1 }
                         },
                         { session }
                     );
+                    
+                    // If no document was modified, user was already a member
+                    if (joinResult.modifiedCount === 0) {
+                        // Check if it's because community doesn't exist or user already a member
+                        const stillExists = await db.collection("communities").findOne(
+                            { _id: communityObjectId },
+                            { session, projection: { _id: 1 } }
+                        );
+                        if (!stillExists) {
+                            throw new Error("Community not found");
+                        }
+                        // User was already a member, this is idempotent - return success
+                        return { modifiedCount: 0, wasAlreadyInDesiredState: true };
+                    }
+                    
+                    return joinResult;
                 }
             });
         } finally {
             await session.endSession();
         }
 
-        // Verify the operation was successful
-        if (result.modifiedCount === 0) {
-            throw new Error("Failed to update community membership");
+        // Check if the operation was idempotent (already in desired state)
+        const wasIdempotent = (result as any).wasAlreadyInDesiredState === true;
+
+        // Revalidate paths and emit events only if state actually changed
+        if (!wasIdempotent) {
+            revalidatePath('/community');
+            revalidatePath(`/community/${communityId}`);
+            
+            // Emit real-time community update for member count change
+            try {
+                const { emitCommunityUpdate } = await import('../../server');
+                await emitCommunityUpdate(communityId, isMember ? 'leave' : 'join', {});
+            } catch (emitError) {
+                console.warn('Failed to emit community update:', emitError);
+            }
         }
 
-        revalidatePath('/community');
-        revalidatePath(`/community/${communityId}`);
-        
-        // Emit real-time community update for member count change
-        try {
-            const { emitCommunityUpdate } = await import('../../server');
-            await emitCommunityUpdate(communityId, isMember ? 'leave' : 'join', {});
-        } catch (emitError) {
-            console.warn('Failed to emit community update:', emitError);
-        }
-
-        return { success: true };
+        return { 
+            success: true,
+            message: wasIdempotent 
+                ? (isMember ? 'Already left' : 'Already a member')
+                : (isMember ? 'Left community' : 'Joined community')
+        };
     });
 }
 
@@ -797,57 +892,92 @@ export async function createPost(communityId: string, postData: { authorId: stri
  */
 export async function togglePostLike(communityId: string, postId: string, isLiked: boolean) {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
+        // FIXED CRITICAL-002: Strict ObjectId validation
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
-        if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
+        if (!ObjectId.isValid(postId)) {
             throw new Error("Invalid post ID format");
         }
         
-        const postObjectId = ObjectId.isValid(postId) ? new ObjectId(postId) : null;
-        if (!postObjectId) throw new Error('Invalid post id');
+        const communityObjId = new ObjectId(communityId);
+        const postObjectId = new ObjectId(postId);
 
-        // Ensure member
-        const isMember = await db.collection("communities").findOne({ _id: new ObjectId(communityId), "members.userId": user.id });
-        if (!isMember) throw new Error('You must be a member to interact with posts in this community');
+        // Check membership and ban status
+        const community = await db.collection("communities").findOne(
+            { _id: communityObjId },
+            { projection: { members: 1 } }
+        );
         
+        if (!community) {
+            throw new Error('Community not found');
+        }
+
+        const member = (community as any).members?.find((m: any) => m.userId === user.id);
+        if (!member) {
+            throw new Error('You must be a member to interact with posts in this community');
+        }
+
+        if (member.banned) {
+            throw new Error('You are banned from this community');
+        }
+        
+        // FIXED MAJOR-005: Removed redundant 'likes' field - only track likedBy array
+        // The likes count should be calculated from likedBy.length when needed
         const updateOperation = isLiked
-            ? { $pull: { likedBy: user.id }, $inc: { likes: -1 } }
-            : { $addToSet: { likedBy: user.id }, $inc: { likes: 1 } };
+            ? { $pull: { likedBy: user.id } }
+            : { $addToSet: { likedBy: user.id } };
 
         const result = await db.collection("posts").updateOne(
-            { _id: postObjectId, communityId: new ObjectId(communityId) } as any,
+            { 
+                _id: postObjectId, 
+                communityId: communityObjId,
+                deletedAt: { $exists: false }
+            },
             updateOperation as any
         );
-        if (!result.matchedCount) throw new Error('Post not found');
         
-        // Notify author if needed
-        const postDoc = await db.collection("posts").findOne({ _id: postObjectId });
-        if (!isLiked && postDoc && postDoc.authorId !== user.id) {
-            const notification: Omit<Notification, '_id'> = {
-                userId: postDoc.authorId,
-                type: 'community' as const,
-                title: 'Post Interaction',
-                message: `${sanitizeInput(user.name || 'Someone')} liked your post.`,
-                link: `/community/${communityId}`,
-                read: false,
-                createdAt: new Date().toISOString(),
-                metadata: {
-                    communityId,
-                    postId,
-                    actionType: 'like'
-                }
-            };
-            await db.collection("notifications").insertOne(notification);
+        if (!result.matchedCount) {
+            throw new Error('Post not found');
+        }
+        
+        // Only send notification when liking (not unliking)
+        if (!isLiked && result.modifiedCount > 0) {
+            // Fetch post to get author info
+            const postDoc = await db.collection("posts").findOne(
+                { _id: postObjectId },
+                { projection: { authorId: 1 } }
+            );
+            
+            if (postDoc && postDoc.authorId !== user.id) {
+                const notification: Omit<Notification, '_id'> = {
+                    userId: postDoc.authorId,
+                    type: 'community' as const,
+                    title: 'Post Interaction',
+                    message: `${sanitizeInput(user.name || 'Someone')} liked your post.`,
+                    link: `/community/${communityId}`,
+                    read: false,
+                    createdAt: new Date().toISOString(),
+                    metadata: {
+                        communityId,
+                        postId,
+                        actionType: 'like'
+                    }
+                };
+                await db.collection("notifications").insertOne(notification);
+            }
         }
 
         revalidatePath(`/community/${communityId}`);
         
-        try {
-            const { emitCommunityPostLiked } = await import('../../server');
-            await emitCommunityPostLiked(communityId, postId, user.id, !isLiked);
-        } catch (emitError) {
-            console.warn('Failed to emit real-time update for like toggle:', emitError);
+        // Emit real-time update only if state actually changed
+        if (result.modifiedCount > 0) {
+            try {
+                const { emitCommunityPostLiked } = await import('../../server');
+                await emitCommunityPostLiked(communityId, postId, user.id, !isLiked);
+            } catch (emitError) {
+                console.warn('Failed to emit real-time update for like toggle:', emitError);
+            }
         }
         
         return { success: true };
@@ -952,67 +1082,76 @@ export async function addComment(communityId: string, postId: string, content: s
  */
 export async function deletePost(communityId: string, postId: string) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
-        // Validate communityId (must be ObjectId format)
+        // FIXED CRITICAL-002: Strict ObjectId validation to prevent NoSQL injection
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
-
-        // postId validation - it might be ObjectId or string
-        if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
+        
+        if (!ObjectId.isValid(postId)) {
             throw new Error("Invalid post ID format");
         }
-        
-        // Check if community and post exist - flexible query for different post ID formats
-        let community;
-        
-        // Try finding post with ObjectId first (if postId is valid ObjectId)
-        if (ObjectId.isValid(postId)) {
-            community = await db.collection("communities").findOne({ 
-                _id: new ObjectId(communityId),
-                "posts._id": new ObjectId(postId)
-            });
-        }
-        
-        // If not found and postId is not ObjectId, try finding with string comparison
-        if (!community) {
-            community = await db.collection("communities").findOne({ 
-                _id: new ObjectId(communityId),
-                posts: { $elemMatch: { _id: postId } }
-            });
-        }
-        
-        if (!community) {
-            throw new Error("Community or post not found");
-        }
-        
-        // Find the specific post - handle both ObjectId and string formats
-        const post = community.posts?.find((p: any) => 
-            String(p._id) === postId || 
-            (ObjectId.isValid(postId) && ObjectId.isValid(String(p._id)) && 
-             new ObjectId(String(p._id)).equals(new ObjectId(postId)))
+
+        const communityObjId = new ObjectId(communityId);
+        const postObjId = new ObjectId(postId);
+
+        // FIXED CRITICAL-003: Check membership BEFORE attempting to access post
+        const community = await db.collection("communities").findOne(
+            { 
+                _id: communityObjId,
+                'members.userId': user.id  // Verify user is a member
+            },
+            { projection: { _id: 1, createdBy: 1, members: 1 } }
         );
-        
+
+        if (!community) {
+            // Generic error to prevent information disclosure
+            throw new Error("Not authorized to access this community");
+        }
+
+        // FIXED MAJOR-001: Use posts collection (not embedded posts)
+        const post = await db.collection("posts").findOne({
+            _id: postObjId,
+            communityId: communityObjId,
+            deletedAt: { $exists: false }
+        }) as any;
+
         if (!post) {
             throw new Error("Post not found");
         }
-        
-        // Only post author, community creator, or admin can delete posts
+
+        // Check authorization: post author, community creator, or system admin
         const isAdmin = user.role === 'admin';
-        if (post.authorId !== user.id && community.createdBy !== user.id && !isAdmin) {
-            throw new Error("Unauthorized: You can only delete your own posts");
+        const isCreator = community.createdBy === user.id;
+        const isAuthor = post.authorId === user.id;
+
+        // Get user's community role for moderator check
+        const member = (community as any).members?.find((m: any) => m.userId === user.id);
+        const hasModerationRole = member?.role === 'admin' || member?.role === 'moderator';
+
+        if (!isAuthor && !isCreator && !isAdmin && !hasModerationRole) {
+            throw new Error("Unauthorized: You cannot delete this post");
         }
-        
-        // Create flexible query for post deletion - handle both ObjectId and string formats
-        let deleteQuery;
-        if (ObjectId.isValid(postId)) {
-            deleteQuery = { $pull: { posts: { _id: new ObjectId(postId) } } };
-        } else {
-            deleteQuery = { $pull: { posts: { _id: postId } } };
-        }
-        
-        await db.collection("communities").updateOne(
-            { _id: new ObjectId(communityId) },
-            deleteQuery as any
+
+        // Soft delete the post (mark as deleted instead of removing)
+        await db.collection("posts").updateOne(
+            { _id: postObjId },
+            {
+                $set: {
+                    deletedAt: new Date(),
+                    deletedBy: user.id
+                }
+            }
+        );
+
+        // Also delete all comments associated with this post
+        await db.collection("comments").updateMany(
+            { postId: postObjId },
+            {
+                $set: {
+                    deletedAt: new Date(),
+                    deletedBy: user.id
+                }
+            }
         );
 
         revalidatePath(`/community/${communityId}`);
@@ -1029,13 +1168,12 @@ export async function deletePost(communityId: string, postId: string) {
  */
 export async function editPost(communityId: string, postId: string, newContent: string) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
-        // Validate communityId (must be ObjectId format)
+        // FIXED CRITICAL-002: Strict ObjectId validation to prevent NoSQL injection
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
 
-        // postId validation - it might be ObjectId or string
-        if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
+        if (!ObjectId.isValid(postId)) {
             throw new Error("Invalid post ID format");
         }
 
@@ -1046,58 +1184,48 @@ export async function editPost(communityId: string, postId: string, newContent: 
         if (newContent.length > 5000) {
             throw new Error("Post too long (max 5000 characters)");
         }
-        
-        // Check if user is the post author, community creator, or admin - flexible query for different post ID formats
-        const isAdmin = user.role === 'admin';
-        let community;
-        
-        // Try finding post with ObjectId first (if postId is valid ObjectId)
-        if (ObjectId.isValid(postId)) {
-            community = await db.collection("communities").findOne({ 
-                _id: new ObjectId(communityId),
-                "posts._id": new ObjectId(postId),
-                $or: [
-                    { "posts.authorId": user.id },
-                    { createdBy: user.id },
-                    ...(isAdmin ? [{ _id: { $exists: true } }] : [])
-                ]
-            });
-        }
-        
-        // If not found and postId is not ObjectId, try finding with string comparison
+
+        const communityObjId = new ObjectId(communityId);
+        const postObjId = new ObjectId(postId);
+
+        // FIXED CRITICAL-003: Check membership BEFORE attempting to access post
+        const community = await db.collection("communities").findOne(
+            { 
+                _id: communityObjId,
+                'members.userId': user.id  // Verify user is a member
+            },
+            { projection: { _id: 1 } }
+        );
+
         if (!community) {
-            community = await db.collection("communities").findOne({ 
-                _id: new ObjectId(communityId),
-                posts: { $elemMatch: { 
-                    _id: postId, 
-                    $or: [
-                        { authorId: user.id },
-                        ...(isAdmin ? [{ _id: { $exists: true } }] : [])
-                    ]
-                } },
-                ...(isAdmin ? {} : { createdBy: user.id })
-            });
+            // Generic error to prevent information disclosure
+            throw new Error("Not authorized to access this community");
         }
-        
-        if (!community) {
+
+        // FIXED MAJOR-001: Use posts collection (not embedded posts)
+        const post = await db.collection("posts").findOne({
+            _id: postObjId,
+            communityId: communityObjId,
+            deletedAt: { $exists: false }
+        }) as any;
+
+        if (!post) {
+            throw new Error("Post not found");
+        }
+
+        // IMPORTANT: Only post author can edit posts (even admins cannot edit others' posts)
+        if (post.authorId !== user.id) {
             throw new Error("Unauthorized: You can only edit your own posts");
         }
-        
-        // Create flexible query for post update - handle both ObjectId and string formats
-        let updateQuery;
-        if (ObjectId.isValid(postId)) {
-            updateQuery = { _id: new ObjectId(communityId), "posts._id": new ObjectId(postId) };
-        } else {
-            updateQuery = { _id: new ObjectId(communityId), "posts._id": postId };
-        }
-        
-        await db.collection("communities").updateOne(
-            updateQuery,
-            { 
-                $set: { 
-                    "posts.$.content": sanitizeInput(newContent),
-                    "posts.$.editedAt": new Date().toISOString()
-                } 
+
+        // Update the post with sanitized content
+        await db.collection("posts").updateOne(
+            { _id: postObjId },
+            {
+                $set: {
+                    content: sanitizeInput(newContent),
+                    editedAt: new Date()
+                }
             }
         );
 
@@ -1201,6 +1329,145 @@ export async function createCommunity(communityData: { name: string, description
 
 
 /**
+ * Blocks a user, preventing them from sending messages or starting chats.
+ * @param userIdToBlock The ID of the user to block.
+ * @returns An object with the result of the operation.
+ */
+export async function blockUser(userIdToBlock: string) {
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
+        const { validateObjectId, ValidationError } = await import('@/lib/validation');
+        
+        const validatedBlockUserId = validateObjectId(userIdToBlock);
+        
+        // Prevent self-blocking
+        if (validatedBlockUserId.toString() === user.id) {
+            throw new ValidationError("Cannot block yourself");
+        }
+
+        // Verify user exists
+        const userToBlock = await db.collection("users").findOne({
+            _id: validatedBlockUserId
+        });
+        
+        if (!userToBlock) {
+            throw new ValidationError("User not found");
+        }
+
+        // Add to blocked list
+        await db.collection("users").updateOne(
+            { _id: new ObjectId(user.id) },
+            { 
+                $addToSet: { blockedUsers: validatedBlockUserId.toString() }
+            }
+        );
+
+        // Log activity
+        await logActivity(
+            userId.toString(), 
+            'BLOCK_USER', 
+            'medium',
+            `Blocked user ${userIdToBlock}`,
+            {
+                blockedUserId: userIdToBlock,
+                timestamp: getCurrentTimestamp()
+            }
+        );
+
+        return { success: true, message: "User blocked successfully" };
+    });
+}
+
+/**
+ * Unblocks a previously blocked user.
+ * @param userIdToUnblock The ID of the user to unblock.
+ * @returns An object with the result of the operation.
+ */
+export async function unblockUser(userIdToUnblock: string) {
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
+        const { validateObjectId } = await import('@/lib/validation');
+        
+        const validatedUnblockUserId = validateObjectId(userIdToUnblock);
+
+        // Remove from blocked list
+        await db.collection("users").updateOne(
+            { _id: new ObjectId(user.id) },
+            { 
+                $pull: { blockedUsers: validatedUnblockUserId.toString() }
+            }
+        );
+
+        // Log activity
+        await logActivity(
+            userId.toString(), 
+            'UNBLOCK_USER', 
+            'low',
+            `Unblocked user ${userIdToUnblock}`,
+            {
+                unblockedUserId: userIdToUnblock,
+                timestamp: getCurrentTimestamp()
+            }
+        );
+
+        return { success: true, message: "User unblocked successfully" };
+    });
+}
+
+/**
+ * Checks if a user has blocked another user.
+ * @param userId The ID of the user who might have blocked.
+ * @param targetUserId The ID of the potentially blocked user.
+ * @returns True if blocked, false otherwise.
+ */
+export async function isUserBlocked(userId: string, targetUserId: string): Promise<boolean> {
+    try {
+        const client = await clientPromise;
+        const db = client.db(process.env.MONGODB_DB);
+        
+        const user = await db.collection("users").findOne(
+            { _id: new ObjectId(userId) },
+            { projection: { blockedUsers: 1 } }
+        );
+        
+        return user?.blockedUsers?.includes(targetUserId) || false;
+    } catch (error) {
+        console.error('Error checking if user is blocked:', error);
+        return false;
+    }
+}
+
+/**
+ * Gets the list of users blocked by the current user.
+ * @returns An object with the list of blocked users.
+ */
+export async function getBlockedUsers() {
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
+        const userDoc = await db.collection("users").findOne(
+            { _id: new ObjectId(user.id) },
+            { projection: { blockedUsers: 1 } }
+        );
+
+        if (!userDoc?.blockedUsers || userDoc.blockedUsers.length === 0) {
+            return { success: true, blockedUsers: [] };
+        }
+
+        // Fetch blocked user details
+        const blockedUserIds = userDoc.blockedUsers
+            .filter((id: string) => ObjectId.isValid(id))
+            .map((id: string) => new ObjectId(id));
+
+        const blockedUsers = await db.collection("users")
+            .find({ _id: { $in: blockedUserIds } })
+            .project({ password: 0, email: 0 })
+            .toArray();
+
+        return { 
+            success: true, 
+            blockedUsers: JSON.parse(JSON.stringify(blockedUsers)) 
+        };
+    });
+}
+
+/**
  * Initiates contact with a user, creating a chat if one doesn't exist.
  * @param otherUserId The ID of the user to contact.
  * @param bookId The ID of the book being discussed (optional).
@@ -1224,6 +1491,20 @@ export async function startChat(otherUserId: string, bookId?: string) {
         const otherUser = await db.collection("users").findOne({ _id: validatedOtherUserId });
         if (!otherUser) {
             throw new ValidationError("User not found.");
+        }
+        
+        // Check if users have blocked each other
+        const [currentUserBlocksOther, otherBlocksCurrent] = await Promise.all([
+            isUserBlocked(user.id, validatedOtherUserId.toString()),
+            isUserBlocked(validatedOtherUserId.toString(), user.id)
+        ]);
+
+        if (currentUserBlocksOther) {
+            throw new ValidationError("You have blocked this user. Unblock them to start a conversation.");
+        }
+
+        if (otherBlocksCurrent) {
+            throw new ValidationError("This user has blocked you. You cannot start a conversation.");
         }
         
         // If bookId provided, verify book exists and is available for sale
@@ -1321,6 +1602,16 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         
         if (!otherUser) {
             throw new ValidationError("Target user not found");
+        }
+        
+        // Check if users have blocked each other
+        const [currentUserBlocksOther, otherBlocksCurrent] = await Promise.all([
+            isUserBlocked(user.id, validatedParams.otherUserId.toString()),
+            isUserBlocked(validatedParams.otherUserId.toString(), user.id)
+        ]);
+
+        if (currentUserBlocksOther || otherBlocksCurrent) {
+            throw new ValidationError("Cannot start chat due to blocking restrictions");
         }
         
         // Validate book is available for exchange

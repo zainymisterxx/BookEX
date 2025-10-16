@@ -13,13 +13,16 @@ import {
   User,
   Clock,
   Check,
-  CheckCheck
+  CheckCheck,
+  Plus,
+  UserPlus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Session } from 'next-auth';
 import { useSocket } from '@/components/socket-provider';
 import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api-client';
+import { UserSearch } from '@/components/user-search';
 
 interface Message {
   _id: string;
@@ -31,8 +34,16 @@ interface Message {
   sender?: {
     _id: string;
     name: string;
+    username?: string;
     avatarUrl?: string;
   };
+}
+
+interface User {
+  _id: string;
+  name: string;
+  username?: string;
+  avatarUrl?: string;
 }
 
 interface Chat {
@@ -42,6 +53,7 @@ interface Chat {
   otherParticipant?: {
     _id: string;
     name: string;
+    username?: string;
     avatarUrl?: string;
   };
   unreadCount: number;
@@ -58,8 +70,61 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
   const [newMessage, setNewMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  // Cursor for pagination (older messages). Starts null meaning first page.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const { socket, isConnected } = useSocket();
   const { toast } = useToast();
+
+  // Handle starting a new chat with a selected user
+  const handleStartChat = async (user: { _id: string; name: string; username?: string; avatarUrl?: string }) => {
+    try {
+      const response = await apiFetch('/api/messages/start-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user._id })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Create or find the chat object
+        const newChat: Chat = {
+          _id: data.chatId,
+          participantIds: [currentUser.id, user._id],
+          otherParticipant: data.otherParticipant,
+          unreadCount: 0
+        };
+
+        // Update chats list if this is a new chat
+        if (!data.existing) {
+          setChats(prev => [newChat, ...prev]);
+        }
+
+        // Select the chat
+        setSelectedChat(newChat);
+
+        // If it's a new chat, initialize empty messages
+        if (!data.existing) {
+          setMessages([]);
+          setNextCursor(null);
+        }
+
+        toast({
+          title: 'Chat Started',
+          description: `Started conversation with ${user.username ? `@${user.username}` : user.name}`
+        });
+      } else {
+        throw new Error('Failed to start chat');
+      }
+    } catch (error) {
+      console.error('Error starting chat:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Failed to start chat. Please try again.'
+      });
+    }
+  };
 
   // Fetch user's chats
   useEffect(() => {
@@ -89,12 +154,38 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
   useEffect(() => {
     if (!selectedChat) return;
 
-    const fetchMessages = async () => {
+    const fetchMessages = async (cursor?: string) => {
       try {
-        const response = await fetch(`/api/messages/chats/${selectedChat._id}/messages`);
+        const url = new URL(`/api/messages/chats/${selectedChat._id}/messages`, window.location.origin);
+        if (cursor) {
+          url.searchParams.set('cursor', cursor);
+        }
+        url.searchParams.set('limit', '50');
+
+        const response = await fetch(url);
         if (response.ok) {
           const data = await response.json();
-          setMessages(data.messages || []);
+          if (cursor) {
+            // Append older messages
+            setMessages(prev => [...prev, ...data.messages]);
+          } else {
+            // Fresh load
+            setMessages(data.messages || []);
+          }
+          // Store next cursor if available
+          if (data.nextCursor) {
+            setNextCursor(data.nextCursor);
+          }
+          
+          // Mark messages as read and reset unread count
+          if (!cursor && data.messages?.some((m: Message) => !m.read && m.senderId !== currentUser.id)) {
+            await fetch(`/api/messages/chats/${selectedChat._id}/read`, { method: 'POST' });
+            
+            // Update the chat in the list to reset unreadCount
+            setChats(prev => prev.map(chat => 
+              chat._id === selectedChat._id ? { ...chat, unreadCount: 0 } : chat
+            ));
+          }
         }
       } catch (error) {
         console.error('Error fetching messages:', error);
@@ -102,7 +193,32 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
     };
 
     fetchMessages();
-  }, [selectedChat]);
+  }, [selectedChat, currentUser.id]);
+
+  const loadOlderMessages = () => {
+    if (nextCursor && selectedChat) {
+      // Load next (older) page; we append at end since list is chronological ascending
+      // If you'd like newest at bottom, consider unshifting or reversing logic.
+      const currentCursor = nextCursor;
+      // Clear nextCursor optimistically to prevent duplicate fetches
+      setNextCursor(null);
+      (async () => {
+        try {
+          const url = new URL(`/api/messages/chats/${selectedChat._id}/messages`, window.location.origin);
+          url.searchParams.set('cursor', currentCursor);
+          url.searchParams.set('limit', '50');
+          const res = await fetch(url.toString());
+          if (res.ok) {
+            const data = await res.json();
+            setMessages(prev => [...data.messages, ...prev]); // prepend older messages
+            if (data.nextCursor) setNextCursor(data.nextCursor);
+          }
+        } catch (e) {
+          console.error('Error loading older messages:', e);
+        }
+      })();
+    }
+  };
 
   // Handle socket events
   useEffect(() => {
@@ -111,16 +227,37 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
     const handleNewMessage = (data: { message: Message; timestamp: string }) => {
       const { message } = data;
       
+      // newPersonalMessage is for RECEIVED messages (not sent by current user)
+      // messageConfirmed handles messages sent by current user
+      if (message.senderId === currentUser.id) {
+        console.log('Ignoring newPersonalMessage for own message (should use messageConfirmed)');
+        return;
+      }
+      
       // Update messages if it's for the current chat
-      if (selectedChat && 
-          (message.senderId === selectedChat.otherParticipant?._id || 
-           message.receiverId === currentUser.id)) {
-        setMessages(prev => [...prev, message]);
+      // Check if message is from the selected chat's other participant
+      if (selectedChat && selectedChat.otherParticipant) {
+        const isMessageForThisChat = 
+          (message.senderId === selectedChat.otherParticipant._id && message.receiverId === currentUser.id);
+        
+        if (isMessageForThisChat) {
+          // Only add if not already present (avoid duplicates)
+          setMessages(prev => {
+            const exists = prev.some(m => m._id === message._id);
+            return exists ? prev : [...prev, message];
+          });
+        }
       }
 
-      // Update chat list
+      // Update chat list - chatId format is "userId1_userId2" (sorted)
       setChats(prev => prev.map(chat => {
-        if (chat._id === message.senderId || chat._id === message.receiverId) {
+        // Check if this message belongs to this chat
+        const chatParticipants = chat.participantIds || [];
+        const messageParticipants = [message.senderId, message.receiverId];
+        const isSameChat = chatParticipants.every(id => messageParticipants.includes(id)) &&
+                           messageParticipants.every(id => chatParticipants.includes(id));
+        
+        if (isSameChat) {
           return {
             ...chat,
             lastMessage: message,
@@ -132,10 +269,35 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
       }));
     };
 
+    const handleMessageConfirmed = (data: { message: Message; timestamp: string }) => {
+      const { message } = data;
+      
+      // Replace optimistic message (temp-*) with the real message from server
+      setMessages(prev => prev.map(msg => 
+        msg._id.toString().startsWith('temp-') && 
+        msg.senderId === message.senderId && 
+        msg.receiverId === message.receiverId &&
+        msg.content === message.content ? message : msg
+      ));
+    };
+
+    const handleMessagesRead = (data: { chatId: string; userId: string }) => {
+      const { chatId } = data;
+      
+      // Reset unread count for the specified chat
+      setChats(prev => prev.map(chat => 
+        chat._id === chatId ? { ...chat, unreadCount: 0 } : chat
+      ));
+    };
+
     socket.on('newPersonalMessage', handleNewMessage);
+    socket.on('messageConfirmed', handleMessageConfirmed);
+    socket.on('messagesRead', handleMessagesRead);
 
     return () => {
       socket.off('newPersonalMessage', handleNewMessage);
+      socket.off('messageConfirmed', handleMessageConfirmed);
+      socket.off('messagesRead', handleMessagesRead);
     };
   }, [socket, isConnected, selectedChat, currentUser.id]);
 
@@ -149,20 +311,55 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
     };
 
     try {
+      const trimmedMessage = newMessage.trim();
+      if (!trimmedMessage || !selectedChat) return;
+
+      // Create optimistic message
+      if (!selectedChat.otherParticipant?._id) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Cannot send message: recipient not found.'
+        });
+        return;
+      }
+      const optimisticMessage: Message = {
+        _id: `temp-${Date.now()}`,
+        senderId: currentUser.id,
+        receiverId: selectedChat.otherParticipant._id,
+        content: trimmedMessage,
+        createdAt: new Date().toISOString(),
+        read: false
+      };
+
+      // Optimistic update
+      setMessages(prev => [...prev, optimisticMessage]);
+      setNewMessage(''); // Clear input immediately
+
       if (socket && isConnected) {
+        // Send via socket
         socket.emit('personalMessage', messageData);
-        setNewMessage('');
       } else {
-        // Fallback to API if socket not available
+        // Fallback to API
         const response = await fetch(`/api/messages/chats/${selectedChat._id}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: newMessage.trim() })
+          body: JSON.stringify({ content: trimmedMessage })
         });
 
-        if (response.ok) {
-          setNewMessage('');
+        if (!response.ok) {
+          // Revert optimistic update on error
+          setMessages(prev => prev.filter(msg => msg._id !== optimisticMessage._id));
+          setNewMessage(trimmedMessage);
+          throw new Error('Failed to send message');
         }
+
+        const { message: serverMessage } = await response.json();
+        
+        // Replace optimistic message with server message
+        setMessages(prev => prev.map(msg => 
+          msg._id === optimisticMessage._id ? serverMessage : msg
+        ));
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -200,7 +397,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
   };
 
   const filteredChats = chats.filter(chat => 
-    chat.otherParticipant?.name.toLowerCase().includes(searchQuery.toLowerCase())
+    chat.otherParticipant?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false
   );
 
   if (isLoading) {
@@ -217,18 +414,31 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
         {/* Chat List */}
         <Card className="lg:col-span-1">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageCircle className="h-5 w-5" />
-              Messages
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="h-5 w-5" />
+                Messages
+              </div>
             </CardTitle>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search conversations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+            
+            {/* User Search */}
+            <div className="space-y-3">
+              <UserSearch
+                onUserSelect={handleStartChat}
+                placeholder="Start new conversation..."
+                className="w-full"
               />
+              
+              {/* Conversation Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search conversations..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -253,7 +463,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <h3 className="font-medium truncate">
-                            {chat.otherParticipant?.name || 'Unknown User'}
+                            {chat.otherParticipant?.username || chat.otherParticipant?.name || 'Unknown User'}
                           </h3>
                           {chat.lastMessage && (
                             <span className="text-xs text-muted-foreground">
@@ -297,7 +507,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
                   </Avatar>
                   <div>
                     <h3 className="font-medium">
-                      {selectedChat.otherParticipant?.name || 'Unknown User'}
+                      {selectedChat.otherParticipant?.username || selectedChat.otherParticipant?.name || 'Unknown User'}
                     </h3>
                     <p className="text-sm text-muted-foreground">Online</p>
                   </div>
@@ -306,6 +516,13 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
               <CardContent className="p-0 flex flex-col h-[500px]">
                 {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {nextCursor && (
+                    <div className="text-center">
+                      <Button variant="ghost" size="sm" onClick={loadOlderMessages}>
+                        Load older messages
+                      </Button>
+                    </div>
+                  )}
                   {messages.length > 0 ? (
                     messages.map((message) => (
                       <div

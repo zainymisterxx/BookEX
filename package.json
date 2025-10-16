@@ -84,6 +84,8 @@
     "concurrently": "^8.2.2",
     "constants-browserify": "^1.0.0",
     "crypto-browserify": "^3.12.1",
+    "eslint": "9.37.0",
+    "eslint-config-next": "15.5.5",
     "events": "^3.3.0",
     "genkit-cli": "^1.14.1",
     "https-browserify": "^1.0.0",

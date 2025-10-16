@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 
@@ -17,8 +17,9 @@ import { EmailPreferencesCard } from '@/components/email-preferences-card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useSession } from 'next-auth/react';
-import { getUserForUpdate, updateUserProfile, getCitiesByCountryAction, getPopularCitiesAction, searchCitiesAction, getAvailableCountriesAction } from '@/app/actions';
+import { getUserForUpdate, updateUserProfile, getCitiesByCountryAction, getPopularCitiesAction, searchCitiesAction, getAvailableCountriesAction, checkUsernameAvailability } from '@/app/actions';
 import { fileToDataUri } from '@/lib/utils';
+import { validateUsername } from '@/lib/username-utils';
 
 const DEFAULT_COUNTRY = "Pakistan";
 
@@ -27,8 +28,11 @@ export default function SettingsPage() {
   const user = session?.user;
 
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [city, setCity] = useState('');
   const [isProfileIncomplete, setIsProfileIncomplete] = useState(false);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,6 +58,7 @@ export default function SettingsPage() {
         const userData = await getUserForUpdate(user.id);
         if (userData.success && userData.data) {
           setName(userData.data.name || '');
+          setUsername(userData.data.username || '');
           setCity(userData.data.city || '');
           setAvatarPreview(userData.data.avatarUrl || null);
           if (!userData.data.city) {
@@ -80,6 +85,59 @@ export default function SettingsPage() {
     }
   };
 
+  // Debounced username validation
+  const checkUsernameDebounced = useCallback(
+    debounce(async (newUsername: string) => {
+      if (!newUsername || newUsername === user?.username) {
+        setUsernameError(null);
+        setIsCheckingUsername(false);
+        return;
+      }
+
+      const validation = validateUsername(newUsername);
+      if (!validation.valid) {
+        setUsernameError(validation.error || 'Invalid username');
+        setIsCheckingUsername(false);
+        return;
+      }
+
+      try {
+        const result = await checkUsernameAvailability(newUsername);
+        if (result.success && result.data) {
+          if (!result.data.available) {
+            setUsernameError(result.data.error || 'Username is already taken');
+          } else {
+            setUsernameError(null);
+          }
+        } else {
+          setUsernameError('Error checking username availability');
+        }
+      } catch (error) {
+        console.error('Error checking username:', error);
+        setUsernameError('Error checking username availability');
+      } finally {
+        setIsCheckingUsername(false);
+      }
+    }, 500),
+    [user?.username]
+  );
+
+  const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newUsername = e.target.value;
+    setUsername(newUsername);
+    setIsCheckingUsername(true);
+    checkUsernameDebounced(newUsername);
+  };
+
+  // Simple debounce function
+  function debounce<T extends (...args: any[]) => void>(func: T, wait: number): T {
+    let timeout: NodeJS.Timeout;
+    return ((...args: any[]) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    }) as T;
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -92,9 +150,27 @@ export default function SettingsPage() {
         newAvatarDataUrl = await fileToDataUri(avatarFile);
       }
       
+      // Validate username before saving
+      if (username && username !== user.username) {
+        const validation = validateUsername(username);
+        if (!validation.valid) {
+          throw new Error(validation.error || 'Invalid username');
+        }
+        
+        const availability = await checkUsernameAvailability(username);
+        if (availability.success && availability.data) {
+          if (!availability.data.available) {
+            throw new Error(availability.data.error || 'Username is already taken');
+          }
+        } else {
+          throw new Error('Error checking username availability');
+        }
+      }
+
       const result = await updateUserProfile({
         userId: user.id,
         name: name,
+        username: username,
         city: city,
         avatarUrl: newAvatarDataUrl,
       });
@@ -109,6 +185,7 @@ export default function SettingsPage() {
       // This updates the session object from next-auth with the new data
       await updateSession({
           name: result.data.updatedUser.name,
+          username: result.data.updatedUser.username,
           image: result.data.updatedUser.image,
       });
 
@@ -201,6 +278,33 @@ export default function SettingsPage() {
                   disabled={isSaving}
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="username">Username</Label>
+                <Input 
+                  id="username" 
+                  value={username}
+                  onChange={handleUsernameChange}
+                  disabled={isSaving}
+                  placeholder="e.g. john_doe"
+                  className={usernameError ? 'border-red-500' : ''}
+                />
+                {isCheckingUsername && (
+                  <p className="text-sm text-muted-foreground flex items-center">
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    Checking availability...
+                  </p>
+                )}
+                {usernameError && (
+                  <p className="text-sm text-red-500">{usernameError}</p>
+                )}
+                {username && !usernameError && !isCheckingUsername && (
+                  <p className="text-sm text-green-600">✓ Username available</p>
+                )}
+                <p className="text-sm text-muted-foreground">
+                  3-24 characters, lowercase letters, numbers, and underscores only
+                </p>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="city">City</Label>
                   <select
@@ -220,7 +324,11 @@ export default function SettingsPage() {
                 </p>
               </div>
               <div className="flex justify-end pt-4">
-                <Button type="submit" size="lg" disabled={isSaving}>
+                <Button 
+                  type="submit" 
+                  size="lg" 
+                  disabled={isSaving || !!usernameError || isCheckingUsername}
+                >
                   {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Save Changes
                 </Button>

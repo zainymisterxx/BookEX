@@ -35,6 +35,7 @@ export interface WishlistItem {
 export interface User {
   _id: ObjectId | string;
   name: string;
+  username?: string; // unique, lowercase handle for public references
   email: string;
   password?: string; // Hashed password
   avatarUrl?: string;
@@ -164,8 +165,13 @@ export interface Organization {
 export interface Message {
     _id: ObjectId | string;
     senderId: string;
-    text: string;
-    createdAt: string; // ISO 8601 date string
+  // Some parts of the code (personal messages) use `content`, others (chat) use `text`.
+  // Keep both for backward compatibility; prefer `text` in UI, fall back to `content`.
+  text?: string;
+  content?: string;
+  createdAt: string; // ISO 8601 date string
+  read?: boolean;            // Whether the recipient has read the message
+  readAt?: string;           // Timestamp when the message was read
 }
 
 export interface Chat {

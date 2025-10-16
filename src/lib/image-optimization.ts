@@ -113,7 +113,7 @@ export function useImageOptimization(): UseImageOptimizationReturn {
               height: Math.round(height)
             });
 
-          } catch (err) {
+          } catch {
             reject(new Error('Failed to process image'));
           }
         };

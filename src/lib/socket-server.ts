@@ -115,7 +115,7 @@ export function setupSocketServer(httpServer: HTTPServer) {
 
     // Handle joining a channel
     socket.on('joinChannel', (data: { channelId: string; communityId?: string }) => {
-      const { channelId, communityId } = data;
+      const { channelId } = data;
       socket.join(`channel:${channelId}`);
       socket.emit('joinedChannel', { channelId });
     });
@@ -131,25 +131,53 @@ export function setupSocketServer(httpServer: HTTPServer) {
       try {
         const { channelId, message } = data;
         
-        // Save message to database
+        if (!socket.userId) {
+          return;
+        }
+
         const { db } = await connectToMongoDB();
+        
+        // ✅ SECURITY FIX: Fetch author from database (prevent impersonation)
+        const author = await db.collection('users').findOne(
+          { _id: new ObjectId(socket.userId) },
+          { projection: { name: 1, avatarUrl: 1, username: 1 } }
+        );
+
+        if (!author) {
+          return;
+        }
+
+        // ✅ SECURITY FIX: Sanitize content (prevent XSS)
+        const sanitizedContent = message.content
+          ?.trim()
+          ?.replace(/[<>]/g, '')     // Remove HTML tags
+          ?.slice(0, 2000);          // Limit length
+
+        if (!sanitizedContent) {
+          return;
+        }
+        
+        // Save message to database
         const messageDoc = {
           channelId,
           authorId: socket.userId,
-          content: message.content,
+          content: sanitizedContent,
           createdAt: new Date().toISOString()
         };
         
-        await db.collection('chatMessages').insertOne(messageDoc);
+        const result = await db.collection('chatMessages').insertOne(messageDoc);
         
-        // Broadcast to channel
+        // Broadcast to channel with server-validated author info
         io.to(`channel:${channelId}`).emit('newChatMessage', {
           channelId,
           message: {
+            _id: result.insertedId,
             ...messageDoc,
             author: {
               _id: socket.userId,
-              name: message.authorName || 'Unknown User'
+              name: author.name,           // ✅ Server-validated
+              avatarUrl: author.avatarUrl, // ✅ Server-validated
+              username: author.username    // ✅ Server-validated
             }
           },
           timestamp: new Date().toISOString()

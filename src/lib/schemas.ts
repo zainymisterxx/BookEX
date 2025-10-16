@@ -296,7 +296,7 @@ export function validateWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): {
         errors: result.error.flatten()
       };
     }
-  } catch (error) {
+  } catch {
     return {
       success: false,
       message: 'Validation failed',

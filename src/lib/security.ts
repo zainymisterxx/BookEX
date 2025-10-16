@@ -176,14 +176,8 @@ export function validateContentType(request: NextRequest): boolean {
 /**
  * Log security events for monitoring
  */
-export function logSecurityEvent(event: string, details: Record<string, any>) {
+export function logSecurityEvent(event: string, details: Record<string, unknown>) {
   const timestamp = new Date().toISOString();
-  const logEntry = {
-    timestamp,
-    event,
-    details,
-    severity: 'warning'
-  };
   
   // Log to console (replace with proper logging service in production)
   console.warn(`[SECURITY] ${timestamp}: ${event}`, details);
@@ -260,7 +254,6 @@ export async function validateExchangePermissions(
 ): Promise<{ valid: boolean; error?: string }> {
   try {
     // Import required modules
-    const { MongoClient } = await import('mongodb');
     const clientPromise = (await import('./mongodb')).default;
     
     const client = await clientPromise;

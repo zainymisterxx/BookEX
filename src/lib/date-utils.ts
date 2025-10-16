@@ -3,8 +3,6 @@
  * Provides consistent date formatting, timezone handling, and date operations
  */
 
-import { ObjectId } from 'mongodb';
-
 // Date format constants
 export const DATE_FORMATS = {
   ISO_STRING: 'ISO_STRING', // 2024-01-15T10:30:00.000Z

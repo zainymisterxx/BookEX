@@ -36,7 +36,9 @@ export type ActivityType =
   | 'organization_application'
   | 'organization_approval'
   | 'organization_rejection'
-  | 'organization_admin_add';
+  | 'organization_admin_add'
+  | 'BLOCK_USER'
+  | 'UNBLOCK_USER';
 
 export type ActivitySeverity = 'low' | 'medium' | 'high' | 'critical';
 

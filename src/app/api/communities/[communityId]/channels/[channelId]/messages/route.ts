@@ -3,9 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-config';
 import { connectToMongoDB } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
-import { isCommunityMember } from '@/lib/community-permissions';
 
-// GET /api/communities/[communityId]/channels/[channelId]/messages - Get chat messages for a channel
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ communityId: string; channelId: string }> }
@@ -14,7 +12,7 @@ export async function GET(
     const { communityId, channelId } = await params;
     const session = await getServerSession(authOptions);
     
-    if (!session) {
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -22,33 +20,76 @@ export async function GET(
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '50');
 
+    if (page < 1 || limit < 1 || limit > 100) {
+      return NextResponse.json({ error: 'Invalid pagination parameters' }, { status: 400 });
+    }
+
     const { db } = await connectToMongoDB();
 
-    // Check if user is member of community
-    const isMember = await isCommunityMember(communityId, session.user.id);
+    const community = await db.collection('communities').findOne({ 
+      _id: new ObjectId(communityId) 
+    });
+    
+    if (!community) {
+      return NextResponse.json({ error: 'Community not found' }, { status: 404 });
+    }
+
+    const isMember = community.members?.some((m: any) => m.userId === session.user.id);
     if (!isMember) {
       return NextResponse.json({ error: 'Not a member of this community' }, { status: 403 });
     }
 
-    // Get messages for this channel
+    const channel = community.channels?.find((c: any) => c._id === channelId || c.id === channelId);
+    if (!channel) {
+      return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
+    }
+
     const skip = (page - 1) * limit;
-    const [messages, totalMessages] = await Promise.all([
-      db.collection('chatMessages')
-        .find({ channelId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .toArray(),
-      db.collection('chatMessages').countDocuments({ channelId })
-    ]);
 
-    // Reverse to get chronological order
-    messages.reverse();
+    const messages = await db.collection('chatMessages').aggregate([
+      { $match: { channelId } },
+      {
+        $lookup: {
+          from: 'users',
+          let: { authorId: { $toObjectId: '$authorId' } },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$authorId'] } } },
+            { $project: { name: 1, avatarUrl: 1, username: 1, _id: 1 } }
+          ],
+          as: 'author'
+        }
+      },
+      {
+        $unwind: {
+          path: '$author',
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $addFields: {
+          author: {
+            $ifNull: [
+              '$author',
+              { _id: '$authorId', name: 'Unknown User', avatarUrl: null, username: null }
+            ]
+          }
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          metadata: [{ $count: 'total' }],
+          data: [{ $skip: skip }, { $limit: limit }]
+        }
+      }
+    ]).toArray();
 
+    const totalMessages = messages[0]?.metadata[0]?.total || 0;
+    const messageData = messages[0]?.data || [];
     const totalPages = Math.ceil(totalMessages / limit);
 
     return NextResponse.json({
-      messages,
+      messages: messageData,
       pagination: {
         page,
         limit,
@@ -61,14 +102,10 @@ export async function GET(
 
   } catch (error) {
     console.error('Error fetching channel messages:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-// POST /api/communities/[communityId]/channels/[channelId]/messages - Send a chat message
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ communityId: string; channelId: string }> }
@@ -77,63 +114,77 @@ export async function POST(
     const { communityId, channelId } = await params;
     const session = await getServerSession(authOptions);
     
-    if (!session) {
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = await request.json();
     const { content } = body;
 
-    if (!content?.trim()) {
-      return NextResponse.json({ error: 'Content is required' }, { status: 400 });
+    if (!content || typeof content !== 'string') {
+      return NextResponse.json({ error: 'Message content is required' }, { status: 400 });
     }
 
     const { db } = await connectToMongoDB();
 
-    // Check if user is member of community and get member info
-    const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) });
+    const community = await db.collection('communities').findOne({ 
+      _id: new ObjectId(communityId) 
+    });
+    
     if (!community) {
       return NextResponse.json({ error: 'Community not found' }, { status: 404 });
     }
 
-    const member = community.members?.find((m: any) => m.userId === session.user.id);
-    if (!member || member.banned) {
+    const isMember = community.members?.some((m: any) => m.userId === session.user.id);
+    if (!isMember) {
       return NextResponse.json({ error: 'Not a member of this community' }, { status: 403 });
     }
 
-    // Get user details for message author
-    const user = await db.collection('users').findOne({ _id: new ObjectId(session.user.id) });
-    if (!user) {
+    const channel = community.channels?.find((c: any) => c._id === channelId || c.id === channelId);
+    if (!channel) {
+      return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
+    }
+
+    const sanitizedContent = content.trim().replace(/[<>]/g, '').slice(0, 2000);
+
+    if (!sanitizedContent) {
+      return NextResponse.json({ error: 'Message content cannot be empty' }, { status: 400 });
+    }
+
+    const author = await db.collection('users').findOne(
+      { _id: new ObjectId(session.user.id) },
+      { projection: { name: 1, avatarUrl: 1, username: 1 } }
+    );
+
+    if (!author) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Create new chat message
-    const newMessage = {
-      _id: new ObjectId(),
+    const messageDoc = {
       channelId,
-      author: {
-        _id: user._id,
-        name: user.name,
-        avatarUrl: user.avatarUrl,
-        role: member.role
-      },
-      content: content.trim(),
+      communityId: new ObjectId(communityId),
+      authorId: session.user.id,
+      content: sanitizedContent,
       createdAt: new Date().toISOString()
     };
 
-    // Insert message
-    await db.collection('chatMessages').insertOne(newMessage);
+    const result = await db.collection('chatMessages').insertOne(messageDoc);
 
-    return NextResponse.json({
-      success: true,
-      newMessage
-    });
+    const createdMessage = {
+      _id: result.insertedId,
+      ...messageDoc,
+      author: {
+        _id: session.user.id,
+        name: author.name,
+        avatarUrl: author.avatarUrl,
+        username: author.username
+      }
+    };
+
+    return NextResponse.json({ success: true, message: createdMessage });
 
   } catch (error) {
-    console.error('Error creating chat message:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    console.error('Error creating channel message:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

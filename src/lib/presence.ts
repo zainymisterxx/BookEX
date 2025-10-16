@@ -1,5 +1,4 @@
 import { connectToMongoDB } from './mongodb';
-import { ObjectId } from 'mongodb';
 
 export interface UserPresence {
   userId: string;

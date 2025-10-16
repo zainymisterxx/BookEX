@@ -98,7 +98,7 @@ export async function checkRateLimit(
   try {
     // Get current rate limit data from Redis
     const entryData = await redisCache.get<RateLimitEntry>(key);
-    let entry: RateLimitEntry | null = entryData;
+    const entry: RateLimitEntry | null = entryData;
 
     if (!entry || now >= entry.resetTime) {
       // First request or window has reset

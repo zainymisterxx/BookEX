@@ -39,18 +39,6 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
   const [showChannelSidebar, setShowChannelSidebar] = useState(false);
   const [showMemberSidebar, setShowMemberSidebar] = useState(false);
 
-  // Add error boundary for community data
-  if (!community) {
-    return (
-      <div className="flex h-screen bg-secondary items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4">Community Not Found</h2>
-          <p className="text-muted-foreground">The community you're looking for doesn't exist.</p>
-        </div>
-      </div>
-    );
-  }
-
   // Get user membership status and role
   useEffect(() => {
     if (currentUser?.id && community?.members) {
@@ -79,7 +67,19 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
     if (community.channels && community.channels.length > 0 && !activeChannel) {
       setActiveChannel(community.channels[0]._id);
     }
-  }, [community.channels, activeChannel]);
+  }, [community, community.channels, activeChannel]);
+
+  // Add error boundary for community data
+  if (!community) {
+    return (
+      <div className="flex h-screen bg-secondary items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">Community Not Found</h2>
+          <p className="text-muted-foreground">The community you're looking for doesn't exist.</p>
+        </div>
+      </div>
+    );
+  }
 
   // Group channels by type
   const forumChannels = community.channels?.filter(c => c.type === 'forum') || [];

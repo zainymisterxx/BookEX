@@ -66,7 +66,7 @@ export async function saveImageFile(file: File): Promise<{ success: boolean; url
     const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'organizations');
     try {
       await mkdir(uploadsDir, { recursive: true });
-    } catch (error) {
+    } catch {
       // Directory might already exist, that's fine
     }
 

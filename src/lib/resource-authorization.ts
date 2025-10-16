@@ -143,7 +143,7 @@ export class ResourceAuthority {
   /**
    * Checks admin-only operations
    */
-  static canPerformAdminAction(user: AuthorizedUser, action: 'view_reports' | 'manage_users' | 'system_settings'): boolean {
+  static canPerformAdminAction(user: AuthorizedUser, _action: 'view_reports' | 'manage_users' | 'system_settings'): boolean {
     return user.role === 'admin' && user.status === 'active';
   }
   

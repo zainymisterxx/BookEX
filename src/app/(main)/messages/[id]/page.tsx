@@ -29,6 +29,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [chatNotFound, setChatNotFound] = useState(false);
 
   const { data: session, status } = useSession();
   const user = session?.user;
@@ -36,11 +37,28 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   const socketRef = useRef<Socket | null>(null);
   const router = useRouter();
   
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (smooth: boolean = true) => {
+    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
   };
   
-  useEffect(scrollToBottom, [messages]);
+  // Scroll to bottom on initial load (instant) and when new messages arrive (smooth)
+  const isInitialMount = useRef(true);
+  
+  useEffect(() => {
+    if (messages.length > 0 && !isLoading) {
+      // Use requestAnimationFrame to ensure DOM is fully rendered
+      requestAnimationFrame(() => {
+        if (isInitialMount.current) {
+          // First load - instant scroll to bottom
+          scrollToBottom(false);
+          isInitialMount.current = false;
+        } else {
+          // Subsequent messages - smooth scroll
+          scrollToBottom(true);
+        }
+      });
+    }
+  }, [messages, isLoading]);
 
   useEffect(() => {
     if (status === 'loading') return;
@@ -51,19 +69,41 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
 
     const fetchChatData = async () => {
       setIsLoading(true);
-      const chatData = await getChatDetails(id, user.id);
-      if (chatData.success && chatData.data) {
+      try {
+        const chatData = await getChatDetails(id, user.id);
+        if (!chatData.success || !chatData.data) {
+          setChatNotFound(true);
+          setIsLoading(false);
+          return;
+        }
+
+        // Update chat and message state
         setChat(chatData.data);
         setMessages(chatData.data.messages || []);
         
-        // Fetch exchange details if this chat is associated with an exchange
-        const exchangeData = await getChatExchangeDetails(id);
-        setExchange(exchangeData);
+        // Only fetch exchange details if chat exists and has exchangeId
+        if (chatData.data.exchangeId) {
+          const exchangeData = await getChatExchangeDetails(id);
+          setExchange(exchangeData);
+        }
+
+        // Mark messages as read
+        if (chatData.data.messages?.some(m => !m.read && m.senderId !== user.id)) {
+          await fetch(`/api/messages/chats/${id}/read`, { method: 'POST' });
+        }
+      } catch (error) {
+        console.error('Error fetching chat:', error);
+        setChatNotFound(true);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     fetchChatData();
+  }, [user, id, status, router]);
+
+  useEffect(() => {
+    if (status === 'loading' || !user || !chat || chatNotFound) return;
 
     // Initialize Socket.IO connection
     const socketUrl = getSocketUrl();
@@ -94,6 +134,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     // Cleanup on component unmount
     return () => {
         if (socketRef.current) {
+            socketRef.current.emit('leaveChat', id);
             socketRef.current.off('connect');
             socketRef.current.off('receiveMessage');
             socketRef.current.disconnect();
@@ -101,7 +142,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         }
     }
 
-  }, [user, id, status]);
+  }, [user, id, status, chat, chatNotFound]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,8 +199,16 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     )
   }
   
-  if (!chat || !chat.otherParticipant) {
-    return notFound();
+  if (chatNotFound || !chat || !chat.otherParticipant) {
+    return (
+        <div className="container py-12 text-center">
+            <h2 className="text-2xl font-bold">Chat Not Found</h2>
+            <p className="text-muted-foreground">The chat you're looking for doesn't exist or you don't have access to it.</p>
+            <Button onClick={() => router.push('/messages')} className="mt-4">
+                Back to Messages
+            </Button>
+        </div>
+    );
   }
 
   const sellerId = chat.book?.sellerId;

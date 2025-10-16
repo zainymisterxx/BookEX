@@ -541,7 +541,7 @@ export class SecureFileManager {
       // Delete file from storage
       try {
         await fs.unlink(metadata.storageLocation);
-      } catch (error) {
+      } catch {
         // File might already be deleted - log but don't fail
         console.warn(`Could not delete file from storage: ${metadata.storageLocation}`);
       }

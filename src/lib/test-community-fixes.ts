@@ -4,8 +4,7 @@
  */
 
 import clientPromise from './mongodb';
-import { ObjectId } from 'mongodb';
-import { isMember, isCommunityMember, getMemberInfo } from './community-permissions';
+import { isMember, getMemberInfo } from './community-permissions';
 
 interface TestResult {
   test: string;

@@ -2,7 +2,7 @@
  * MongoDB type utilities for better TypeScript support
  */
 
-import { ObjectId, UpdateFilter, PushOperator, PullOperator } from 'mongodb';
+import { ObjectId, UpdateFilter } from 'mongodb';
 
 // Define our specific document types for better type safety
 export interface UserDocument {

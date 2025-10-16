@@ -441,7 +441,7 @@ export const sendExchangeProposalEmail = async (
   proposerBook: { title: string; author: string; imageUrl?: string },
   recipientBook: { title: string; author: string; imageUrl?: string },
   proposalMessage: string,
-  exchangeId: string
+  _exchangeId: string
 ) => {
   const exchangeUrl = `${getBaseUrl()}/exchange/history`;
   
@@ -531,7 +531,7 @@ export const sendExchangeStatusUpdateEmail = async (
   otherUserName: string,
   bookTitle: string,
   newStatus: string,
-  exchangeId: string
+  _exchangeId: string
 ) => {
   const exchangeUrl = `${getBaseUrl()}/exchange/history`;
   

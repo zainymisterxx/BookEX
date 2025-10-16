@@ -62,16 +62,31 @@ export function SocketProvider({ children }: SocketProviderProps) {
         forceNew: true,
       });
 
+      let heartbeatInterval: NodeJS.Timeout;
+
       newSocket.on('connect', () => {
         console.log('Connected to Socket.IO server');
         console.log('Socket ID:', newSocket.id);
         console.log('Socket transport:', newSocket.io.engine.transport.name);
         setIsConnected(true);
         
-        // Authenticate with session token if available
-        if ((session as any)?.accessToken) {
-          newSocket.emit('authenticate', (session as any).accessToken);
+        // Authenticate with user ID if available
+        if (session?.user?.id) {
+          // Join user-specific room for notifications
+          newSocket.emit('joinUserRoom', session.user.id);
+          console.log(`User ${session.user.id} joined personal room`);
         }
+
+        // Setup heartbeat
+        heartbeatInterval = setInterval(() => {
+          if (newSocket.connected) {
+            newSocket.emit('ping');
+          }
+        }, 30000); // 30 seconds
+
+        newSocket.on('pong', () => {
+          console.debug('Received pong from server');
+        });
       });
 
       newSocket.on('disconnect', (reason) => {
@@ -79,14 +94,24 @@ export function SocketProvider({ children }: SocketProviderProps) {
         setIsConnected(false);
       });
 
-      newSocket.on('connect_error', (error) => {
+      newSocket.on('connect_error', (error: unknown) => {
         console.error('Socket.IO connection error:', error);
+        const err = error as { message?: string; type?: string; description?: string };
         console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          name: error.name
+          message: err.message,
+          type: err.type,
+          description: err.description
         });
+        console.error('Socket URL being used:', socketUrl);
         setIsConnected(false);
+        
+        // Try to reconnect after a delay
+        setTimeout(() => {
+          if (!newSocket.connected) {
+            console.log('Attempting manual reconnection...');
+            newSocket.connect();
+          }
+        }, 2000);
       });
 
       newSocket.on('reconnect', (attemptNumber) => {
@@ -172,7 +197,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
     }
   };
 
-  const emitPersonalMessage = (receiverId: string, message: any) => {
+  const emitPersonalMessage = (receiverId: string, message: any & { senderUsername?: string }) => {
     if (socket && isConnected) {
       socket.emit('personalMessage', { receiverId, message });
     }

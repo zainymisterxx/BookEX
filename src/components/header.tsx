@@ -29,6 +29,7 @@ const navLinks = [
   { href: '/books', label: 'Buy' },
   { href: '/exchange', label: 'Exchange' },
   { href: '/community', label: 'Community' },
+  { href: '/messages', label: 'Chat' },
   { href: '/donate', label: 'Donate' },
 ];
 
