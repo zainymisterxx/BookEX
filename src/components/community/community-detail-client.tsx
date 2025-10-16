@@ -7,8 +7,8 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Textarea } from '@/components/ui/textarea';
 import { MarkdownEditor } from '@/components/ui/markdown-editor';
 import { MarkdownContent } from '@/components/ui/markdown-content';
-import { Heart, MessageCircle, MoreHorizontal, UserPlus, UserMinus, Users, Send, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
-import React, { useState, useTransition, useEffect } from 'react';
+import { Heart, MessageCircle, MoreHorizontal, UserPlus, UserMinus, Users, Send, Loader2, ChevronLeft, ChevronRight, AlertTriangle, ImagePlus, X } from 'lucide-react';
+import React, { useState, useTransition, useEffect, useRef } from 'react';
 import type { Community, Post, User, Comment } from '@/lib/types';
 import { promoteToModerator, demoteModerator, banMember, unbanMember } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import type { Session } from 'next-auth';
 import { useSocket } from '@/components/socket-provider';
 import { isUserMember as checkUserMembership, addMember, removeMember, updateMemberCount } from '@/lib/community-utils';
+import Image from 'next/image';
 
 interface CommunityDetailClientProps {
     initialCommunity: Community;
@@ -45,6 +46,12 @@ export function CommunityDetailClient({
   const [community, setCommunity] = useState<Community>(initialCommunity);
   const [posts, setPosts] = useState<Post[]>(initialPosts);
   const [newPostContent, setNewPostContent] = useState('');
+  
+  // Image upload state
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(initialPagination?.page || 1);
@@ -281,6 +288,64 @@ export function CommunityDetailClient({
       });
   }
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // Limit to 5 images
+    if (selectedImages.length + files.length > 5) {
+      toast({
+        variant: "destructive",
+        title: "Too Many Images",
+        description: "You can upload a maximum of 5 images per post"
+      });
+      return;
+    }
+
+    // Validate each file
+    const validFiles: File[] = [];
+    files.forEach(file => {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          variant: "destructive",
+          title: "File Too Large",
+          description: `${file.name} is larger than 5MB`
+        });
+        return;
+      }
+
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+      if (!allowedTypes.includes(file.type)) {
+        toast({
+          variant: "destructive",
+          title: "Invalid File Type",
+          description: `${file.name} is not a supported image format`
+        });
+        return;
+      }
+
+      validFiles.push(file);
+    });
+
+    if (validFiles.length > 0) {
+      setSelectedImages(prev => [...prev, ...validFiles]);
+      
+      // Create preview URLs
+      validFiles.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setImagePreviews(prev => [...prev, e.target?.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleCreatePost = async () => {
     if (!user) {
       toast({ 
@@ -292,11 +357,11 @@ export function CommunityDetailClient({
     }
     
     const trimmedContent = newPostContent.trim();
-    if (!trimmedContent) {
+    if (!trimmedContent && selectedImages.length === 0) {
       toast({ 
         variant: 'destructive', 
         title: 'Content Required',
-        description: 'Please enter some content for your post.' 
+        description: 'Please enter some content or add images for your post.' 
       });
       return;
     }
@@ -311,25 +376,66 @@ export function CommunityDetailClient({
     }
 
     const originalPosts = [...posts];
-    const tempPost: Post = {
-      _id: `temp-${Date.now()}`,
-      content: trimmedContent,
-      authorId: user.id,
-      communityId,
-      likes: 0,
-      createdAt: new Date().toISOString(),
-      likedBy: [],
-      comments: []
-    };
-
-    // Optimistic update
-    setPosts(prevPosts => [tempPost, ...prevPosts]);
-    setNewPostContent('');
     const originalContent = newPostContent;
+    const originalImages = [...selectedImages];
+    const originalPreviews = [...imagePreviews];
+    
+    let imageUrls: string[] = [];
 
-    startTransition(async () => {
+    try {
+      // Upload images first if any
+      if (selectedImages.length > 0) {
+        setIsUploadingImages(true);
+        const formData = new FormData();
+        selectedImages.forEach(file => {
+          formData.append('images', file);
+        });
+        formData.append('folder', 'posts');
+
+        const response = await fetch('/api/upload/image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to upload images');
+        }
+
+        imageUrls = result.urls || [];
+        setIsUploadingImages(false);
+      }
+
+      const tempPost: Post = {
+        _id: `temp-${Date.now()}`,
+        content: trimmedContent,
+        authorId: user.id,
+        communityId,
+        likes: 0,
+        createdAt: new Date().toISOString(),
+        likedBy: [],
+        comments: [],
+        images: imageUrls
+      };
+
+      // Optimistic update
+      setPosts(prevPosts => [tempPost, ...prevPosts]);
+      setNewPostContent('');
+      setSelectedImages([]);
+      setImagePreviews([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      startTransition(async () => {
         try {
-          const result = await createPost(communityId, { authorId: user.id, content: trimmedContent });
+          const result = await createPost(communityId, { 
+            authorId: user.id, 
+            content: trimmedContent,
+            images: imageUrls 
+          } as any);
+          
           if (result.success && (result.data as any)?.newPost) {
               // Replace temp post with real post
               setPosts(prevPosts => prevPosts.map(p => 
@@ -353,6 +459,8 @@ export function CommunityDetailClient({
               // Revert optimistic update
               setPosts(originalPosts);
               setNewPostContent(originalContent);
+              setSelectedImages(originalImages);
+              setImagePreviews(originalPreviews);
               toast({ 
                 variant: 'destructive', 
                 title: 'Failed to create post',
@@ -363,6 +471,8 @@ export function CommunityDetailClient({
           // Revert optimistic update
           setPosts(originalPosts);
           setNewPostContent(originalContent);
+          setSelectedImages(originalImages);
+          setImagePreviews(originalPreviews);
           console.error('Error creating post:', error);
           toast({ 
             variant: 'destructive', 
@@ -371,6 +481,17 @@ export function CommunityDetailClient({
           });
         }
     });
+    } catch (uploadError) {
+      setIsUploadingImages(false);
+      setSelectedImages(originalImages);
+      setImagePreviews(originalPreviews);
+      console.error('Error uploading images:', uploadError);
+      toast({ 
+        variant: 'destructive', 
+        title: 'Image Upload Failed',
+        description: uploadError instanceof Error ? uploadError.message : 'Unable to upload images. Please try again.' 
+      });
+    }
   };
 
   const handleLikePost = async (postId: string) => {
@@ -510,19 +631,83 @@ export function CommunityDetailClient({
                     <MarkdownEditor
                       value={newPostContent}
                       onChange={setNewPostContent}
-                      disabled={isPending}
+                      disabled={isPending || isUploadingImages}
                       placeholder={`What's on your mind, ${user.name}?`}
                       className="text-sm md:text-base"
                     />
+                    
+                    {/* Image Preview Grid */}
+                    {imagePreviews.length > 0 && (
+                      <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {imagePreviews.map((preview, index) => (
+                          <div key={index} className="relative group">
+                            <Image
+                              src={preview}
+                              alt={`Preview ${index + 1}`}
+                              width={200}
+                              height={200}
+                              className="w-full h-32 object-cover rounded-md"
+                            />
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="icon"
+                              className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => handleRemoveImage(index)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
-                  <CardFooter className="p-4 md:p-6 pt-0 flex justify-end">
+                  <CardFooter className="p-4 md:p-6 pt-0 flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/jpg"
+                        multiple
+                        onChange={handleImageSelect}
+                        className="hidden"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isPending || isUploadingImages || selectedImages.length >= 5}
+                      >
+                        <ImagePlus className="h-4 w-4" />
+                      </Button>
+                      {selectedImages.length > 0 && (
+                        <span className="text-sm text-muted-foreground">
+                          {selectedImages.length} image{selectedImages.length > 1 ? 's' : ''} selected
+                        </span>
+                      )}
+                    </div>
                     <Button 
                       onClick={handleCreatePost} 
-                      disabled={isPending || !newPostContent.trim()}
-                      className="w-full sm:w-auto"
+                      disabled={isPending || isUploadingImages || (!newPostContent.trim() && selectedImages.length === 0)}
+                      className="w-auto"
                     >
-                      {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                      Post
+                      {isUploadingImages ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Uploading...
+                        </>
+                      ) : isPending ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Posting...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="mr-2 h-4 w-4" />
+                          Post
+                        </>
+                      )}
                     </Button>
                   </CardFooter>
                 </Card>
@@ -601,6 +786,31 @@ export function CommunityDetailClient({
                       </CardHeader>
                       <CardContent className="p-4 md:p-6 pt-0">
                           <MarkdownContent content={post.content} className="prose prose-sm md:prose-base max-w-none" />
+                          
+                          {/* Display post images if any */}
+                          {post.images && post.images.length > 0 && (
+                            <div className={cn(
+                              "mt-4 grid gap-2",
+                              post.images.length === 1 && "grid-cols-1",
+                              post.images.length === 2 && "grid-cols-2",
+                              post.images.length >= 3 && "grid-cols-2 sm:grid-cols-3"
+                            )}>
+                              {post.images.map((imageUrl, index) => (
+                                <div key={index} className="relative group cursor-pointer" onClick={() => {
+                                  // TODO: Add image preview modal
+                                  window.open(imageUrl, '_blank');
+                                }}>
+                                  <Image
+                                    src={imageUrl}
+                                    alt={`Post image ${index + 1}`}
+                                    width={400}
+                                    height={300}
+                                    className="w-full h-48 object-cover rounded-md hover:opacity-90 transition-opacity"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
                       </CardContent>
                       <CardFooter className="flex-col items-start gap-3 md:gap-4 border-t pt-3 md:pt-4 mt-3 md:mt-4 px-4 md:px-6 pb-4 md:pb-6">
                           <div className="flex items-center gap-2 md:gap-4 w-full">

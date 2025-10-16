@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useTransition } from 'react';
+import React, { useState, useEffect, useTransition, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownEditor } from '@/components/ui/markdown-editor';
 import { MarkdownContent } from '@/components/ui/markdown-content';
+import Image from 'next/image';
 import { 
   Heart, 
   MessageCircle, 
@@ -21,7 +22,9 @@ import {
   User,
   Trash2,
   Edit,
-  Flag
+  Flag,
+  ImagePlus,
+  X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Post, Comment, CommunityRole } from '@/lib/types';
@@ -51,6 +54,13 @@ export function ForumChannel({
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  
+  // Image upload state
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const { toast } = useToast();
   const { 
     joinChannel, 
@@ -185,6 +195,64 @@ export function ForumChannel({
     loadPosts(1);
   }, [channelId]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // Limit to 5 images
+    if (selectedImages.length + files.length > 5) {
+      toast({
+        variant: "destructive",
+        title: "Too Many Images",
+        description: "You can upload a maximum of 5 images per post"
+      });
+      return;
+    }
+
+    // Validate each file
+    const validFiles: File[] = [];
+    files.forEach(file => {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          variant: "destructive",
+          title: "File Too Large",
+          description: `${file.name} is larger than 5MB`
+        });
+        return;
+      }
+
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+      if (!allowedTypes.includes(file.type)) {
+        toast({
+          variant: "destructive",
+          title: "Invalid File Type",
+          description: `${file.name} is not a supported image format`
+        });
+        return;
+      }
+
+      validFiles.push(file);
+    });
+
+    if (validFiles.length > 0) {
+      setSelectedImages(prev => [...prev, ...validFiles]);
+      
+      // Create preview URLs
+      validFiles.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setImagePreviews(prev => [...prev, e.target?.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleCreatePost = async () => {
     if (!currentUser || !isMember) {
       toast({ variant: 'destructive', title: 'Authentication Required', description: 'You must be logged in to create posts.' });
@@ -192,71 +260,126 @@ export function ForumChannel({
     }
     
     const trimmedContent = newPostContent.trim();
-    if (!trimmedContent) {
-      toast({ variant: 'destructive', title: 'Content Required', description: 'Please enter some content for your post.' });
+    if (!trimmedContent && selectedImages.length === 0) {
+      toast({ variant: 'destructive', title: 'Content Required', description: 'Please enter some content or add images for your post.' });
       return;
     }
 
     const originalPosts = [...posts];
-    const tempPost: Post = {
-      _id: `temp-${Date.now()}`,
-      content: trimmedContent,
-      authorId: currentUser.id,
-      communityId,
-      likes: 0,
-      createdAt: new Date().toISOString(),
-      likedBy: [],
-      comments: []
-    };
+    const originalContent = newPostContent;
+    const originalImages = [...selectedImages];
+    const originalPreviews = [...imagePreviews];
+    
+    let imageUrls: string[] = [];
 
-    // Optimistic update
-    setPosts(prevPosts => [tempPost, ...prevPosts]);
-    setNewPostContent('');
+    try {
+      // Upload images first if any
+      if (selectedImages.length > 0) {
+        setIsUploadingImages(true);
+        const formData = new FormData();
+        selectedImages.forEach(file => {
+          formData.append('images', file);
+        });
+        formData.append('folder', 'posts');
 
-    startTransition(async () => {
-      try {
-        const response = await fetch(`/api/communities/${communityId}/channels/${channelId}/posts`, {
+        const response = await fetch('/api/upload/image', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            authorId: currentUser.id, 
-            content: trimmedContent 
-          }),
+          body: formData,
         });
 
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success && result.newPost) {
-            // Replace temp post with real post
-            setPosts(prevPosts => prevPosts.map(p => 
-              String(p._id) === String(tempPost._id) ? result.newPost! : p
-            ));
-            
-            // Emit real-time update
-            try {
-              emitPostCreated(channelId, result.newPost);
-            } catch (emitError) {
-              console.warn('Failed to emit real-time post creation:', emitError);
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to upload images');
+        }
+
+        imageUrls = result.urls || [];
+        setIsUploadingImages(false);
+      }
+
+      const tempPost: Post = {
+        _id: `temp-${Date.now()}`,
+        content: trimmedContent,
+        authorId: currentUser.id,
+        communityId,
+        likes: 0,
+        createdAt: new Date().toISOString(),
+        likedBy: [],
+        comments: [],
+        images: imageUrls
+      };
+
+      // Optimistic update
+      setPosts(prevPosts => [tempPost, ...prevPosts]);
+      setNewPostContent('');
+      setSelectedImages([]);
+      setImagePreviews([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      startTransition(async () => {
+        try {
+          const response = await fetch(`/api/communities/${communityId}/channels/${channelId}/posts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              authorId: currentUser.id, 
+              content: trimmedContent,
+              images: imageUrls 
+            }),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success && result.newPost) {
+              // Replace temp post with real post
+              setPosts(prevPosts => prevPosts.map(p => 
+                String(p._id) === String(tempPost._id) ? result.newPost! : p
+              ));
+              
+              // Emit real-time update
+              try {
+                emitPostCreated(channelId, result.newPost);
+              } catch (emitError) {
+                console.warn('Failed to emit real-time post creation:', emitError);
+              }
+              
+              toast({ title: 'Post created successfully!' });
+            } else {
+              setPosts(originalPosts);
+              setNewPostContent(originalContent);
+              setSelectedImages(originalImages);
+              setImagePreviews(originalPreviews);
+              toast({ variant: 'destructive', title: 'Failed to create post', description: result.message || 'Please try again.' });
             }
-            
-            toast({ title: 'Post created successfully!' });
           } else {
             setPosts(originalPosts);
-            setNewPostContent(trimmedContent);
-            toast({ variant: 'destructive', title: 'Failed to create post', description: result.message || 'Please try again.' });
+            setNewPostContent(originalContent);
+            setSelectedImages(originalImages);
+            setImagePreviews(originalPreviews);
+            toast({ variant: 'destructive', title: 'Failed to create post', description: 'Please try again.' });
           }
-        } else {
+        } catch (error) {
           setPosts(originalPosts);
-          setNewPostContent(trimmedContent);
-          toast({ variant: 'destructive', title: 'Failed to create post', description: 'Please try again.' });
+          setNewPostContent(originalContent);
+          setSelectedImages(originalImages);
+          setImagePreviews(originalPreviews);
+          console.error('Error creating post:', error);
+          toast({ variant: 'destructive', title: 'Network Error', description: 'Unable to create post. Please check your connection and try again.' });
         }
-      } catch (error) {
-        setPosts(originalPosts);
-        setNewPostContent(trimmedContent);
-        console.error('Error creating post:', error);
-        toast({ variant: 'destructive', title: 'Network Error', description: 'Unable to create post. Please check your connection and try again.' });
-      }
-    });
+      });
+    } catch (uploadError) {
+      setIsUploadingImages(false);
+      setSelectedImages(originalImages);
+      setImagePreviews(originalPreviews);
+      console.error('Error uploading images:', uploadError);
+      toast({ 
+        variant: 'destructive', 
+        title: 'Image Upload Failed',
+        description: uploadError instanceof Error ? uploadError.message : 'Unable to upload images. Please try again.' 
+      });
+    }
   };
 
   const handleLikePost = async (postId: string) => {
@@ -377,18 +500,81 @@ export function ForumChannel({
               <MarkdownEditor
                 value={newPostContent}
                 onChange={setNewPostContent}
-                disabled={isPending}
+                disabled={isPending || isUploadingImages}
                 placeholder={`What's on your mind, ${currentUser.name}?`}
               />
+              
+              {/* Image Preview Grid */}
+              {imagePreviews.length > 0 && (
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {imagePreviews.map((preview, index) => (
+                    <div key={index} className="relative group">
+                      <Image
+                        src={preview}
+                        alt={`Preview ${index + 1}`}
+                        width={200}
+                        height={200}
+                        className="w-full h-32 object-cover rounded-md"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleRemoveImage(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
-            <CardFooter className="pt-0">
+            <CardFooter className="pt-0 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/jpg"
+                  multiple
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isPending || isUploadingImages || selectedImages.length >= 5}
+                >
+                  <ImagePlus className="h-4 w-4" />
+                </Button>
+                {selectedImages.length > 0 && (
+                  <span className="text-sm text-muted-foreground">
+                    {selectedImages.length} image{selectedImages.length > 1 ? 's' : ''} selected
+                  </span>
+                )}
+              </div>
               <Button 
                 onClick={handleCreatePost} 
-                disabled={isPending || !newPostContent.trim()}
-                className="ml-auto"
+                disabled={isPending || isUploadingImages || (!newPostContent.trim() && selectedImages.length === 0)}
               >
-                {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                Post
+                {isUploadingImages ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Uploading...
+                  </>
+                ) : isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Posting...
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    Post
+                  </>
+                )}
               </Button>
             </CardFooter>
           </Card>
@@ -458,6 +644,31 @@ export function ForumChannel({
                 </CardHeader>
                 <CardContent className="pt-0 pb-3">
                   <MarkdownContent content={post.content} className="prose prose-sm max-w-none" />
+                  
+                  {/* Display post images if any */}
+                  {post.images && post.images.length > 0 && (
+                    <div className={cn(
+                      "mt-3 grid gap-2",
+                      post.images.length === 1 && "grid-cols-1",
+                      post.images.length === 2 && "grid-cols-2",
+                      post.images.length >= 3 && "grid-cols-2 sm:grid-cols-3"
+                    )}>
+                      {post.images.map((imageUrl, index) => (
+                        <div key={index} className="relative group cursor-pointer" onClick={() => {
+                          // TODO: Add image preview modal
+                          window.open(imageUrl, '_blank');
+                        }}>
+                          <Image
+                            src={imageUrl}
+                            alt={`Post image ${index + 1}`}
+                            width={400}
+                            height={300}
+                            className="w-full h-48 object-cover rounded-md hover:opacity-90 transition-opacity"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
                 <CardFooter className="flex-col items-start gap-3 pt-3 border-t">
                   <div className="flex items-center gap-4 w-full">

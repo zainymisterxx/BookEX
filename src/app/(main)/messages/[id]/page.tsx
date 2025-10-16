@@ -11,15 +11,17 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CardHeader, CardFooter } from '@/components/ui/card';
-import { Loader2, Send, ArrowLeft, Star, HandHeart } from 'lucide-react';
+import { Loader2, Send, ArrowLeft, Star, HandHeart, ImagePlus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
 import { AuthModal } from '@/components/auth-modal';
 import { ReviewModal } from '@/components/review-modal';
 import { ExchangeStatusBar } from '@/components/exchange-status-bar';
+import { ImagePreviewModal } from '@/components/ui/image-preview-modal';
 import Link from 'next/link';
 import { getChatDetails, getChatExchangeDetails } from '@/app/actions';
 import { getSocketUrl } from '@/lib/url-utils';
+import { useToast } from '@/hooks/use-toast';
 
 export default function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -30,12 +32,18 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [chatNotFound, setChatNotFound] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
 
   const { data: session, status } = useSession();
   const user = session?.user;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const { toast } = useToast();
   
   const scrollToBottom = (smooth: boolean = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
@@ -144,31 +152,117 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
 
   }, [user, id, status, chat, chatNotFound]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Error",
+        description: "Image size must be less than 5MB",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: "Error",
+        description: "Only JPEG, PNG, and WebP images are allowed",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setSelectedImage(file);
+
+    // Create preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImagePreview(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !newMessage.trim() || !chat || !socketRef.current) return;
+    if (!user || !chat || !socketRef.current) return;
+    if (!newMessage.trim() && !selectedImage) return;
     
     setIsSending(true);
     const currentMessage = newMessage;
-    setNewMessage(''); // Optimistically clear input
+    let imageUrl: string | undefined = undefined;
 
-    // Optimistic UI update for the sender
-    const tempTimestamp = new Date().toISOString();
-    const optimisticMessage: Message = { 
-        _id: tempTimestamp, // Use timestamp as temp ID for deduplication
-        senderId: user.id, 
-        text: currentMessage, 
-        createdAt: tempTimestamp 
-    };
-    setMessages(prev => [...prev, optimisticMessage]);
+    try {
+      // Upload image if selected
+      if (selectedImage) {
+        setIsUploadingImage(true);
+        const formData = new FormData();
+        formData.append('image', selectedImage);
+        formData.append('folder', 'messages');
 
-    socketRef.current.emit('sendMessage', {
-      chatId: id,
-      senderId: user.id,
-      text: currentMessage,
-    });
-    
-    setIsSending(false);
+        const response = await fetch('/api/upload/image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to upload image');
+        }
+
+        imageUrl = result.url;
+        setIsUploadingImage(false);
+      }
+
+      // Clear inputs optimistically
+      setNewMessage('');
+      handleRemoveImage();
+
+      // Optimistic UI update for the sender
+      const tempTimestamp = new Date().toISOString();
+      const optimisticMessage: Message = { 
+          _id: tempTimestamp, // Use timestamp as temp ID for deduplication
+          senderId: user.id, 
+          text: currentMessage, 
+          createdAt: tempTimestamp,
+          ...(imageUrl && { imageUrl })
+      };
+      setMessages(prev => [...prev, optimisticMessage]);
+
+      // Send via socket
+      socketRef.current.emit('sendMessage', {
+        chatId: id,
+        senderId: user.id,
+        text: currentMessage,
+        ...(imageUrl && { imageUrl })
+      });
+
+    } catch (error: any) {
+      console.error('Send message error:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send message",
+        variant: "destructive"
+      });
+      // Restore message on error
+      setNewMessage(currentMessage);
+    } finally {
+      setIsSending(false);
+      setIsUploadingImage(false);
+    }
   };
 
   const getChatSubject = () => {
@@ -272,8 +366,23 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
                         <AvatarFallback>{chat.otherParticipant?.name.charAt(0)}</AvatarFallback>
                     </Avatar>
                 )}
-                <div className={cn("max-w-xs md:max-w-md p-3 rounded-2xl", message.senderId === user.id ? "bg-primary text-primary-foreground rounded-br-none" : "bg-background rounded-bl-none border-2")}>
-                    <p className="text-base">{message.text}</p>
+                <div className={cn("max-w-xs md:max-w-md rounded-2xl overflow-hidden", message.senderId === user.id ? "bg-primary text-primary-foreground rounded-br-none" : "bg-background rounded-bl-none border-2")}>
+                    {message.imageUrl && (
+                      <div 
+                        className="relative w-full aspect-video cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => setPreviewModalImage(message.imageUrl!)}
+                      >
+                        <Image
+                          src={message.imageUrl}
+                          alt="Message image"
+                          fill
+                          className="object-cover"
+                        />
+                      </div>
+                    )}
+                    {message.text && (
+                      <p className="text-base p-3">{message.text}</p>
+                    )}
                 </div>
                 </div>
             ))}
@@ -281,19 +390,83 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
             </div>
         </div>
         <CardFooter className="p-4 border-t bg-background">
-            <form onSubmit={handleSendMessage} className="w-full flex items-center gap-2 max-w-4xl mx-auto">
-            <Input 
+            <form onSubmit={handleSendMessage} className="w-full space-y-2 max-w-4xl mx-auto">
+            {/* Image Preview */}
+            {imagePreview && (
+              <div className="relative w-32 h-32 rounded-lg overflow-hidden border-2 border-border">
+                <Image
+                  src={imagePreview}
+                  alt="Preview"
+                  fill
+                  className="object-cover"
+                />
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute top-1 right-1 h-6 w-6"
+                  onClick={handleRemoveImage}
+                  disabled={isSending}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            
+            {/* Input and Buttons */}
+            <div className="flex items-center gap-2">
+              {/* Hidden File Input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/jpg"
+                onChange={handleImageSelect}
+                className="hidden"
+              />
+              
+              {/* Image Upload Button */}
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-12 w-12 shrink-0"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSending || !!selectedImage}
+              >
+                <ImagePlus className="h-5 w-5" />
+              </Button>
+              
+              {/* Text Input */}
+              <Input 
                 placeholder="Type a message..." 
-                className="h-12 text-base" 
+                className="h-12 text-base flex-1" 
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                disabled={isSending}
-            />
-            <Button type="submit" size="icon" className="h-12 w-12" disabled={isSending || !newMessage.trim()}>
-                {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
-            </Button>
+                disabled={isSending || isUploadingImage}
+              />
+              
+              {/* Send Button */}
+              <Button 
+                type="submit" 
+                size="icon" 
+                className="h-12 w-12 shrink-0" 
+                disabled={isSending || isUploadingImage || (!newMessage.trim() && !selectedImage)}
+              >
+                {isSending || isUploadingImage ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Send className="h-5 w-5" />
+                )}
+              </Button>
+            </div>
             </form>
         </CardFooter>
+        
+        {/* Image Preview Modal */}
+        <ImagePreviewModal 
+          imageUrl={previewModalImage} 
+          onClose={() => setPreviewModalImage(null)} 
+        />
     </div>
   );
 }

@@ -111,6 +111,7 @@ export interface Post {
   createdAt: string; // ISO 8601 date string
   editedAt?: string; // ISO 8601 date string for edited posts
   editHistory?: Array<{ content: string; editedAt: string }>;
+  images?: string[]; // NEW: Array of image URLs for post images
 }
 
 export interface Comment {
@@ -172,6 +173,7 @@ export interface Message {
   createdAt: string; // ISO 8601 date string
   read?: boolean;            // Whether the recipient has read the message
   readAt?: string;           // Timestamp when the message was read
+  imageUrl?: string;         // NEW: Optional image URL for image messages
 }
 
 export interface Chat {

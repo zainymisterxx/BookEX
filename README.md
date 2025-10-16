@@ -6,6 +6,7 @@ Community-driven platform to buy, sell, donate, and exchange books with real-tim
 - **Buy, Sell, Exchange**: List books, browse listings, and track exchange history
 - **Communities**: Join topic or city-based communities, posts, comments, likes
 - **Realtime Chat**: Socket.IO messaging per conversation and user channels
+- **🆕 Image Sharing**: Upload and share images in DMs, posts, and group chats with real-time delivery
 - **AI Assist**: Gemini via Genkit for summaries, recommendations, and search
 - **Auth**: Credentials-based login with roles and account status
 - **Admin Dashboards**: User/org/report management, content moderation
@@ -33,7 +34,14 @@ REDIS_URL="redis://localhost:6379"
 
 # AI / Genkit
 GEMINI_API_KEY="<your_google_ai_api_key>"
+
+# 🆕 Image Upload (Cloudinary) - Required for image sharing
+CLOUDINARY_CLOUD_NAME="<your_cloudinary_cloud_name>"
+CLOUDINARY_API_KEY="<your_cloudinary_api_key>"
+CLOUDINARY_API_SECRET="<your_cloudinary_api_secret>"
 ```
+
+> 📸 **Image Sharing Setup**: See [IMAGE_SHARING_GUIDE.md](IMAGE_SHARING_GUIDE.md) for complete setup instructions or run `./setup-image-sharing.sh` for guided setup.
 
 ### Installation
 ```bash

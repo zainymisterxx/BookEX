@@ -146,7 +146,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendMessage', async (data) => {
-    const { chatId, senderId, text } = data;
+    const { chatId, senderId, text, imageUrl } = data;
     
     try {
         const client = await clientPromise;
@@ -155,16 +155,20 @@ io.on('connection', (socket) => {
         const newMessage = {
             _id: new ObjectId(),
             senderId: senderId,
-            text,
+            text: text || '',
             createdAt: new Date().toISOString(),
+            ...(imageUrl && { imageUrl }) // Include imageUrl if provided
         };
+
+        // Use imageUrl or text for lastMessage preview
+        const lastMessagePreview = imageUrl ? '📷 Image' : text;
 
         const result = await db.collection("chats").updateOne(
             { _id: new ObjectId(chatId) },
             { 
                 $push: { messages: newMessage },
                 $set: { 
-                    lastMessage: text,
+                    lastMessage: lastMessagePreview,
                     updatedAt: new Date().toISOString()
                 }
             } as any

@@ -45,6 +45,9 @@ export interface MessageDocument {
   senderId: string;
   text: string;
   createdAt: string;
+  imageUrl?: string;  // NEW: Optional image URL for image messages
+  read?: boolean;
+  readAt?: string;
 }
 
 export interface CommunityDocument {
