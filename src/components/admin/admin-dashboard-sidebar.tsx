@@ -108,7 +108,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             id: 'organizations', 
             label: 'Organizations', 
             icon: FileText,
-            badge: organizations?.filter(org => org.status === 'pending').length || 0
+            badge: organizations?.length || 0
         },
         { id: 'security', label: 'Security', icon: Shield },
         { 
@@ -201,7 +201,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <CardTitle className="font-headline text-2xl">Platform Activity</CardTitle>
                                     <CardDescription>Overview of key metrics.</CardDescription>
                                 </CardHeader>
-                                <CardContent className="grid md:grid-cols-3 gap-6">
+                                <CardContent className="grid md:grid-cols-4 gap-6">
                                     <div className="p-6 bg-background rounded-lg border">
                                         <h3 className="text-sm font-medium text-muted-foreground">Total Users</h3>
                                         <p className="text-3xl font-bold">{userCount}</p>
@@ -209,6 +209,10 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <div className="p-6 bg-background rounded-lg border">
                                         <h3 className="text-sm font-medium text-muted-foreground">Active Listings</h3>
                                         <p className="text-3xl font-bold">{listingCount}</p>
+                                    </div>
+                                    <div className="p-6 bg-background rounded-lg border">
+                                        <h3 className="text-sm font-medium text-muted-foreground">Organizations</h3>
+                                        <p className="text-3xl font-bold">{organizations?.length || 0}</p>
                                     </div>
                                     <div className="p-6 bg-background rounded-lg border">
                                         <h3 className="text-sm font-medium text-muted-foreground">Pending Organizations</h3>
@@ -251,7 +255,14 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                             <TableBody>
                                                 {organizations?.map((org) => (
                                                     <TableRow key={String(org._id)}>
-                                                        <TableCell className="font-medium">{org.name}</TableCell>
+                                                        <TableCell className="font-medium">
+                                                            <Link 
+                                                                href={`/admin/organizations/${String(org._id)}`}
+                                                                className="hover:text-primary hover:underline"
+                                                            >
+                                                                {org.name}
+                                                            </Link>
+                                                        </TableCell>
                                                         <TableCell>{org.location}</TableCell>
                                                         <TableCell>
                                                             <Badge 
@@ -263,7 +274,12 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                                 {org.status}
                                                             </Badge>
                                                         </TableCell>
-                                                        <TableCell>
+                                                        <TableCell className="flex gap-2">
+                                                            <Link href={`/admin/organizations/${String(org._id)}`}>
+                                                                <Button variant="outline" size="sm">
+                                                                    View Details
+                                                                </Button>
+                                                            </Link>
                                                             <AdminOrgActions 
                                                                 organization={org} 
                                                                 onActionCompleted={handleOrgActionCompleted}
@@ -279,10 +295,17 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <div className="md:hidden space-y-4">
                                         {organizations?.map((org) => (
                                             <OrganizationMobileCard key={String(org._id)} organization={org}>
-                                                <AdminOrgActions 
-                                                    organization={org} 
-                                                    onActionCompleted={handleOrgActionCompleted}
-                                                />
+                                                <div className="flex gap-2">
+                                                    <Link href={`/admin/organizations/${String(org._id)}`} className="flex-1">
+                                                        <Button variant="outline" size="sm" className="w-full">
+                                                            View Details
+                                                        </Button>
+                                                    </Link>
+                                                    <AdminOrgActions 
+                                                        organization={org} 
+                                                        onActionCompleted={handleOrgActionCompleted}
+                                                    />
+                                                </div>
                                             </OrganizationMobileCard>
                                         ))}
                                     </div>

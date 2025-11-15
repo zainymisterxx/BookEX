@@ -19,6 +19,53 @@ export async function GET(
 
     const { db, client } = await connectToMongoDB();
 
+    // Check if this is a new ObjectId-based chat or legacy composite format
+    const isObjectIdChat = ObjectId.isValid(chatId) && chatId.length === 24;
+    
+    if (isObjectIdChat) {
+      // NEW SYSTEM: Fetch from chats collection
+      const chat = await db.collection('chats').findOne({ _id: new ObjectId(chatId) });
+      
+      if (!chat) {
+        return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
+      }
+      
+      // Verify user is a participant or organization representative
+      const isParticipant = chat.participantIds?.includes(session.user.id);
+      let isOrgRep = false;
+      
+      if (chat.organizationId && !isParticipant) {
+        const org = await db.collection('organizations').findOne({
+          _id: chat.organizationId,
+          'representatives.userId': session.user.id
+        });
+        isOrgRep = !!org;
+      }
+      
+      if (!isParticipant && !isOrgRep) {
+        return NextResponse.json({ error: 'Forbidden: Not a participant in this chat' }, { status: 403 });
+      }
+      
+      // Get messages from chat document
+      const messages = chat.messages || [];
+      
+      // Mark unread messages as read
+      const unreadMessageIds = messages
+        .filter((msg: any) => msg.senderId !== session.user.id && !msg.read)
+        .map((msg: any) => msg._id);
+      
+      if (unreadMessageIds.length > 0) {
+        await db.collection('chats').updateOne(
+          { _id: new ObjectId(chatId) },
+          { $set: { 'messages.$[msg].read': true } },
+          { arrayFilters: [{ 'msg._id': { $in: unreadMessageIds } }] }
+        );
+      }
+      
+      return NextResponse.json({ messages });
+    }
+    
+    // LEGACY SYSTEM: Handle composite chatId format
     // ✅ SECURITY FIX: Verify user is a participant in this chat
     // chatId is composite format: "userId1_userId2" (sorted)
     // Extract participant IDs from composite chatId
@@ -134,7 +181,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { content } = await request.json();
+    const { content, attachments } = await request.json();
 
     if (!content) {
       return NextResponse.json({ error: 'Message content is required' }, { status: 400 });
@@ -142,6 +189,69 @@ export async function POST(
 
     const { db, client } = await connectToMongoDB();
 
+    // Check if this is a new ObjectId-based chat or legacy composite format
+    const isObjectIdChat = ObjectId.isValid(chatId) && chatId.length === 24;
+    
+    if (isObjectIdChat) {
+      // NEW SYSTEM: Add message to chats collection
+      const chat = await db.collection('chats').findOne({ _id: new ObjectId(chatId) });
+      
+      if (!chat) {
+        return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
+      }
+      
+      // Verify user is a participant
+      if (!chat.participantIds?.includes(session.user.id)) {
+        return NextResponse.json({ error: 'Forbidden: Not a participant in this chat' }, { status: 403 });
+      }
+      
+      // Get the other participant
+      const receiverId = chat.participantIds.find((id: string) => id !== session.user.id);
+      
+      if (!receiverId) {
+        return NextResponse.json({ error: 'Receiver not found' }, { status: 400 });
+      }
+      
+      // Sanitize message content
+      const sanitizedContent = content
+        .trim()
+        .replace(/[<>]/g, '')
+        .slice(0, 2000);
+      
+      // Create new message
+      const newMessage = {
+        _id: new ObjectId(),
+        senderId: session.user.id,
+        receiverId: receiverId,
+        content: sanitizedContent,
+        createdAt: new Date().toISOString(),
+        read: false,
+        attachments: attachments || []
+      };
+      
+      // Add message to chat
+      await db.collection('chats').updateOne(
+        { _id: new ObjectId(chatId) },
+        {
+          $push: { messages: newMessage } as any,
+          $set: {
+            lastMessage: {
+              _id: newMessage._id,
+              content: sanitizedContent,
+              createdAt: newMessage.createdAt
+            },
+            updatedAt: new Date().toISOString()
+          }
+        } as any
+      );
+      
+      return NextResponse.json({
+        success: true,
+        message: newMessage
+      });
+    }
+    
+    // LEGACY SYSTEM: Handle composite chatId format
     // Extract the other participant's ID from the composite chatId
     const [userId1, userId2] = chatId.split('_');
     const otherUserId = userId1 === session.user.id ? userId2 : userId1;

@@ -15,8 +15,99 @@ export async function GET(request: NextRequest) {
 
     const { db } = await connectToMongoDB();
 
-    // Get all chats where user is a participant
-    const chats = await db.collection('personalMessages').aggregate([
+    // Build filter for chat query
+    const chatFilter: any = {
+      participantIds: { $in: [session.user.id] },  // FIX: participantIds is an array, use $in
+      organizationDeleted: { $ne: true },
+      deletedBy: { $nin: [session.user.id] }
+    };
+    
+    // Get chats from the new 'chats' collection where user is a direct participant
+    let newChats = await db.collection('chats').find(chatFilter).toArray();
+
+    // Also get donation chats where user is an organization representative
+    const userOrganizations = await db.collection('organizations').find({
+      'representatives.userId': session.user.id
+    }).toArray();
+
+    if (userOrganizations.length > 0) {
+      const orgIds = userOrganizations.map(org => org._id);
+      
+      const orgChatFilter: any = {
+        organizationId: { $in: orgIds },
+        participantIds: { $ne: session.user.id }, // Only include if not already a direct participant
+        organizationDeleted: { $ne: true }, // Exclude chats with deleted organizations
+        deletedBy: { $nin: [session.user.id] } // Use $nin for arrays
+      };
+      
+      const orgChats = await db.collection('chats').find(orgChatFilter).toArray();
+
+      // Merge org chats with user's direct chats
+      newChats = [...newChats, ...orgChats];
+    }
+
+    // Format new chats with organization/user info
+    const formattedNewChats = await Promise.all(newChats.map(async (chat: any) => {
+      const otherUserId = chat.participantIds.find((id: string) => id !== session.user.id);
+      
+      // Get other participant info
+      let otherParticipant = null;
+      if (otherUserId && ObjectId.isValid(otherUserId)) {
+        const user = await db.collection('users').findOne(
+          { _id: new ObjectId(otherUserId) },
+          { projection: { name: 1, username: 1, avatarUrl: 1, image: 1 } }
+        );
+        if (user) {
+          otherParticipant = {
+            _id: user._id.toString(),
+            name: user.name,
+            username: user.username,
+            avatarUrl: user.avatarUrl || user.image
+          };
+        }
+      }
+
+      // Get organization info if this is a donation chat
+      // Only show organization to the DONOR (not to the organization contact)
+      let organization = null;
+      if (chat.organizationId) {
+        const org = await db.collection('organizations').findOne(
+          { _id: chat.organizationId },
+          { projection: { name: 1, imageUrl: 1, primaryContactId: 1 } }
+        );
+        
+        // Only include organization info if current user is NOT the organization contact
+        // (i.e., they are the donor)
+        if (org && org.primaryContactId !== session.user.id) {
+          organization = {
+            _id: org._id.toString(),
+            name: org.name,
+            logo: org.imageUrl
+          };
+        }
+      }
+
+      // Get unread count
+      const unreadCount = chat.messages?.filter((msg: any) => 
+        msg.senderId !== session.user.id && !msg.read
+      ).length || 0;
+
+      return {
+        _id: chat._id.toString(),
+        participantIds: chat.participantIds,
+        lastMessage: chat.lastMessage || (chat.messages && chat.messages.length > 0 
+          ? chat.messages[chat.messages.length - 1]
+          : null),
+        otherParticipant,
+        organization,
+        donationId: chat.donationId?.toString(),
+        unreadCount,
+        updatedAt: chat.updatedAt
+      };
+    }));
+
+    // Get old personal messages and group by conversation
+    const personalChats = await db.collection('personalMessages').aggregate([
       {
         $match: {
           $or: [
@@ -101,8 +192,8 @@ export async function GET(request: NextRequest) {
       { $sort: { 'lastMessage.createdAt': -1 } }
     ]).toArray();
 
-    // Format chats with proper composite chatId
-    const formattedChats = chats.map(chat => {
+    // Format personal chats with proper composite chatId
+    const formattedPersonalChats = personalChats.map(chat => {
       const otherUserId = chat.otherUserId || chat._id;
       const chatId = [session.user.id, otherUserId].sort().join('_');
       
@@ -114,11 +205,19 @@ export async function GET(request: NextRequest) {
       return {
         ...chat,
         _id: chatId,
-        participantIds: [session.user.id, otherUserId]
+        participantIds: [session.user.id, otherUserId],
+        isPersonalMessage: true // Flag to distinguish old format
       };
     });
 
-    return NextResponse.json({ chats: formattedChats });
+    // Combine both types of chats and sort by last message time
+    const allChats = [...formattedNewChats, ...formattedPersonalChats].sort((a, b) => {
+      const aTime = (a as any).lastMessage?.createdAt || (a as any).updatedAt || '';
+      const bTime = (b as any).lastMessage?.createdAt || (b as any).updatedAt || '';
+      return bTime.localeCompare(aTime);
+    });
+
+    return NextResponse.json({ chats: allChats });
 
   } catch (error) {
     console.error('Error fetching chats:', error);

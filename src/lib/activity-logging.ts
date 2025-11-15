@@ -33,10 +33,16 @@ export type ActivityType =
   | 'donation_initiate'
   | 'donation_chat_message'
   | 'donation_complete'
+  | 'donation_status_update'
+  | 'donation_confirmed'
   | 'organization_application'
   | 'organization_approval'
   | 'organization_rejection'
   | 'organization_admin_add'
+  | 'organization_update'
+  | 'organization_delete'
+  | 'organization_status_change'
+  | 'organization_status_toggle'
   | 'BLOCK_USER'
   | 'UNBLOCK_USER';
 

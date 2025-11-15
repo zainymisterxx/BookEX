@@ -146,6 +146,13 @@ export interface ChatMessage {
   editHistory?: Array<{ content: string; editedAt: string }>;
 }
 
+export interface OrganizationRepresentative {
+  userId: string;              // Real user ID
+  role: 'admin' | 'member';    // Admin can manage org, members can respond to chats
+  addedAt: string;
+  addedBy: string;
+}
+
 export interface Organization {
   _id: ObjectId | string;
   name: string;
@@ -160,6 +167,21 @@ export interface Organization {
   contactPhone?: string;
   website?: string;
   updatedAt?: string;
+  isActive?: boolean;  // For suspend/activate functionality (default: true)
+  // NEW: Representatives system for handling donations
+  representatives?: OrganizationRepresentative[];
+  primaryContactId?: string;   // Main contact person (real user ID)
+}
+
+export interface MessageAttachment {
+    id: string;                      // Unique attachment ID
+    type: 'image' | 'document' | 'spreadsheet' | 'other';
+    fileName: string;                // Original filename
+    fileSize: number;                // Size in bytes
+    mimeType: string;                // MIME type (image/jpeg, application/pdf, etc.)
+    url: string;                     // Storage URL or data URI
+    thumbnailUrl?: string;           // Thumbnail for images
+    uploadedAt: string;              // ISO 8601 timestamp
 }
 
 export interface Message {
@@ -172,6 +194,8 @@ export interface Message {
   createdAt: string; // ISO 8601 date string
   read?: boolean;            // Whether the recipient has read the message
   readAt?: string;           // Timestamp when the message was read
+  attachments?: MessageAttachment[];  // File attachments (images, PDFs, etc.)
+  replyTo?: ObjectId | string;        // Message ID this is replying to
 }
 
 export interface Chat {
@@ -179,7 +203,16 @@ export interface Chat {
     participantIds: string[];
     bookId?: ObjectId;
     organizationId?: ObjectId;
-    exchangeId?: ObjectId | string;    // NEW: Optional link to exchange
+    exchangeId?: ObjectId | string;    // Optional link to exchange
+    donationId?: ObjectId | string;    // NEW: Optional link to donation
+    
+    // Soft delete support
+    organizationDeleted?: boolean;     // True if organization was deleted
+    organizationDeletedAt?: string;    // Timestamp when org was deleted
+    
+    // User-specific settings
+    deletedBy?: string[];              // Users who deleted this chat (soft delete)
+    
     lastMessage?: string;
     updatedAt: string; // ISO 8601 date string
     messages?: Message[]; // Messages can be embedded
@@ -187,7 +220,8 @@ export interface Chat {
     otherParticipant?: User;
     book?: Book;
     organization?: Organization;
-    exchange?: Exchange;           // NEW: Optional exchange data for UI
+    exchange?: Exchange;           // Optional exchange data for UI
+    donation?: Donation;           // NEW: Optional donation data for UI
 }
 
 export interface Review {
@@ -245,7 +279,7 @@ export interface ContentFilter {
 export interface Notification {
     _id: ObjectId | string;
     userId: string;
-    type: 'wishlist_match' | 'message' | 'exchange_proposal' | 'exchange_update' | 'system' | 'community';
+    type: 'wishlist_match' | 'message' | 'exchange_proposal' | 'exchange_update' | 'system' | 'community' | 'donation_request' | 'donation_update' | 'donation_completed';
     title: string;
     message: string;
     link: string;
@@ -256,6 +290,8 @@ export interface Notification {
         chatId?: string;
         exchangeId?: string;
         communityId?: string;
+        donationId?: string;     // NEW: For donation notifications
+        organizationId?: string; // NEW: For organization-related notifications
         [key: string]: any;
     };
 }
@@ -329,6 +365,72 @@ export interface Exchange {
     responder?: User;
     proposerBook?: Book;
     responderBook?: Book;
+}
+
+// Donation System Types
+export type DonationStatus = 
+    | 'pending'          // Initial request sent, awaiting org confirmation
+    | 'confirmed'        // Organization confirmed, ready to arrange
+    | 'in_progress'      // Books being processed/transferred
+    | 'completed'        // Donation finished successfully
+    | 'cancelled'        // Donation cancelled by either party
+    | 'rejected';        // Organization rejected the donation
+
+export interface DonationBook {
+    bookId?: ObjectId | string;     // Optional reference to listed book
+    title: string;
+    author: string;
+    condition: 'new' | 'like-new' | 'used' | 'worn';
+    quantity: number;
+    notes?: string;
+}
+
+export interface DonationStatusUpdate {
+    status: DonationStatus;
+    timestamp: string;
+    updatedBy: string;              // User ID who made the update
+    notes?: string;
+}
+
+export interface Donation {
+    _id: ObjectId | string;
+    
+    // Participants
+    donorId: string;                // User donating books
+    organizationId: ObjectId | string; // Organization receiving
+    
+    // Communication
+    chatId: ObjectId | string;      // Link to chat for coordination
+    
+    // Books being donated
+    books: DonationBook[];
+    
+    // Status tracking
+    status: DonationStatus;
+    statusHistory: DonationStatusUpdate[];
+    
+    // Logistics
+    pickupDate?: string;            // Scheduled pickup/delivery date
+    pickupLocation?: string;        // Where to pickup/deliver
+    deliveryMethod?: 'donor_delivers' | 'org_picks_up';
+    
+    // Completion tracking
+    orgConfirmed?: boolean;         // Did organization confirm receipt?
+    orgConfirmedAt?: string;
+    receivedDate?: string;          // When organization received donation
+    receivedCondition?: string;     // Condition when received
+    receiptNotes?: string;          // Organization's receipt notes
+    confirmedBy?: string;           // User ID who confirmed receipt
+    
+    // Timestamps
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string;
+    lastUpdatedBy?: string;         // User ID who made last update
+    
+    // For UI display (populated when fetched)
+    donor?: User;
+    organization?: Organization;
 }
 
 // Admin Notification System Types

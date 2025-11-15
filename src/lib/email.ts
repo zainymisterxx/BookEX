@@ -970,3 +970,150 @@ export const sendOrganizationRejectionEmail = async (
     return { success: true, messageId: info.messageId };
   }, 'organization-rejection');
 };
+
+/**
+ * Send donation status update email
+ */
+export const sendDonationStatusUpdateEmail = async (
+  recipientEmail: string,
+  recipientName: string,
+  organizationName: string,
+  status: string,
+  notes?: string,
+  pickupDate?: string,
+  chatId?: string
+) => {
+  try {
+    const baseUrl = getBaseUrl();
+    const chatUrl = chatId ? `${baseUrl}/messages/${chatId}` : `${baseUrl}/messages`;
+
+    const mailOptions = {
+      from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+      to: recipientEmail,
+      subject: `Donation Status Update: ${status}`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Donation Status Updated</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; }
+              .info-card { background: white; padding: 15px; border-left: 4px solid #2563eb; margin: 20px 0; }
+              .button { display: inline-block; background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+              .footer { margin-top: 30px; font-size: 14px; color: #666; border-top: 1px solid #ddd; padding-top: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>📚 BookEx</h1>
+            </div>
+            <div class="content">
+              <h2>Donation Status Update</h2>
+              <p>Hi ${recipientName},</p>
+              <p>The donation to <strong>${organizationName}</strong> has been updated.</p>
+              
+              <div class="info-card">
+                <p><strong>New Status:</strong> ${status}</p>
+                ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
+                ${pickupDate ? `<p><strong>Pickup Date:</strong> ${pickupDate}</p>` : ''}
+              </div>
+              
+              <a href="${chatUrl}" class="button">View Details</a>
+              
+              <div class="footer">
+                <p>Thank you for your contribution to literacy and education!</p>
+                <p>Best regards,<br>The BookEx Team</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Donation status update email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error('Error sending donation status update email:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Send donation completion confirmation email
+ */
+export const sendDonationCompletionEmail = async (
+  donorEmail: string,
+  donorName: string,
+  organizationName: string,
+  receivedDate: string,
+  condition: string,
+  notes?: string,
+  chatId?: string
+) => {
+  try {
+    const baseUrl = getBaseUrl();
+    const chatUrl = chatId ? `${baseUrl}/messages/${chatId}` : `${baseUrl}/messages`;
+
+    const mailOptions = {
+      from: `"BookEx" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+      to: donorEmail,
+      subject: `Thank You for Your Donation to ${organizationName}!`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Donation Confirmed</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #10b981; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { background: #f0fdf4; padding: 30px; border-radius: 0 0 8px 8px; }
+              .info-card { background: white; padding: 15px; border-left: 4px solid #10b981; margin: 20px 0; }
+              .button { display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+              .footer { margin-top: 30px; font-size: 14px; color: #666; border-top: 1px solid #ddd; padding-top: 20px; }
+              .highlight { font-size: 18px; color: #059669; font-weight: bold; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>🎉 Donation Confirmed!</h1>
+            </div>
+            <div class="content">
+              <h2>Thank You, ${donorName}!</h2>
+              <p class="highlight">Your generous donation has been received by ${organizationName}.</p>
+              
+              <div class="info-card">
+                <h3>Donation Details:</h3>
+                <p><strong>Received Date:</strong> ${receivedDate}</p>
+                <p><strong>Condition:</strong> ${condition}</p>
+                ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
+              </div>
+              
+              <p>Your contribution makes a real difference in promoting literacy and education in our community. Thank you for your generosity!</p>
+              
+              <a href="${chatUrl}" class="button">View Donation Details</a>
+              
+              <div class="footer">
+                <p>Your kindness helps spread knowledge and creates opportunities for others. We're grateful for community members like you!</p>
+                <p>With gratitude,<br>The BookEx Team</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Donation completion email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error('Error sending donation completion email:', error);
+    return { success: false, error: error.message };
+  }
+};

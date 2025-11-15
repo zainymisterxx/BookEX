@@ -7,7 +7,7 @@ export default async function Messages() {
   const session = await getServerSession(authOptions);
   
   if (!session) {
-    redirect('/auth/signin');
+    redirect('/?signin=true');
   }
 
   return <MessagesPage currentUser={session.user} />;

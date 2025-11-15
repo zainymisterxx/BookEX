@@ -27,7 +27,10 @@ export function setupSocketServer(httpServer: HTTPServer) {
       // For now, we'll use a simple approach with session data
       const token = socket.handshake.auth.token;
       
+      console.log('Socket auth attempt with token:', token ? `${token.substring(0, 10)}...` : 'none');
+      
       if (!token) {
+        console.error('No auth token provided');
         return next(new Error('Authentication error'));
       }
 
@@ -37,10 +40,12 @@ export function setupSocketServer(httpServer: HTTPServer) {
       const user = await db.collection('users').findOne({ _id: new ObjectId(token) });
       
       if (!user) {
+        console.error('User not found for token:', token);
         return next(new Error('User not found'));
       }
 
       socket.userId = user._id.toString();
+      console.log('Socket authenticated for user:', socket.userId);
       
       // Get user's communities
       const communities = await db.collection('communities').find({
@@ -48,6 +53,7 @@ export function setupSocketServer(httpServer: HTTPServer) {
       }, { projection: { _id: 1 } }).toArray();
       
       socket.userCommunities = communities.map(c => c._id.toString());
+      console.log(`User ${socket.userId} is member of ${socket.userCommunities.length} communities`);
       
       next();
     } catch (error) {
@@ -66,6 +72,17 @@ export function setupSocketServer(httpServer: HTTPServer) {
 
   // Set user as online (let presenceManager fetch communities if none provided)
   await presenceManager.setUserOnline(socket.userId!);
+
+    // Join user to their personal room for direct messages and presence
+    socket.join(`user:${socket.userId}`);
+    
+    // Broadcast to all connected sockets that this user is online
+    console.log(`Broadcasting presenceUpdate: User ${socket.userId} is online`);
+    io.emit('presenceUpdate', {
+      userId: socket.userId,
+      online: true,
+      timestamp: new Date().toISOString()
+    });
 
     // Join user to their community rooms
     socket.userCommunities?.forEach(communityId => {
@@ -234,12 +251,54 @@ export function setupSocketServer(httpServer: HTTPServer) {
       });
     });
 
+    // Handle presence check requests
+    socket.on('checkPresence', async (data: { userIds: string[] }) => {
+      try {
+        const { userIds } = data;
+        console.log(`User ${socket.userId} checking presence for:`, userIds);
+        const presenceStatuses = userIds.map(userId => {
+          const isOnline = presenceManager.isUserOnline(userId);
+          console.log(`  - User ${userId}: ${isOnline ? 'online' : 'offline'}`);
+          return {
+            userId,
+            online: isOnline
+          };
+        });
+        console.log('Sending presenceStatuses:', presenceStatuses);
+        socket.emit('presenceStatuses', presenceStatuses);
+      } catch (error) {
+        console.error('Error checking presence:', error);
+      }
+    });
+
+    // Handle single user presence check
+    socket.on('getUserPresence', (data: { userId: string }) => {
+      try {
+        const presence = presenceManager.getUserPresence(data.userId);
+        socket.emit('userPresence', {
+          userId: data.userId,
+          online: presence?.isOnline || false,
+          lastSeen: presence?.lastSeen
+        });
+      } catch (error) {
+        console.error('Error getting user presence:', error);
+      }
+    });
+
     // Handle disconnect
     socket.on('disconnect', async (reason) => {
       console.log(`User ${socket.userId} disconnected: ${reason}`);
       
       // Set user as offline
       await presenceManager.setUserOffline(socket.userId!);
+      
+      // Broadcast to all that user is offline
+      console.log(`Broadcasting presenceUpdate: User ${socket.userId} is offline`);
+      io.emit('presenceUpdate', {
+        userId: socket.userId,
+        online: false,
+        timestamp: new Date().toISOString()
+      });
       
       // Notify all communities the user was in
       socket.userCommunities?.forEach(communityId => {
