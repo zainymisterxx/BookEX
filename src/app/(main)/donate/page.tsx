@@ -26,13 +26,34 @@ export default function DonatePage() {
   
   useEffect(() => {
     const fetchOrgs = async () => {
+        if (!user?.id) {
+          setIsLoading(false);
+          return;
+        }
+        
         setIsLoading(true);
         const orgs = await getApprovedOrganizationsCached();
-        setOrganizations(orgs);
+        
+        // Filter out organizations where user is involved
+        const filteredOrgs = orgs.filter(org => {
+          // Exclude if user is primary contact
+          if (org.primaryContactId === user.id) {
+            return false;
+          }
+          
+          // Exclude if user is in representatives array
+          const isRep = org.representatives?.some(
+            (rep: any) => rep.userId === user.id
+          );
+          
+          return !isRep;
+        });
+        
+        setOrganizations(filteredOrgs);
         setIsLoading(false);
     }
     fetchOrgs();
-  }, []);
+  }, [user?.id]);
 
   const handleDonate = async (organization: Organization) => {
     if (!user) {
@@ -47,25 +68,32 @@ export default function DonatePage() {
     setIsDonating(orgId);
     try {
         const result = await initiateDonation(orgId);
+        
         if (!result.success) {
             throw new Error(result.message || "Failed to initiate donation.");
         }
-        if (!result.data?.chatId) {
+        
+        // Extract chatId from nested data structure
+        const chatId = (result.data as any)?.chatId;
+        
+        if (!chatId) {
             throw new Error("Failed to initiate donation.");
         }
+
+        const redirectUrl = `/messages?chatId=${chatId}`;
 
         toast({
             title: "Thank you for your generosity!",
             description: "A chat has been started to coordinate the donation."
         });
-        router.push(`/messages/${result.data.chatId}`);
+        router.push(redirectUrl);
 
     } catch (error) {
-        console.error("Error initiating donation:", error);
+        const errorMessage = error instanceof Error ? error.message : "Could not start the donation process. Please try again.";
         toast({
             variant: "destructive",
             title: "Donation failed",
-            description: "Could not start the donation process. Please try again."
+            description: errorMessage
         });
     } finally {
         setIsDonating(null);

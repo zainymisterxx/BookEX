@@ -3,10 +3,45 @@
 import { revalidatePath } from 'next/cache';
 import { ObjectId } from 'mongodb';
 import clientPromise from '@/lib/mongodb';
-import type { Book, BookGenre, BookStatus, Post, User, Community, Organization, Report, Review, Chat, Comment, Notification, WishlistItem, PasswordResetToken, Exchange, ExchangeStatus } from '@/lib/types';
+import type { Book, BookGenre, BookStatus, Post, User, Community, Organization, Report, Review, Chat, Comment, Notification, WishlistItem, PasswordResetToken, Exchange, ExchangeStatus, Donation, DonationStatus, DonationStatusUpdate, OrganizationRepresentative } from '@/lib/types';
+
+/**
+ * Validates donation status transitions
+ * @param currentStatus Current donation status
+ * @param newStatus Proposed new status
+ * @returns Validation result with isValid flag and optional error message
+ */
+function validateDonationStatusTransition(
+    currentStatus: DonationStatus,
+    newStatus: DonationStatus
+): { isValid: boolean; error?: string } {
+    const validTransitions: Record<DonationStatus, DonationStatus[]> = {
+        'pending': ['confirmed', 'cancelled', 'rejected'],
+        'confirmed': ['in_progress', 'cancelled'],
+        'in_progress': ['completed', 'cancelled'],
+        'completed': [],  // Terminal state
+        'cancelled': [],  // Terminal state
+        'rejected': []    // Terminal state
+    };
+
+    const allowedTransitions = validTransitions[currentStatus];
+    
+    if (!allowedTransitions) {
+        return { isValid: false, error: `Invalid current status: ${currentStatus}` };
+    }
+    
+    if (!allowedTransitions.includes(newStatus)) {
+        return { 
+            isValid: false, 
+            error: `Cannot transition from ${currentStatus} to ${newStatus}. Allowed: ${allowedTransitions.join(', ')}` 
+        };
+    }
+    
+    return { isValid: true };
+}
 import { hash } from 'bcryptjs';
 import { getSession } from '@/lib/auth';
-import { sendPasswordResetEmail, sendWelcomeEmail, sendExchangeProposalEmail, sendExchangeStatusUpdateEmail, sendBookContactEmail, sendOrgApplicationNotificationEmail, sendDonationChatConfirmationEmail, sendOrganizationApprovalEmail, sendOrganizationRejectionEmail } from '@/lib/email';
+import { sendPasswordResetEmail, sendWelcomeEmail, sendExchangeProposalEmail, sendExchangeStatusUpdateEmail, sendBookContactEmail, sendOrgApplicationNotificationEmail, sendDonationChatConfirmationEmail, sendOrganizationApprovalEmail, sendOrganizationRejectionEmail, sendDonationStatusUpdateEmail, sendDonationCompletionEmail } from '@/lib/email';
 import { validateImageDataUri, sanitizeInput, validateOrganizationData, sanitizeOrganizationName, createSafeExactMatchRegex, normalizeForDeduplication, createBookDuplicateHash, checkBookSimilarity, calculateExpirationDate, createNotificationDeduplicationKey } from '@/lib/utils';
 import { validatePasswordStrength, isPasswordStrong, getPasswordRequirementsMessage } from '@/lib/password-validation';
 import { logActivity, detectSuspiciousActivity } from '@/lib/activity-logging';
@@ -21,7 +56,7 @@ import { checkUserRateLimit, RATE_LIMITS } from '@/lib/rate-limiting';
 import { validateResourceAccess, ResourceAuthority, type AuthorizedUser } from '@/lib/resource-authorization';
 import { checkAuthRateLimit, recordAuthResult } from '@/lib/auth-rate-limiting';
 import { withAuthenticatedAction, withAuthenticatedUserFull } from '@/lib/action-utils';
-import { bookSchema, communitySchema, postSchema, commentSchema, organizationSchema, reportSchema, reviewSchema, userProfileSchema, exchangeSchema, chatMessageSchema, paginationSchema, searchQuerySchema, validateWithSchema } from '@/lib/schemas';
+import { bookSchema, communitySchema, postSchema, commentSchema, organizationSchema, reportSchema, reviewSchema, userProfileSchema, exchangeSchema, chatMessageSchema, paginationSchema, searchQuerySchema, donationStatusUpdateSchema, validateWithSchema } from '@/lib/schemas';
 import crypto from 'crypto';
 import { 
   createCommunityMemberAddOperation, 
@@ -97,6 +132,7 @@ export async function signUpUser(userData: Pick<User, 'name' | 'email' | 'passwo
       status: 'active',
       profileCompleted: false, // Initialize as false to trigger profile completion
       wishlist: [],
+      createdAt: new Date().toISOString(),
     };
 
     const result = await usersCollection.insertOne(newUser);
@@ -2027,7 +2063,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
 /**
  * Initiates a donation chat with an organization.
  * @param organizationId The ID of the organization.
- * @returns An object with the result and chatId.
+ * @returns An object with the result, chatId, and donationId.
  */
 export async function initiateDonation(organizationId: string) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
@@ -2050,46 +2086,243 @@ export async function initiateDonation(organizationId: string) {
 
         const org = await db.collection("organizations").findOne({ 
             _id: new ObjectId(organizationId),
-            status: 'approved'  // Only allow donations to approved organizations
+            status: 'approved',  // Only allow donations to approved organizations
+            deleted: { $ne: true }  // Exclude soft-deleted organizations
         });
         
         if (!org) {
-            return { success: false, message: "Organization not found or not approved for donations." };
+            return { success: false, message: "Organization not found or not accepting donations." };
+        }
+        
+        // Prevent self-donation (primary contact)
+        if (org.primaryContactId === user.id) {
+            return { 
+                success: false, 
+                message: "You cannot donate to your own organization." 
+            };
+        }
+        
+        // Prevent representative donation
+        const isRepresentative = org.representatives?.some(
+            (rep: any) => rep.userId === user.id
+        );
+        
+        if (isRepresentative) {
+            return { 
+                success: false, 
+                message: "Organization representatives cannot donate to their own organization." 
+            };
         }
 
-        // Use a more secure participant pattern that won't conflict with user IDs
-        // Format: donation_org_<organizationId>
-        const orgParticipantId = `donation_org_${organizationId}`;
-        const participantIds = [user.id, orgParticipantId].sort();
+        // Check if organization has a primary contact
+        if (!org.primaryContactId) {
+            // Migration: If no primaryContactId, set it to the submitter
+            await db.collection("organizations").updateOne(
+                { _id: new ObjectId(organizationId) },
+                { 
+                    $set: { 
+                        primaryContactId: org.submittedBy,
+                        representatives: [
+                            {
+                                userId: org.submittedBy,
+                                role: 'primary',
+                                addedAt: new Date().toISOString(),
+                                addedBy: 'system'
+                            }
+                        ],
+                        updatedAt: new Date().toISOString()
+                    } 
+                }
+            );
+            
+            // Update the org object for use in this function
+            org.primaryContactId = org.submittedBy;
+            
+            console.log(`Auto-assigned primaryContactId for organization ${organizationId}`);
+        }
 
-        let chat = await db.collection("chats").findOne({ participantIds: { $all: participantIds } });
+        // Use REAL user IDs for both participants
+        const participantIds = [user.id, org.primaryContactId].sort();
 
+        // FIRST: Check if ANY chat exists between these participants (donation or regular)
+        let chat = await db.collection("chats").findOne({ 
+            participantIds: { $all: participantIds }
+        });
+
+        let donation;
+        let isNewChat = false;
+        
+        // If chat exists, check if it already has this organization context
+        if (chat) {
+            // If the chat doesn't have an organizationId, add it
+            if (!chat.organizationId) {
+                await db.collection("chats").updateOne(
+                    { _id: chat._id },
+                    { 
+                        $set: { 
+                            organizationId: new ObjectId(organizationId),
+                            updatedAt: new Date().toISOString()
+                        }
+                    }
+                );
+                chat.organizationId = new ObjectId(organizationId);
+            }
+            
+            // If chat was previously deleted, restore it by removing BOTH users from deletedBy
+            if (chat.deletedBy && Array.isArray(chat.deletedBy) && chat.deletedBy.length > 0) {
+                await db.collection("chats").updateOne(
+                    { _id: chat._id },
+                    { 
+                        $set: { 
+                            deletedBy: [],
+                            updatedAt: new Date().toISOString() 
+                        }
+                    }
+                );
+                chat.deletedBy = [];
+            }
+        }
+        
         if (!chat) {
-            const newChat: Omit<Chat, '_id'> = {
+            isNewChat = true;
+            // Create new donation record
+            const newDonation = {
+                donorId: user.id,
+                organizationId: new ObjectId(organizationId),
+                chatId: null as any, // Will be updated after chat creation
+                books: [],
+                status: 'pending' as const,
+                statusHistory: [{
+                    status: 'pending' as const,
+                    timestamp: new Date().toISOString(),
+                    updatedBy: user.id,
+                    notes: 'Donation inquiry started'
+                }],
+                orgConfirmed: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            const donationResult = await db.collection("donations").insertOne(newDonation);
+            donation = { ...newDonation, _id: donationResult.insertedId };
+
+            // Create new chat with REAL participants
+            const newChat = {
                 participantIds,
                 organizationId: new ObjectId(organizationId),
+                donationId: donationResult.insertedId,
                 messages: [],
-                lastMessage: `Donation to ${org.name} initiated.`,
+                lastMessage: `Donation inquiry for ${org.name}`,
                 updatedAt: new Date().toISOString(),
             };
-            const result = await db.collection("chats").insertOne(newChat);
-            chat = { ...newChat, _id: result.insertedId };
             
-            // Send donation chat confirmation email to user
-            try {
-                // Get user details for email
-                const userDetails = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
-                if (userDetails?.email) {
-                    await sendDonationChatConfirmationEmail(
-                        userDetails.email,
-                        userDetails.name || 'BookEx User',
-                        org.name,
-                        chat._id.toString()
-                    );
+            const chatResult = await db.collection("chats").insertOne(newChat);
+            chat = { ...newChat, _id: chatResult.insertedId };
+            
+            // Get donor user info for notifications
+            const donorUserInfo = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
+            const donorName = donorUserInfo?.name || 'A user';
+            
+            // Update donation with chatId
+            await db.collection("donations").updateOne(
+                { _id: donationResult.insertedId },
+                { $set: { chatId: chatResult.insertedId } }
+            );
+            
+            // Only send notifications and emails for NEW chats
+            if (isNewChat) {
+                // Get donor user info for notifications
+                const donorUserInfo = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
+                const donorName = donorUserInfo?.name || 'A user';
+                
+                // Create notification for organization contact
+                await db.collection("notifications").insertOne({
+                    userId: org.primaryContactId,
+                    type: 'donation_request',
+                    title: 'New Donation Request',
+                    message: `${donorName} wants to donate books to ${org.name}`,
+                    link: `/messages/${chatResult.insertedId}`,
+                    read: false,
+                    createdAt: new Date().toISOString(),
+                    metadata: {
+                        donationId: donationResult.insertedId.toString(),
+                        donorId: user.id,
+                        organizationId: organizationId
+                    }
+                });
+                
+                // Send donation chat confirmation email to donor
+                try {
+                    const userDetails = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
+                    if (userDetails?.email) {
+                        await sendDonationChatConfirmationEmail(
+                            userDetails.email,
+                            userDetails.name || 'BookEx User',
+                            org.name,
+                            chatResult.insertedId.toString()
+                        );
+                    }
+                } catch (emailError) {
+                    // Only log email errors in production to reduce noise
+                    if (process.env.NODE_ENV === 'production') {
+                        console.error("Email notification failed:", emailError);
+                    }
                 }
-            } catch (emailError) {
-                console.error("Failed to send donation chat confirmation email:", emailError);
+
+                // Send notification email to organization contact
+                try {
+                    const orgContact = await db.collection("users").findOne({ _id: new ObjectId(org.primaryContactId) });
+                    const donorUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
+                    
+                    if (orgContact?.email && donorUser?.name) {
+                        await sendDonationStatusUpdateEmail(
+                            orgContact.email,
+                            orgContact.name || 'Organization Contact',
+                            org.name,
+                            'pending',
+                            `${donorUser.name} wants to donate books to your organization`,
+                            undefined,
+                            chatResult.insertedId.toString()
+                        );
+                    }
+                } catch (emailError) {
+                    if (process.env.NODE_ENV === 'production') {
+                        console.error("Email notification failed:", emailError);
+                    }
+                }
             }
+        } else {
+            // Existing chat found - get the donation
+            donation = await db.collection("donations").findOne({ chatId: chat._id });
+            
+            if (!donation) {
+                // Edge case: chat exists but donation doesn't (data inconsistency)
+                // Create the donation record
+                const newDonation = {
+                    donorId: user.id,
+                    organizationId: new ObjectId(organizationId),
+                    chatId: chat._id,
+                    books: [],
+                    status: 'pending' as const,
+                    statusHistory: [{
+                        status: 'pending' as const,
+                        timestamp: new Date().toISOString(),
+                        updatedBy: user.id,
+                        notes: 'Donation inquiry started'
+                    }],
+                    orgConfirmed: false,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+                
+                const donationResult = await db.collection("donations").insertOne(newDonation);
+                donation = { ...newDonation, _id: donationResult.insertedId };
+            }
+        }
+        
+        // Ensure we have a donation
+        if (!donation) {
+            throw createAppError(ErrorType.INTERNAL, 'Failed to create or retrieve donation');
         }
         
         // Log successful donation initiation
@@ -2101,11 +2334,456 @@ export async function initiateDonation(organizationId: string) {
             { 
                 organizationId,
                 organizationName: org.name,
-                chatId: chat._id.toString()
+                chatId: chat._id.toString(),
+                donationId: donation._id.toString()
+            }
+        );
+        
+        // Return just the data (wrapper adds { success: true, data: ... })
+        return {
+            chatId: chat._id.toString(),
+            donationId: donation._id.toString()
+        };
+    });
+}
+
+/**
+ * Updates the books list for an existing donation.
+ * Only the donor or organization representative can update the books.
+ * @param donationId The donation ID
+ * @param books Array of books to add/update
+ * @returns Updated donation object
+ */
+export async function updateDonationBooks(
+    donationId: string,
+    books: Array<{
+        bookId?: string;
+        title: string;
+        author: string;
+        condition: 'new' | 'like-new' | 'used' | 'worn';
+        quantity: number;
+        notes?: string;
+    }>
+) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        // Validate input
+        if (!books || books.length === 0) {
+            throw createAppError(ErrorType.VALIDATION, 'At least one book is required');
+        }
+
+        // Validate ObjectId
+        if (!ObjectId.isValid(donationId)) {
+            throw createAppError(ErrorType.VALIDATION, 'Invalid donation ID');
+        }
+
+        // Get the donation
+        const donation = await db.collection("donations").findOne({ 
+            _id: new ObjectId(donationId) 
+        });
+
+        if (!donation) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Donation not found');
+        }
+
+        // Check if donation is still modifiable
+        if (donation.status === 'completed' || donation.status === 'cancelled') {
+            throw createAppError(
+                ErrorType.VALIDATION,
+                'Cannot update books for a completed or cancelled donation'
+            );
+        }
+
+        // Get organization to check permissions
+        const org = await db.collection("organizations").findOne({
+            _id: new ObjectId(donation.organizationId)
+        });
+
+        if (!org) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Organization not found');
+        }
+
+        // Check authorization - must be donor or org representative
+        const isOrgRep = org.representatives?.some(
+            (rep: any) => rep.userId === user.id
+        );
+        const isDonor = donation.donorId === user.id;
+
+        if (!isDonor && !isOrgRep) {
+            throw createAppError(
+                ErrorType.AUTHORIZATION,
+                'Only the donor or organization representatives can update donation books'
+            );
+        }
+
+        // Update donation with new books
+        const result = await db.collection("donations").updateOne(
+            { _id: new ObjectId(donationId) },
+            { 
+                $set: { 
+                    books: books,
+                    updatedAt: new Date().toISOString(),
+                    lastUpdatedBy: user.id
+                } 
             }
         );
 
-        return { success: true, chatId: chat._id.toString() };
+        if (result.matchedCount === 0) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Donation not found');
+        }
+
+        // Create notification for the other party
+        const otherUserId = isDonor ? org.primaryContactId : donation.donorId;
+        
+        await db.collection("notifications").insertOne({
+            userId: otherUserId,
+            type: 'donation_update',
+            title: 'Donation Books Updated',
+            message: `The book list for your donation has been updated (${books.length} ${books.length === 1 ? 'book' : 'books'})`,
+            link: `/messages/${donation.chatId}`,
+            read: false,
+            createdAt: new Date().toISOString(),
+            metadata: {
+                donationId: donationId,
+                bookCount: books.length,
+                updatedBy: user.id
+            }
+        });
+
+        // Log activity
+        await logActivity(
+            user.id,
+            'donation_status_update',
+            'low',
+            `Updated books for donation to ${org.name}`,
+            { 
+                donationId,
+                bookCount: books.length,
+                organizationId: donation.organizationId
+            }
+        );
+
+        return { 
+            success: true, 
+            data: {
+                donationId,
+                bookCount: books.length
+            }
+        };
+    });
+}
+
+/**
+ * Updates donation status with tracking information.
+ * Only the donor or organization representative can update donation status.
+ * @param donationId The donation ID
+ * @param updateData Status update data (status, notes, pickup/delivery details)
+ * @returns Updated donation object
+ */
+export async function updateDonationStatus(
+    donationId: string,
+    updateData: {
+        status: DonationStatus;
+        notes?: string;
+        pickupDate?: string;
+        deliveryMethod?: string;
+    }
+) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        // Validate input
+        const validatedData = donationStatusUpdateSchema.parse(updateData);
+
+        // Get the donation
+        const donation = await db.collection("donations").findOne({ 
+            _id: new ObjectId(donationId) 
+        });
+
+        if (!donation) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Donation not found');
+        }
+
+        // Get organization to check permissions
+        const org = await db.collection("organizations").findOne({
+            _id: new ObjectId(donation.organizationId)
+        });
+
+        if (!org) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Organization not found');
+        }
+
+        // Check authorization - must be donor or org representative
+        const isOrgRep = org.representatives?.some(
+            (rep: OrganizationRepresentative) => rep.userId === user.id
+        );
+        const isDonor = donation.donorId === user.id;
+
+        if (!isDonor && !isOrgRep) {
+            throw createAppError(
+                ErrorType.AUTHORIZATION,
+                'Only the donor or organization representatives can update donation status'
+            );
+        }
+
+        // Validate status transition using centralized function
+        const validTransition = validateDonationStatusTransition(
+            donation.status,
+            validatedData.status
+        );
+        
+        if (!validTransition.isValid) {
+            throw createAppError(
+                ErrorType.VALIDATION,
+                validTransition.error || `Cannot transition from ${donation.status} to ${validatedData.status}`
+            );
+        }
+
+        // Special validation: Cannot manually set to completed
+        if (validatedData.status === 'completed') {
+            throw createAppError(
+                ErrorType.VALIDATION,
+                'Use confirmDonationReceipt to complete donations'
+            );
+        }
+
+        // Require notes for cancellation
+        if (validatedData.status === 'cancelled' && !validatedData.notes) {
+            throw createAppError(
+                ErrorType.VALIDATION,
+                'Cancellation reason is required'
+            );
+        }
+
+        // Prepare update document
+        const updateDoc: any = {
+            status: validatedData.status,
+            updatedAt: new Date().toISOString(),
+            lastUpdatedBy: user.id
+        };
+
+        if (validatedData.pickupDate) updateDoc.pickupDate = validatedData.pickupDate;
+        if (validatedData.pickupLocation) updateDoc.pickupLocation = validatedData.pickupLocation;
+        if (validatedData.deliveryMethod) updateDoc.deliveryMethod = validatedData.deliveryMethod;
+
+        // Create status history entry
+        const statusUpdate: DonationStatusUpdate = {
+            status: validatedData.status as DonationStatus,
+            timestamp: new Date().toISOString(),
+            updatedBy: user.id,
+            notes: validatedData.notes
+        };
+
+        // Update donation with both current status and history
+        await db.collection("donations").updateOne(
+            { _id: new ObjectId(donationId) },
+            { 
+                $set: updateDoc,
+                $push: { statusHistory: statusUpdate }
+            }
+        );
+
+        // Create notification for the other party
+        const otherUserId = isDonor ? org.primaryContactId : donation.donorId;
+        const statusMessages: Record<string, string> = {
+            'pending': 'A new donation has been initiated',
+            'confirmed': 'Donation has been confirmed',
+            'in_progress': 'Donation is in progress',
+            'completed': 'Donation has been completed',
+            'cancelled': 'Donation has been cancelled'
+        };
+
+        await db.collection("notifications").insertOne({
+            userId: otherUserId,
+            type: 'donation_update',
+            title: 'Donation Status Updated',
+            message: `${statusMessages[validatedData.status] || 'Status updated'}${validatedData.notes ? ': ' + validatedData.notes : ''}`,
+            link: `/messages/${donation.chatId}`,
+            read: false,
+            createdAt: new Date().toISOString(),
+            metadata: {
+                donationId: donationId,
+                status: validatedData.status,
+                updatedBy: user.id
+            }
+        });
+
+        // Send email notification
+        try {
+            const otherUser = await db.collection("users").findOne({ 
+                _id: new ObjectId(otherUserId) 
+            });
+            
+            if (otherUser?.email) {
+                await sendDonationStatusUpdateEmail(
+                    otherUser.email,
+                    otherUser.name || 'BookEx User',
+                    org.name,
+                    validatedData.status,
+                    validatedData.notes,
+                    validatedData.pickupDate,
+                    donation.chatId.toString()
+                );
+            }
+        } catch (emailError) {
+            if (process.env.NODE_ENV === 'production') {
+                console.error("Email notification failed:", emailError);
+            }
+        }
+
+        // Log activity
+        await logActivity(
+            user.id,
+            'donation_status_update',
+            'low',
+            `Updated donation status to ${validatedData.status}`,
+            { 
+                donationId,
+                oldStatus: donation.status,
+                newStatus: validatedData.status,
+                organizationId: donation.organizationId
+            }
+        );
+
+        return { 
+            success: true, 
+            data: {
+                ...donation,
+                ...updateDoc
+            }
+        };
+    });
+}
+
+/**
+ * Confirms donation receipt by organization.
+ * Only organization representatives can confirm receipt.
+ * @param donationId The donation ID
+ * @param receiptData Receipt confirmation details
+ * @returns Updated donation with confirmation
+ */
+export async function confirmDonationReceipt(
+    donationId: string,
+    receiptData: {
+        receivedDate: string;
+        condition: string;
+        notes?: string;
+    }
+) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        // Get the donation
+        const donation = await db.collection("donations").findOne({ 
+            _id: new ObjectId(donationId) 
+        });
+
+        if (!donation) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Donation not found');
+        }
+
+        // Get organization to check permissions
+        const org = await db.collection("organizations").findOne({
+            _id: new ObjectId(donation.organizationId)
+        });
+
+        if (!org) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Organization not found');
+        }
+
+        // Check authorization - must be org representative
+        const isOrgRep = org.representatives?.some(
+            (rep: OrganizationRepresentative) => rep.userId === user.id
+        );
+
+        if (!isOrgRep) {
+            throw createAppError(
+                ErrorType.AUTHORIZATION,
+                'Only organization representatives can confirm donation receipt'
+            );
+        }
+
+        // Update donation to completed status with receipt info
+        const updateDoc = {
+            status: 'completed' as DonationStatus,
+            receivedDate: receiptData.receivedDate,
+            receivedCondition: receiptData.condition,
+            receiptNotes: receiptData.notes,
+            confirmedBy: user.id,
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            lastUpdatedBy: user.id
+        };
+
+        // Create status history entry for completion
+        const statusUpdate: DonationStatusUpdate = {
+            status: 'completed' as DonationStatus,
+            timestamp: new Date().toISOString(),
+            updatedBy: user.id,
+            notes: `Receipt confirmed. Condition: ${receiptData.condition}${receiptData.notes ? '. ' + receiptData.notes : ''}`
+        };
+
+        await db.collection("donations").updateOne(
+            { _id: new ObjectId(donationId) },
+            { 
+                $set: updateDoc,
+                $push: { statusHistory: statusUpdate }
+            }
+        );
+
+        // Create notification for donor
+        await db.collection("notifications").insertOne({
+            userId: donation.donorId,
+            type: 'donation_completed',
+            title: 'Donation Received!',
+            message: `${org.name} has confirmed receipt of your donation. Thank you for your generosity!`,
+            link: `/messages/${donation.chatId}`,
+            read: false,
+            createdAt: new Date().toISOString(),
+            metadata: {
+                donationId: donationId,
+                organizationId: donation.organizationId
+            }
+        });
+
+        // Send thank you email to donor
+        try {
+            const donor = await db.collection("users").findOne({ 
+                _id: new ObjectId(donation.donorId) 
+            });
+            
+            if (donor?.email) {
+                await sendDonationCompletionEmail(
+                    donor.email,
+                    donor.name || 'BookEx User',
+                    org.name,
+                    receiptData.receivedDate,
+                    receiptData.condition,
+                    receiptData.notes,
+                    donation.chatId.toString()
+                );
+            }
+        } catch (emailError) {
+            if (process.env.NODE_ENV === 'production') {
+                console.error("Email notification failed:", emailError);
+            }
+        }
+
+        // Log activity
+        await logActivity(
+            user.id,
+            'donation_confirmed',
+            'medium',
+            `Confirmed receipt of donation from ${donation.donorId}`,
+            { 
+                donationId,
+                organizationId: donation.organizationId,
+                receivedDate: receiptData.receivedDate
+            }
+        );
+
+        return { 
+            success: true, 
+            data: {
+                ...donation,
+                ...updateDoc
+            }
+        };
     });
 }
 
@@ -3197,6 +3875,11 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
             throw new Error("Organization not found.");
         }
         
+        // Ensure organization has submittedBy field to use as primary contact
+        if (!org.submittedBy) {
+            throw new Error("Organization is missing submittedBy information. Cannot approve without a contact person.");
+        }
+        
         // Log organization approval attempt
         await logActivity(
             user.id,
@@ -3211,9 +3894,25 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
             }
         );
         
+        // Update organization status and set primaryContactId
+        // The submitter becomes the primary contact by default
         await db.collection("organizations").updateOne(
             { _id: new ObjectId(organizationId) },
-            { $set: { status: 'approved', updatedAt: new Date().toISOString() } }
+            { 
+                $set: { 
+                    status: 'approved',
+                    primaryContactId: org.submittedBy, // Set submitter as primary contact
+                    representatives: [
+                        {
+                            userId: org.submittedBy,
+                            role: 'primary',
+                            addedAt: new Date().toISOString(),
+                            addedBy: user.id
+                        }
+                    ],
+                    updatedAt: new Date().toISOString()
+                } 
+            }
         );
         
         // Send approval email notification
@@ -3249,7 +3948,8 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
             { 
                 organizationId,
                 organizationName: org.name,
-                status: 'approved'
+                status: 'approved',
+                primaryContactId: org.submittedBy
             }
         );
 
@@ -3445,6 +4145,331 @@ export async function suspendUser(userId: string): Promise<{ success: true; data
         );
         
         revalidatePath('/admin');
+        return { success: true };
+    }, 'admin');
+}
+
+/**
+ * Gets detailed organization information (admin only).
+ * @param organizationId The ID of the organization.
+ * @returns Organization details with statistics.
+ */
+export async function getOrganizationDetails(organizationId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(organizationId)) {
+            throw new Error('Invalid organization ID');
+        }
+
+        const organization = await db.collection("organizations").findOne({ _id: new ObjectId(organizationId) });
+        if (!organization) {
+            throw new Error('Organization not found');
+        }
+
+        // Get donation statistics
+        const donations = await db.collection("donations").find({ 
+            organizationId: organizationId 
+        }).toArray();
+
+        const stats = {
+            totalDonations: donations.length,
+            pendingDonations: donations.filter((d: Donation) => d.status === 'pending').length,
+            confirmedDonations: donations.filter((d: Donation) => d.status === 'confirmed').length,
+            inProgressDonations: donations.filter((d: Donation) => d.status === 'in_progress').length,
+            completedDonations: donations.filter((d: Donation) => d.status === 'completed').length,
+            cancelledDonations: donations.filter((d: Donation) => d.status === 'cancelled').length,
+            rejectedDonations: donations.filter((d: Donation) => d.status === 'rejected').length,
+            totalBooksReceived: donations
+                .filter((d: Donation) => d.status === 'completed')
+                .reduce((sum: number, d: Donation) => sum + (d.books?.length || 0), 0),
+            acceptanceRate: donations.length > 0 
+                ? Math.round((donations.filter((d: Donation) => d.status === 'confirmed' || d.status === 'in_progress' || d.status === 'completed').length / donations.length) * 100)
+                : 0
+        };
+
+        // Get submitter information
+        let submittedByUser = null;
+        if (organization.submittedBy && ObjectId.isValid(organization.submittedBy)) {
+            submittedByUser = await db.collection("users").findOne(
+                { _id: new ObjectId(organization.submittedBy) },
+                { projection: { name: 1, email: 1, avatarUrl: 1 } }
+            );
+        }
+
+        return {
+            organization: JSON.parse(JSON.stringify(organization)),
+            stats,
+            submittedBy: submittedByUser ? JSON.parse(JSON.stringify(submittedByUser)) : null
+        };
+    }, 'admin');
+}
+
+/**
+ * Updates organization profile (admin only).
+ * @param organizationId The ID of the organization.
+ * @param updateData The data to update.
+ * @returns An object with the result of the operation.
+ */
+export async function updateOrganizationProfile(
+    organizationId: string, 
+    updateData: {
+        name?: string;
+        description?: string;
+        location?: string;
+        imageUrl?: string;
+        contactEmail?: string;
+        contactPhone?: string;
+        website?: string;
+    }
+): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(organizationId)) {
+            throw new Error('Invalid organization ID');
+        }
+
+        // Validate updated data
+        const validation = validateOrganizationData({
+            name: updateData.name || '',
+            description: updateData.description || '',
+            location: updateData.location || '',
+            contactEmail: updateData.contactEmail,
+            contactPhone: updateData.contactPhone,
+            website: updateData.website
+        });
+
+        if (!validation.isValid) {
+            throw new Error(validation.error);
+        }
+
+        // Check for duplicate name if name is being changed
+        if (updateData.name) {
+            const sanitizedName = sanitizeOrganizationName(updateData.name);
+            const existingOrg = await db.collection("organizations").findOne({
+                _id: { $ne: new ObjectId(organizationId) },
+                $expr: {
+                    $eq: [
+                        { $toLower: { $trim: { input: "$name" } } },
+                        sanitizedName
+                    ]
+                }
+            });
+
+            if (existingOrg) {
+                throw new Error("An organization with this name already exists.");
+            }
+        }
+
+        // Prepare update object
+        const updateObj: any = {
+            updatedAt: new Date().toISOString()
+        };
+
+        if (updateData.name) updateObj.name = updateData.name.trim();
+        if (updateData.description) updateObj.description = updateData.description.trim();
+        if (updateData.location) updateObj.location = updateData.location.trim();
+        if (updateData.imageUrl) updateObj.imageUrl = updateData.imageUrl;
+        if (updateData.contactEmail !== undefined) updateObj.contactEmail = updateData.contactEmail?.trim() || undefined;
+        if (updateData.contactPhone !== undefined) updateObj.contactPhone = updateData.contactPhone?.trim() || undefined;
+        if (updateData.website !== undefined) updateObj.website = updateData.website?.trim() || undefined;
+
+        const result = await db.collection("organizations").updateOne(
+            { _id: new ObjectId(organizationId) },
+            { $set: updateObj }
+        );
+
+        if (result.modifiedCount === 0) {
+            throw new Error('Organization not found or no changes made');
+        }
+
+        // Invalidate cache
+        try {
+            const { default: redisCache } = await import('@/lib/redis-cache');
+            await redisCache.delete('approved_organizations');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate cache:', cacheError);
+        }
+
+        revalidatePath('/admin');
+        revalidatePath('/donate');
+        revalidatePath(`/admin/organizations/${organizationId}`);
+
+        await logActivity(
+            user.id,
+            'organization_update',
+            'medium',
+            `Updated organization profile: ${updateData.name || organizationId}`,
+            { organizationId, updates: Object.keys(updateObj) }
+        );
+
+        return { success: true };
+    }, 'admin');
+}
+
+/**
+ * Deletes an organization (admin only).
+ * @param organizationId The ID of the organization.
+ * @returns An object with the result of the operation.
+ */
+export async function deleteOrganization(organizationId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(organizationId)) {
+            throw new Error('Invalid organization ID');
+        }
+
+        const organization = await db.collection("organizations").findOne({ _id: new ObjectId(organizationId) });
+        if (!organization) {
+            throw new Error('Organization not found');
+        }
+
+        // Check if organization has active donations
+        const activeDonations = await db.collection("donations").countDocuments({
+            organizationId: organizationId,
+            status: { $in: ['pending', 'confirmed', 'in_progress'] }
+        });
+
+        if (activeDonations > 0) {
+            throw new Error(`Cannot delete organization with ${activeDonations} active donation(s). Please complete or cancel them first.`);
+        }
+
+        // Mark related chats as organization deleted (soft delete)
+        await db.collection("chats").updateMany(
+            { organizationId: new ObjectId(organizationId) },
+            { 
+                $set: { 
+                    organizationDeleted: true,
+                    organizationDeletedAt: new Date().toISOString()
+                } 
+            }
+        );
+
+        // Delete the organization
+        await db.collection("organizations").deleteOne({ _id: new ObjectId(organizationId) });
+
+        // Invalidate cache
+        try {
+            const { default: redisCache } = await import('@/lib/redis-cache');
+            await redisCache.delete('approved_organizations');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate cache:', cacheError);
+        }
+
+        revalidatePath('/admin');
+        revalidatePath('/donate');
+
+        await logActivity(
+            user.id,
+            'organization_delete',
+            'high',
+            `Deleted organization: ${organization.name}`,
+            { organizationId, organizationName: organization.name }
+        );
+
+        return { success: true };
+    }, 'admin');
+}
+
+/**
+ * Toggles organization active status (suspend/activate) (admin only).
+ * @param organizationId The ID of the organization.
+ * @param active Whether to activate or suspend the organization.
+ * @returns An object with the result of the operation.
+ */
+export async function toggleOrganizationStatus(organizationId: string, active: boolean): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(organizationId)) {
+            throw new Error('Invalid organization ID');
+        }
+
+        const result = await db.collection("organizations").updateOne(
+            { _id: new ObjectId(organizationId) },
+            { 
+                $set: { 
+                    isActive: active,
+                    updatedAt: new Date().toISOString()
+                } 
+            }
+        );
+
+        if (result.modifiedCount === 0) {
+            throw new Error('Organization not found');
+        }
+
+        // Invalidate cache
+        try {
+            const { default: redisCache } = await import('@/lib/redis-cache');
+            await redisCache.delete('approved_organizations');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate cache:', cacheError);
+        }
+
+        revalidatePath('/admin');
+        revalidatePath('/donate');
+        revalidatePath(`/admin/organizations/${organizationId}`);
+
+        await logActivity(
+            user.id,
+            'organization_status_toggle',
+            'medium',
+            `${active ? 'Activated' : 'Suspended'} organization`,
+            { organizationId, active }
+        );
+
+        return { success: true };
+    }, 'admin');
+}
+
+/**
+ * Updates organization approval status (admin only).
+ * @param organizationId The ID of the organization.
+ * @param status The new status.
+ * @returns An object with the result of the operation.
+ */
+export async function updateOrganizationStatus(
+    organizationId: string, 
+    status: 'approved' | 'pending' | 'rejected'
+): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(organizationId)) {
+            throw new Error('Invalid organization ID');
+        }
+
+        if (!['approved', 'pending', 'rejected'].includes(status)) {
+            throw new Error('Invalid status');
+        }
+
+        const result = await db.collection("organizations").updateOne(
+            { _id: new ObjectId(organizationId) },
+            { 
+                $set: { 
+                    status,
+                    updatedAt: new Date().toISOString()
+                } 
+            }
+        );
+
+        if (result.modifiedCount === 0) {
+            throw new Error('Organization not found');
+        }
+
+        // Invalidate cache
+        try {
+            const { default: redisCache } = await import('@/lib/redis-cache');
+            await redisCache.delete('approved_organizations');
+        } catch (cacheError) {
+            console.warn('⚠️ Failed to invalidate cache:', cacheError);
+        }
+
+        revalidatePath('/admin');
+        revalidatePath('/donate');
+        revalidatePath(`/admin/organizations/${organizationId}`);
+
+        await logActivity(
+            user.id,
+            'organization_status_change',
+            'medium',
+            `Changed organization status to ${status}`,
+            { organizationId, status }
+        );
+
         return { success: true };
     }, 'admin');
 }
@@ -3726,34 +4751,60 @@ export async function getChatDetails(chatId: string, userId: string): Promise<{ 
         // Validate authorization using resource authorization system
         await validateResourceAccess(user, 'chat', chatId, 'read');
 
-        const chat = await db.collection("chats").findOne({ 
+        // First try to find chat where user is a direct participant
+        let chat = await db.collection("chats").findOne({ 
             _id: new ObjectId(chatId), 
             participantIds: user.id 
         });
 
+        // If not found and this might be a donation chat, check if user is an org representative
+        if (!chat) {
+            const potentialChat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
+            
+            if (potentialChat?.organizationId) {
+                const organization = await db.collection("organizations").findOne({ 
+                    _id: new ObjectId(potentialChat.organizationId) 
+                });
+                
+                // Check if user is a representative of this organization
+                const isOrgRep = organization?.representatives?.some(
+                    (rep: OrganizationRepresentative) => rep.userId === user.id
+                );
+                
+                if (isOrgRep) {
+                    chat = potentialChat;
+                }
+            }
+        }
+
         if (!chat) return null;
 
-        const otherId = chat.participantIds.find((id: any) => id !== user.id && !id.startsWith('org_'));
+        // Get the other participant (always a real user, never a fake ID)
+        const otherId = chat.participantIds.find((id: any) => id !== user.id);
 
         if (otherId && ObjectId.isValid(otherId)) {
             const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
             chat.otherParticipant = otherUser || undefined;
         }
+
+        // Load related book if this is a book exchange chat
         if (chat.bookId && ObjectId.isValid(chat.bookId)) {
             const book = await db.collection("books").findOne({ _id: new ObjectId(chat.bookId) });
             chat.book = book || undefined;
         }
+
+        // Load organization if this is a donation chat
         if (chat.organizationId && ObjectId.isValid(String(chat.organizationId))) {
             const organization = await db.collection("organizations").findOne({ _id: new ObjectId(chat.organizationId) });
             chat.organization = organization || undefined;
-            if(chat.organization && !chat.otherParticipant) {
-                chat.otherParticipant = {
-                    _id: chat.organization._id,
-                    name: chat.organization.name,
-                    avatarUrl: chat.organization.imageUrl,
-                } as User;
-            }
         }
+
+        // Load donation details if this is a donation chat
+        if (chat.donationId && ObjectId.isValid(String(chat.donationId))) {
+            const donation = await db.collection("donations").findOne({ _id: new ObjectId(chat.donationId) });
+            chat.donation = donation || undefined;
+        }
+
         return JSON.parse(JSON.stringify(chat));
     });
 }

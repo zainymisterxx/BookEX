@@ -50,15 +50,24 @@ export function SocketProvider({ children }: SocketProviderProps) {
     // Initialize socket connection
     const initSocket = () => {
       const socketUrl = getSocketUrl();
+      
+      // Don't connect if no session
+      if (!session?.user?.id) {
+        console.log('No session, skipping socket connection');
+        return;
+      }
         
       const newSocket = io(socketUrl, {
+        auth: {
+          token: session.user.id
+        },
         transports: ['websocket', 'polling'],
         upgrade: true,
         rememberUpgrade: true,
-        timeout: 20000,
+        timeout: 10000,
         reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 5,
+        reconnectionDelay: 2000,
+        reconnectionAttempts: 3, // Reduced from 5 to avoid spam
         forceNew: true,
       });
 
@@ -93,38 +102,45 @@ export function SocketProvider({ children }: SocketProviderProps) {
         console.log('Disconnected from Socket.IO server:', reason);
         setIsConnected(false);
       });
+      
+      newSocket.on('connect_failed', () => {
+        console.error('Socket connection failed');
+      });
 
+      let connectionAttempts = 0;
+      const MAX_LOG_ATTEMPTS = 3; // Only log first 3 attempts
+      
       newSocket.on('connect_error', (error: unknown) => {
-        console.error('Socket.IO connection error:', error);
-        const err = error as { message?: string; type?: string; description?: string };
-        console.error('Error details:', {
-          message: err.message,
-          type: err.type,
-          description: err.description
-        });
-        console.error('Socket URL being used:', socketUrl);
+        connectionAttempts++;
+        console.error('Socket connect_error:', error);
         setIsConnected(false);
         
-        // Try to reconnect after a delay
-        setTimeout(() => {
-          if (!newSocket.connected) {
-            console.log('Attempting manual reconnection...');
-            newSocket.connect();
+        // Only log first few attempts to avoid console spam
+        if (connectionAttempts <= MAX_LOG_ATTEMPTS) {
+          console.warn(`Socket.IO connection failed (attempt ${connectionAttempts}). Real-time features unavailable.`);
+          if (connectionAttempts === 1) {
+            console.log('💡 Tip: Run "npm run dev" instead of "npm start" for real-time features');
           }
-        }, 2000);
+        }
+        
+        // Stop trying after 3 attempts to reduce noise
+        if (connectionAttempts > MAX_LOG_ATTEMPTS) {
+          newSocket.disconnect();
+        }
       });
 
       newSocket.on('reconnect', (attemptNumber) => {
-        console.log('Reconnected to Socket.IO server after', attemptNumber, 'attempts');
+        console.log('✅ Socket.IO reconnected successfully');
         setIsConnected(true);
+        connectionAttempts = 0; // Reset counter on successful connection
       });
 
-      newSocket.on('reconnect_error', (error) => {
-        console.error('Socket.IO reconnection error:', error);
+      newSocket.on('reconnect_error', () => {
+        // Silenced to reduce console noise
       });
 
       newSocket.on('reconnect_failed', () => {
-        console.error('Socket.IO reconnection failed');
+        console.warn('⚠️ Socket.IO reconnection failed. Real-time features unavailable.');
         setIsConnected(false);
       });
 

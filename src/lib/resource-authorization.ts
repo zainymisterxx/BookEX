@@ -71,6 +71,13 @@ export class ResourceAuthority {
    * Checks if user can access/modify a chat
    */
   static async canAccessChat(user: AuthorizedUser, chatId: string, operation: 'read' | 'update' | 'delete'): Promise<boolean> {
+    // Handle old-style composite chat IDs (userId1_userId2)
+    if (chatId.includes('_')) {
+      const participants = chatId.split('_');
+      return participants.includes(user.id) || user.role === 'admin';
+    }
+    
+    // Handle new-style ObjectId chats
     if (!ObjectId.isValid(chatId)) return false;
     
     const client = await clientPromise;
@@ -79,15 +86,26 @@ export class ResourceAuthority {
     const chat = await db.collection<Chat>('chats').findOne({ _id: new ObjectId(chatId) });
     if (!chat) return false;
     
-    switch (operation) {
-      case 'read':
-      case 'update':
-        return chat.participantIds.includes(user.id) || user.role === 'admin';
-      case 'delete':
-        return user.role === 'admin';
-      default:
-        return false;
+    // Check if user is a direct participant
+    if (chat.participantIds.includes(user.id)) {
+      return operation !== 'delete' || user.role === 'admin';
     }
+    
+    // Check if user is an organization representative for donation chats
+    if (chat.organizationId) {
+      const org = await db.collection('organizations').findOne({
+        _id: new ObjectId(chat.organizationId),
+        'representatives.userId': user.id
+      });
+      if (org) {
+        return operation !== 'delete' || user.role === 'admin';
+      }
+    }
+    
+    // Admin can do everything
+    if (user.role === 'admin') return true;
+    
+    return false;
   }
   
   /**

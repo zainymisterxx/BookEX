@@ -98,6 +98,46 @@ export const postSchema = z.object({
     .min(1, 'Community ID is required')
 });
 
+// Donation Book Schema
+export const donationBookSchema = z.object({
+  bookId: z.string().optional(),
+  title: z.string()
+    .min(1, 'Title is required')
+    .max(200, 'Title must be 200 characters or less')
+    .trim(),
+  author: z.string()
+    .min(1, 'Author is required')
+    .max(150, 'Author must be 150 characters or less')
+    .trim(),
+  condition: BookConditionSchema,
+  quantity: z.number()
+    .int('Quantity must be a whole number')
+    .positive('Quantity must be at least 1')
+    .max(1000, 'Quantity seems unusually high'),
+  notes: z.string()
+    .max(500, 'Notes must be 500 characters or less')
+    .optional()
+});
+
+// Donation Status Update Schema
+export const donationStatusUpdateSchema = z.object({
+  status: z.enum(['pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'rejected']),
+  notes: z.string()
+    .max(1000, 'Notes must be 1000 characters or less')
+    .optional(),
+  pickupDate: z.string().optional(),
+  pickupLocation: z.string()
+    .max(500, 'Location must be 500 characters or less')
+    .optional(),
+  deliveryMethod: z.enum(['donor_delivers', 'org_picks_up']).optional()
+});
+
+// Organization Representative Schema
+export const organizationRepresentativeSchema = z.object({
+  userId: z.string().min(1, 'User ID is required'),
+  role: z.enum(['admin', 'member'])
+});
+
 // Comment Schema
 export const commentSchema = z.object({
   content: z.string()

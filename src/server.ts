@@ -81,6 +81,22 @@ export { emitExchangeStatusUpdate };
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
+  // Handle user room joining to track userId
+  socket.on('joinUserRoom', (userId: string) => {
+    if (userId && typeof userId === 'string') {
+      (socket as any).userId = userId;
+      socket.join(`user:${userId}`);
+      console.log(`User ${userId} joined personal room with socket ${socket.id}`);
+      
+      // Broadcast to all that this user is online
+      io.emit('presenceUpdate', {
+        userId,
+        online: true,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   socket.on('joinChat', (chatId) => {
     // Input validation
     if (!chatId || typeof chatId !== 'string' || !ObjectId.isValid(chatId)) {
@@ -235,8 +251,53 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle presence check requests
+  socket.on('checkPresence', async (data: { userIds: string[] }) => {
+    try {
+      const { userIds } = data;
+      console.log(`[PRESENCE] Socket ${socket.id} checking presence for:`, userIds);
+      
+      // Get all connected sockets
+      const sockets = await io.fetchSockets();
+      console.log(`[PRESENCE] Total connected sockets: ${sockets.length}`);
+      
+      const onlineUserIds = new Set<string>();
+      
+      // Check which users are online
+      sockets.forEach(s => {
+        const userId = (s as any).userId;
+        console.log(`[PRESENCE] Socket ${s.id} has userId:`, userId);
+        if (userId && userIds.includes(userId)) {
+          onlineUserIds.add(userId);
+          console.log(`[PRESENCE] User ${userId} is ONLINE`);
+        }
+      });
+      
+      const presenceStatuses = userIds.map(userId => ({
+        userId,
+        online: onlineUserIds.has(userId)
+      }));
+      
+      console.log('[PRESENCE] Sending presenceStatuses:', presenceStatuses);
+      socket.emit('presenceStatuses', presenceStatuses);
+    } catch (error) {
+      console.error('[PRESENCE] Error checking presence:', error);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
+    
+    // Broadcast user offline if they had a userId
+    const userId = (socket as any).userId;
+    if (userId) {
+      io.emit('presenceUpdate', {
+        userId,
+        online: false,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`User ${userId} is now offline`);
+    }
     
     // Clean up user sessions
     for (const [userId, sessionSet] of userSessions.entries()) {

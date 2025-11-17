@@ -10,7 +10,7 @@ import redisCache from './src/lib/redis-cache';
 import { presenceManager } from './src/lib/presence';
 import { getCorsOrigins } from './src/lib/url-utils';
 import jwt from 'jsonwebtoken';
-import { createMessageNotification, emitNotification } from './src/lib/notification-utils';
+import { createMessageNotification } from './src/lib/notification-utils';
 import { createChatId } from './src/lib/chat-utils';
 
 // Extend Socket type to include userId and active chat
@@ -58,6 +58,14 @@ io.on('connection', (socket) => {
         
         // Set user as online in presence system
         await presenceManager.setUserOnline(userId);
+        
+        // Broadcast presence update to all connected clients
+        console.log(`[PRESENCE] Broadcasting user ${userId} is online`);
+        io.emit('presenceUpdate', {
+          userId: userId,
+          online: true,
+          timestamp: new Date().toISOString()
+        });
         
         // Notify all communities the user is in
         const client = await clientPromise;
@@ -146,17 +154,36 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendMessage', async (data) => {
-    const { chatId, senderId, text } = data;
+    const { chatId, senderId, text, attachments } = data;
     
     try {
         const client = await clientPromise;
         const db = client.db("bookex");
 
+        // Fetch the chat to get participants
+        const chat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
+        
+        if (!chat) {
+            console.error(`Chat ${chatId} not found`);
+            socket.emit('error', { message: 'Chat not found' });
+            return;
+        }
+
+        // Verify sender is a participant
+        if (!chat.participantIds || !chat.participantIds.includes(senderId)) {
+            console.error(`User ${senderId} is not a participant in chat ${chatId}`);
+            socket.emit('error', { message: 'Not authorized to send messages in this chat' });
+            return;
+        }
+
         const newMessage = {
             _id: new ObjectId(),
             senderId: senderId,
-            text,
+            receiverId: chat.participantIds.find((id: string) => id !== senderId),
+            content: text,
             createdAt: new Date().toISOString(),
+            read: false,
+            attachments: attachments || []
         };
 
         const result = await db.collection("chats").updateOne(
@@ -164,22 +191,39 @@ io.on('connection', (socket) => {
             { 
                 $push: { messages: newMessage },
                 $set: { 
-                    lastMessage: text,
+                    lastMessage: {
+                        _id: newMessage._id,
+                        content: text,
+                        createdAt: newMessage.createdAt
+                    },
                     updatedAt: new Date().toISOString()
                 }
             } as any
         );
         
         if (result.modifiedCount > 0) {
-            // Broadcast the message to all clients in the chat room
+            console.log(`[CHAT] Message saved to chat ${chatId}, broadcasting...`);
+            
+            // Broadcast to everyone in the chat room (including sender for confirmation)
             io.to(chatId).emit('receiveMessage', newMessage);
+            
+            // Also emit to user rooms for notifications
+            chat.participantIds.forEach((participantId: string) => {
+                io.to(`user_${participantId}`).emit('newChatMessage', {
+                    chatId,
+                    message: newMessage
+                });
+            });
+            
+            console.log(`[CHAT] Message broadcast complete`);
         } else {
-            // Handle error: chat not found or update failed
             console.error(`Failed to save message for chat ${chatId}`);
+            socket.emit('error', { message: 'Failed to save message' });
         }
 
     } catch (error) {
         console.error("Error sending message:", error);
+        socket.emit('error', { message: 'Error sending message' });
     }
   });
 
@@ -240,6 +284,24 @@ io.on('connection', (socket) => {
   socket.on('joinUserRoom', (userId) => {
     socket.join(`user_${userId}`);
     console.log(`User ${socket.id} joined user room ${userId}`);
+  });
+
+  // Handle presence check requests
+  socket.on('checkPresence', async (data: { userIds: string[] }) => {
+    try {
+      const { userIds } = data;
+      console.log(`[PRESENCE] Checking presence for:`, userIds);
+      
+      const presenceStatuses = userIds.map(userId => ({
+        userId,
+        online: presenceManager.isUserOnline(userId)
+      }));
+      
+      console.log('[PRESENCE] Sending statuses:', presenceStatuses);
+      socket.emit('presenceStatuses', presenceStatuses);
+    } catch (error) {
+      console.error('[PRESENCE] Error:', error);
+    }
   });
 
   socket.on('postCreated', async (data) => {
@@ -327,7 +389,7 @@ io.on('connection', (socket) => {
 
   // Personal messaging events
   socket.on('personalMessage', async (data) => {
-    const { receiverId, content } = data; // ✅ SECURITY FIX: Ignore client senderName
+    const { receiverId, content, attachments } = data; // Added attachments support
     
     try {
       if (!socket.userId) {
@@ -335,7 +397,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      if (!receiverId || !content) {
+      if (!receiverId || (!content && (!attachments || attachments.length === 0))) {
         socket.emit('error', { message: 'Invalid message data' });
         return;
       }
@@ -377,28 +439,46 @@ io.on('connection', (socket) => {
       }
 
       // ✅ SECURITY FIX: Sanitize content (prevent XSS)
-      const sanitizedContent = content
-        .trim()
-        .replace(/[<>]/g, '')     // Remove HTML tags
-        .slice(0, 2000);          // Limit length
+      const sanitizedContent = content 
+        ? content.trim().replace(/[<>]/g, '').slice(0, 2000)
+        : '';
 
-      if (!sanitizedContent) {
-        socket.emit('error', { message: 'Message content cannot be empty' });
+      // Validate attachments if present
+      const validatedAttachments = attachments && Array.isArray(attachments)
+        ? attachments.slice(0, 5).map((att: any) => ({
+            id: att.id || `${Date.now()}-${Math.random()}`,
+            type: att.type || 'other',
+            fileName: att.fileName?.slice(0, 255) || 'file',
+            fileSize: Math.min(att.fileSize || 0, 10 * 1024 * 1024), // Max 10MB
+            mimeType: att.mimeType || 'application/octet-stream',
+            url: att.url || '',
+            thumbnailUrl: att.thumbnailUrl,
+            uploadedAt: att.uploadedAt || new Date().toISOString()
+          }))
+        : undefined;
+
+      if (!sanitizedContent && (!validatedAttachments || validatedAttachments.length === 0)) {
+        socket.emit('error', { message: 'Message must have content or attachments' });
         return;
       }
       
-      const messageDoc = {
+      const messageDoc: any = {
         senderId: socket.userId,
         receiverId,
         content: sanitizedContent,
         createdAt: new Date().toISOString(),
         read: false
       };
+
+      // Add attachments if present
+      if (validatedAttachments && validatedAttachments.length > 0) {
+        messageDoc.attachments = validatedAttachments;
+      }
       
       const result = await db.collection('personalMessages').insertOne(messageDoc);
       
       // ✅ SECURITY FIX: Use server-validated sender info
-      const responseMessage = {
+      const responseMessage: any = {
         _id: result.insertedId,
         senderId: socket.userId,
         receiverId,
@@ -412,6 +492,11 @@ io.on('connection', (socket) => {
           username: sender.username
         }
       };
+
+      // Include attachments in response if present
+      if (validatedAttachments && validatedAttachments.length > 0) {
+        responseMessage.attachments = validatedAttachments;
+      }
       
       // Send confirmation to sender
       socket.emit('messageConfirmed', {
@@ -445,7 +530,8 @@ io.on('connection', (socket) => {
           );
           
           if (notification) {
-            await emitNotification(notification, receiverId);
+            // Emit notification directly through socket (we're already in the socket server!)
+            io.to(receiverId).emit('newNotification', notification);
             console.log(`Notification sent to user ${receiverId} for new message`);
           }
         } else {
@@ -479,6 +565,14 @@ io.on('connection', (socket) => {
       
       // Set user as offline in presence system
       await presenceManager.setUserOffline(socket.userId);
+      
+      // Broadcast presence update to all connected clients
+      console.log(`[PRESENCE] Broadcasting user ${socket.userId} is offline`);
+      io.emit('presenceUpdate', {
+        userId: socket.userId,
+        online: false,
+        timestamp: new Date().toISOString()
+      });
       
       // Notify all communities the user was in
       try {
