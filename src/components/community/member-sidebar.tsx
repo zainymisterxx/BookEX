@@ -97,14 +97,31 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
       }
     };
 
+    const handlePresenceStatuses = (statuses: Array<{ userId: string; online: boolean }>) => {
+      const onlineUserIds = statuses.filter(s => s.online).map(s => s.userId);
+      setOnlineUsers(new Set(onlineUserIds));
+    };
+
     socket.on('userOnline', handleUserOnline);
     socket.on('userOffline', handleUserOffline);
+    socket.on('presenceStatuses', handlePresenceStatuses);
 
     return () => {
       socket.off('userOnline', handleUserOnline);
       socket.off('userOffline', handleUserOffline);
+      socket.off('presenceStatuses', handlePresenceStatuses);
     };
   }, [socket, isConnected, community._id]);
+
+  // Separate effect to request presence status when members change
+  useEffect(() => {
+    if (socket && isConnected && members.length > 0) {
+      const memberIds = members.map(m => m.userId).filter(Boolean);
+      if (memberIds.length > 0) {
+        socket.emit('checkPresence', { userIds: memberIds });
+      }
+    }
+  }, [socket, isConnected, members.length]);
 
   const getRoleIcon = (role: CommunityRole) => {
     switch (role) {
@@ -257,6 +274,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
                     onAction={handleMemberAction}
                     canModerate={canModerate}
                     isAdmin={isAdmin}
+                    onlineUsers={onlineUsers}
                   />
                 ))}
               </div>
@@ -280,6 +298,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
                     onAction={handleMemberAction}
                     canModerate={canModerate}
                     isAdmin={isAdmin}
+                    onlineUsers={onlineUsers}
                   />
                 ))}
               </div>
@@ -303,6 +322,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
                     onAction={handleMemberAction}
                     canModerate={canModerate}
                     isAdmin={isAdmin}
+                    onlineUsers={onlineUsers}
                   />
                 ))}
               </div>
@@ -326,6 +346,7 @@ export function MemberSidebar({ community, currentUser, userRole }: MemberSideba
                     onAction={handleMemberAction}
                     canModerate={canModerate}
                     isAdmin={isAdmin}
+                    onlineUsers={onlineUsers}
                   />
                 ))}
               </div>
@@ -344,7 +365,8 @@ function MemberItem({
   userRole, 
   onAction, 
   canModerate, 
-  isAdmin 
+  isAdmin,
+  onlineUsers 
 }: {
   member: MemberWithDetails;
   currentUser: Session["user"] | null;
@@ -352,14 +374,39 @@ function MemberItem({
   onAction: (member: MemberWithDetails, action: string) => void;
   canModerate: boolean;
   isAdmin: boolean;
+  onlineUsers: Set<string>;
 }) {
   const [showActions, setShowActions] = useState(false);
   const isSelf = member.userId === currentUser?.id;
   const { socket } = useSocket();
+  const { toast } = useToast();
 
-  const handleMessageUser = () => {
-    // Navigate to messages page or open chat modal
-    window.location.href = `/messages?user=${member.userId}`;
+  const handleMessageUser = async () => {
+    try {
+      const response = await apiFetch('/api/messages/start-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: member.userId })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Navigate to messages page with the chatId
+        window.location.href = `/messages?chatId=${data.chatId}`;
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Failed to start conversation'
+        });
+      }
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Failed to start conversation'
+      });
+    }
   };
 
   const getRoleIcon = (role: CommunityRole) => {
@@ -388,21 +435,28 @@ function MemberItem({
     if (member.banned) {
       return <Ban className="h-3 w-3 text-red-500" />;
     }
-    return <CheckCircle className="h-3 w-3 text-green-500" />;
+    const isOnline = onlineUsers.has(member.userId);
+    return isOnline ? 
+      <CheckCircle className="h-3 w-3 text-green-500" /> : 
+      <Clock className="h-3 w-3 text-gray-400" />;
   };
 
   const getStatusColor = (member: any) => {
     if (member.banned) {
       return 'bg-red-100 text-red-800 border-red-200';
     }
-    return 'bg-green-100 text-green-800 border-green-200';
+    const isOnline = onlineUsers.has(member.userId);
+    return isOnline ? 
+      'bg-green-100 text-green-800 border-green-200' : 
+      'bg-gray-100 text-gray-600 border-gray-200';
   };
 
   const getStatusText = (member: any) => {
     if (member.banned) {
       return 'Banned';
     }
-    return 'Online';
+    const isOnline = onlineUsers.has(member.userId);
+    return isOnline ? 'Online' : 'Offline';
   };
 
   return (

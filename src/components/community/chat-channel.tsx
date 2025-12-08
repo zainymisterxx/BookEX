@@ -115,8 +115,9 @@ export function ChatChannel({
         setHasMoreMessages(data.pagination.hasNext);
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Failed to load messages' }));
-        setError(errorData.error || 'Failed to load messages');
-        toast({ variant: 'destructive', title: 'Failed to load messages', description: errorData.error });
+        const errorMessage = typeof errorData.error === 'string' ? errorData.error : 'Failed to load messages';
+        setError(errorMessage);
+        toast({ variant: 'destructive', title: 'Failed to load messages', description: errorMessage });
       }
     } catch (error) {
       console.error('Error loading messages:', error);
@@ -244,7 +245,8 @@ export function ChatChannel({
             // Revert optimistic update
             setMessages(originalMessages);
             setNewMessage(trimmedMessage);
-            toast({ variant: 'destructive', title: 'Failed to send message', description: result.message || 'Please try again.' });
+            const errorMsg = typeof result.error === 'string' ? result.error : 'Please try again.';
+            toast({ variant: 'destructive', title: 'Failed to send message', description: errorMsg });
           }
         } else {
           // Revert optimistic update

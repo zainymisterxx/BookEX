@@ -206,7 +206,13 @@ export function ForumChannel({
       likes: 0,
       createdAt: new Date().toISOString(),
       likedBy: [],
-      comments: []
+      comments: [],
+      author: {
+        _id: currentUser.id,
+        name: currentUser.name || 'Unknown User',
+        avatarUrl: currentUser.image || undefined,
+        role: userRole || 'member'
+      }
     };
 
     // Optimistic update

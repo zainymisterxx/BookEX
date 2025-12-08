@@ -36,6 +36,13 @@ export async function GET(
 
     // Get posts for this channel with author and comment author information
     const skip = (page - 1) * limit;
+    
+    // First, get the community to access member roles
+    const communityDoc = await db.collection('communities').findOne(
+      { _id: new ObjectId(communityId) },
+      { projection: { members: 1 } }
+    );
+    
     const [rawPosts, totalPosts] = await Promise.all([
       db.collection('posts')
         .aggregate([
@@ -67,26 +74,7 @@ export async function GET(
               author: {
                 _id: '$authorData._id',
                 name: '$authorData.name',
-                avatarUrl: '$authorData.avatarUrl',
-                role: {
-                  $let: {
-                    vars: {
-                      memberInfo: {
-                        $arrayElemAt: [
-                          {
-                            $filter: {
-                              input: { $ifNull: ['$authorData.communities', []] },
-                              as: 'comm',
-                              cond: { $eq: ['$$comm', new ObjectId(communityId)] }
-                            }
-                          },
-                          0
-                        ]
-                      }
-                    },
-                    in: { $ifNull: ['$$memberInfo.role', 'member'] }
-                  }
-                }
+                avatarUrl: '$authorData.avatarUrl'
               },
               comments: {
                 $map: {
@@ -111,9 +99,22 @@ export async function GET(
         .toArray(),
       db.collection('posts').countDocuments({ communityId: new ObjectId(communityId), channelId })
     ]);
+    
+    // Add role information from community members
+    const postsWithRoles = rawPosts.map((post: any) => {
+      if (post.author && communityDoc?.members) {
+        // Convert authorId to string for comparison since members.userId is stored as string
+        const authorIdStr = post.authorId instanceof ObjectId ? post.authorId.toString() : String(post.authorId);
+        const member = communityDoc.members.find((m: any) => m.userId === authorIdStr);
+        if (member) {
+          post.author.role = member.role;
+        }
+      }
+      return post;
+    });
 
     // Populate comment authors
-    const posts = await Promise.all(rawPosts.map(async (post: any) => {
+    const posts = await Promise.all(postsWithRoles.map(async (post: any) => {
       if (post.comments && post.comments.length > 0) {
         const commentAuthorIds = post.comments.map((c: any) => new ObjectId(c.authorId));
         const authors = await db.collection('users').find(
@@ -191,10 +192,25 @@ export async function POST(
       return NextResponse.json({ error: 'Not a member of this community' }, { status: 403 });
     }
 
+    // Get author info with role
+    const author = await db.collection('users').findOne(
+      { _id: new ObjectId(authorId) },
+      { projection: { name: 1, avatarUrl: 1 } }
+    );
+    
+    // Get member role
+    const member = community.members?.find((m: any) => m.userId === authorId);
+    const authorWithRole = author ? {
+      _id: author._id,
+      name: author.name,
+      avatarUrl: author.avatarUrl,
+      role: member?.role || 'member'
+    } : null;
+
     // Create new post
     const newPost = {
       _id: new ObjectId(),
-      authorId,
+      authorId: new ObjectId(authorId),
       communityId: new ObjectId(communityId),
       channelId,
       content: content.trim(),
@@ -206,9 +222,13 @@ export async function POST(
 
     await db.collection('posts').insertOne(newPost);
 
+    // Return post with author info for real-time updates
     return NextResponse.json({
       success: true,
-      newPost
+      newPost: {
+        ...newPost,
+        author: authorWithRole
+      }
     });
 
   } catch (error) {

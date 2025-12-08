@@ -12,14 +12,16 @@ export default function MainLayout({
 }) {
   const pathname = usePathname();
   
-  // Hide footer on community pages
+  // Hide footer on community pages and messages/chat pages
   const isCommunityPage = pathname?.startsWith('/community');
+  const isMessagesPage = pathname?.startsWith('/messages');
+  const shouldHideFooter = isCommunityPage || isMessagesPage;
   
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
       <main className="flex-1">{children}</main>
-      {!isCommunityPage && <Footer />}
+      {!shouldHideFooter && <Footer />}
       <FloatingAiAssistant />
     </div>
   );

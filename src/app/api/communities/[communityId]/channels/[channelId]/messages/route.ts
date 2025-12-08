@@ -85,7 +85,19 @@ export async function GET(
     ]).toArray();
 
     const totalMessages = messages[0]?.metadata[0]?.total || 0;
-    const messageData = messages[0]?.data || [];
+    let messageData = messages[0]?.data || [];
+    
+    // Add role information from community members
+    messageData = messageData.map((msg: any) => {
+      if (msg.author && community.members) {
+        const member = community.members.find((m: any) => m.userId === msg.authorId);
+        if (member) {
+          msg.author.role = member.role;
+        }
+      }
+      return msg;
+    });
+    
     const totalPages = Math.ceil(totalMessages / limit);
 
     return NextResponse.json({
@@ -170,6 +182,9 @@ export async function POST(
 
     const result = await db.collection('chatMessages').insertOne(messageDoc);
 
+    // Get member role from community
+    const member = community.members?.find((m: any) => m.userId === session.user.id);
+
     const createdMessage = {
       _id: result.insertedId,
       ...messageDoc,
@@ -177,11 +192,12 @@ export async function POST(
         _id: session.user.id,
         name: author.name,
         avatarUrl: author.avatarUrl,
-        username: author.username
+        username: author.username,
+        role: member?.role || 'member'
       }
     };
 
-    return NextResponse.json({ success: true, message: createdMessage });
+    return NextResponse.json({ success: true, newMessage: createdMessage });
 
   } catch (error) {
     console.error('Error creating channel message:', error);
