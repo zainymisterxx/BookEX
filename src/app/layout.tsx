@@ -7,6 +7,7 @@ import AuthProvider from './auth-provider';
 import { ProfileCompletionProvider } from '@/components/profile-completion-provider';
 import { SocketProvider } from '@/components/socket-provider';
 import { NotificationProvider } from '@/components/notification-provider';
+import { ErrorBoundary } from '@/components/error-boundary';
 
 export const metadata: Metadata = {
   title: 'BookEx',
@@ -35,16 +36,18 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={cn('font-body antialiased', fontBody.variable, fontHeadline.variable)} suppressHydrationWarning>
-        <AuthProvider>
-          <ProfileCompletionProvider>
-            <SocketProvider>
-              <NotificationProvider>
-                {children}
-                <Toaster />
-              </NotificationProvider>
-            </SocketProvider>
-          </ProfileCompletionProvider>
-        </AuthProvider>
+        <ErrorBoundary>
+          <AuthProvider>
+            <ProfileCompletionProvider>
+              <SocketProvider>
+                <NotificationProvider>
+                  {children}
+                  <Toaster />
+                </NotificationProvider>
+              </SocketProvider>
+            </ProfileCompletionProvider>
+          </AuthProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

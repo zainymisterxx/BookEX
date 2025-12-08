@@ -2,6 +2,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Validate environment variables before starting the server
+import { validateEnv } from './src/lib/env-validation';
+validateEnv();
+
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { ObjectId } from 'mongodb';
@@ -12,6 +16,10 @@ import { getCorsOrigins } from './src/lib/url-utils';
 import jwt from 'jsonwebtoken';
 import { createMessageNotification } from './src/lib/notification-utils';
 import { createChatId } from './src/lib/chat-utils';
+import { logger } from './src/lib/logger';
+
+// Create a child logger for socket server
+const socketLogger = logger.child({ service: 'socket-server' });
 
 // Extend Socket type to include userId and active chat
 declare module 'socket.io' {
@@ -23,7 +31,7 @@ declare module 'socket.io' {
 
 // Initialize Redis connection (non-blocking)
 redisCache.connect().catch(() => {
-  console.log('Redis not available - caching disabled');
+  socketLogger.warn('Redis not available - caching disabled');
 });
 
 // Store active chats for each user (userId -> Set of chatIds they're viewing)
@@ -40,9 +48,48 @@ const io = new Server(httpServer, {
   allowEIO3: true
 });
 
+/**
+ * Emit exchange status update to all participants
+ * This function is used by server actions to notify clients of exchange status changes
+ */
+export async function emitExchangeStatusUpdate(exchangeId: string, exchangeData: {
+  status?: string;
+  updatedAt?: string;
+  proposerId?: string;
+  responderId?: string;
+  [key: string]: unknown;
+}) {
+  try {
+    const client = await clientPromise;
+    const db = client.db("bookex");
+    
+    // Get exchange details to find participants
+    const exchange = await db.collection("exchanges").findOne({ _id: new ObjectId(exchangeId) });
+    if (!exchange) return;
+    
+    // Emit to exchange room
+    io.to(`exchange_${exchangeId}`).emit('exchangeStatusUpdate', {
+      exchangeId,
+      ...exchangeData
+    });
+    
+    // Also emit to individual user rooms for broader updates
+    const participants = [exchange.proposerId, exchange.responderId];
+    participants.forEach(userId => {
+      io.to(`user_${userId}`).emit('exchangeStatusUpdate', {
+        exchangeId,
+        ...exchangeData
+      });
+    });
+    
+    socketLogger.info('Emitted exchange status update', { exchangeId });
+  } catch (error) {
+    socketLogger.error('Error emitting exchange status update', error as Error, { exchangeId });
+  }
+}
+
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
-  console.log('Socket transport:', socket.conn.transport.name);
+  socketLogger.info('User connected', { socketId: socket.id, transport: socket.conn.transport.name });
   
   // Store user ID and active chat in socket for authorization
   socket.userId = null;

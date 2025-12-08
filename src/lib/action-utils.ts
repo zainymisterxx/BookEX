@@ -1,8 +1,9 @@
 import { getSession } from '@/lib/auth';
 import { connectToMongoDB } from '@/lib/mongodb';
-import { ObjectId } from 'mongodb';
+import { ObjectId, type Db } from 'mongodb';
 import { createAppError, ErrorType, logError, normalizeError } from '@/lib/error-handling';
 import type { AuthorizedUser } from '@/lib/resource-authorization';
+import type { User } from '@/lib/types';
 
 /**
  * Wrapper function that handles common authentication and database connection patterns
@@ -13,9 +14,9 @@ import type { AuthorizedUser } from '@/lib/resource-authorization';
  * @returns Promise with the action result or error response
  */
 export async function withAuthenticatedAction<T>(
-  action: (params: { db: any; user: AuthorizedUser; userId: ObjectId }) => Promise<T>,
+  action: (params: { db: Db; user: AuthorizedUser; userId: ObjectId }) => Promise<T>,
   requiredRole?: 'user' | 'admin'
-): Promise<{ success: true; data: T } | { success: false; message: string; errors?: any }> {
+): Promise<{ success: true; data: T } | { success: false; message: string; errors?: Record<string, unknown> }> {
   try {
     // Get the current session
     const session = await getSession();
@@ -32,7 +33,9 @@ export async function withAuthenticatedAction<T>(
     // Create user object with required properties
     const user: AuthorizedUser = {
       id: session.user.id,
-      role: (session.user as any).role || 'user',
+      role: ('role' in session.user && (session.user.role === 'admin' || session.user.role === 'user')) 
+        ? session.user.role 
+        : 'user',
       status: 'active'
     };
 
@@ -67,11 +70,12 @@ export async function withAuthenticatedAction<T>(
 /**
  * Wrapper for actions that need full user data (not just session data)
  * This fetches the complete user document from the database
+ * Note: user object returned has both _id (from DB) and id (string) properties for convenience
  */
 export async function withAuthenticatedUserFull<T>(
-  action: (params: { db: any; user: any; userId: ObjectId }) => Promise<T>,
+  action: (params: { db: Db; user: User & { id: string }; userId: ObjectId }) => Promise<T>,
   requiredRole?: 'user' | 'admin'
-): Promise<{ success: true; data: T } | { success: false; message: string; errors?: any }> {
+): Promise<{ success: true; data: T } | { success: false; message: string; errors?: Record<string, unknown> }> {
   try {
     // Get the current session
     const session = await getSession();
@@ -86,7 +90,7 @@ export async function withAuthenticatedUserFull<T>(
     const { db } = await connectToMongoDB();
 
     // Fetch full user data from database
-    const userData = await db.collection('users').findOne({ _id: userId });
+    const userData = await db.collection('users').findOne({ _id: userId }) as User | null;
     if (!userData) {
       throw createAppError(ErrorType.AUTHENTICATION, "User not found in database.");
     }
@@ -97,7 +101,7 @@ export async function withAuthenticatedUserFull<T>(
     }
 
     // Execute the action with full user context
-    const result = await action({ db, user: userData, userId });
+    const result = await action({ db, user: { ...userData, id: userId.toString() }, userId });
 
     return { success: true, data: result };
   } catch (error) {

@@ -34,22 +34,107 @@ export async function GET(
       return NextResponse.json({ error: 'Not a member of this community' }, { status: 403 });
     }
 
-    // Get posts for this channel
+    // Get posts for this channel with author and comment author information
     const skip = (page - 1) * limit;
-    const [posts, totalPosts] = await Promise.all([
+    const [rawPosts, totalPosts] = await Promise.all([
       db.collection('posts')
-        .find({ communityId: new ObjectId(communityId), channelId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
+        .aggregate([
+          { 
+            $match: { 
+              communityId: new ObjectId(communityId), 
+              channelId 
+            } 
+          },
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'authorId',
+              foreignField: '_id',
+              as: 'authorData'
+            }
+          },
+          {
+            $unwind: {
+              path: '$authorData',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $addFields: {
+              author: {
+                _id: '$authorData._id',
+                name: '$authorData.name',
+                avatarUrl: '$authorData.avatarUrl',
+                role: {
+                  $let: {
+                    vars: {
+                      memberInfo: {
+                        $arrayElemAt: [
+                          {
+                            $filter: {
+                              input: { $ifNull: ['$authorData.communities', []] },
+                              as: 'comm',
+                              cond: { $eq: ['$$comm', new ObjectId(communityId)] }
+                            }
+                          },
+                          0
+                        ]
+                      }
+                    },
+                    in: { $ifNull: ['$$memberInfo.role', 'member'] }
+                  }
+                }
+              },
+              comments: {
+                $map: {
+                  input: { $ifNull: ['$comments', []] },
+                  as: 'comment',
+                  in: {
+                    _id: '$$comment._id',
+                    content: '$$comment.content',
+                    createdAt: '$$comment.createdAt',
+                    authorId: '$$comment.authorId'
+                  }
+                }
+              }
+            }
+          },
+          {
+            $project: {
+              authorData: 0
+            }
+          }
+        ])
         .toArray(),
       db.collection('posts').countDocuments({ communityId: new ObjectId(communityId), channelId })
     ]);
 
+    // Populate comment authors
+    const posts = await Promise.all(rawPosts.map(async (post: any) => {
+      if (post.comments && post.comments.length > 0) {
+        const commentAuthorIds = post.comments.map((c: any) => new ObjectId(c.authorId));
+        const authors = await db.collection('users').find(
+          { _id: { $in: commentAuthorIds } },
+          { projection: { name: 1, avatarUrl: 1 } }
+        ).toArray();
+        
+        const authorMap = new Map(authors.map(a => [a._id.toString(), a]));
+        
+        post.comments = post.comments.map((comment: any) => ({
+          ...comment,
+          author: authorMap.get(comment.authorId) || { name: 'Unknown User' }
+        }));
+      }
+      return post;
+    }));
+
     const totalPages = Math.ceil(totalPosts / limit);
 
     return NextResponse.json({
-      posts,
+      posts: JSON.parse(JSON.stringify(posts)),
       pagination: {
         page,
         limit,

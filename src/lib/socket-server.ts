@@ -5,9 +5,10 @@ import { connectToMongoDB } from './mongodb';
 import { ObjectId } from 'mongodb';
 import { getCorsOrigins } from './url-utils';
 
+// Note: Socket type extension is declared in root server.ts
+// which defines userId as string | null
+
 interface AuthenticatedSocket extends Socket {
-  // Socket already may define userId as string | null; ensure compatibility
-  userId: string | null;
   userCommunities?: string[];
 }
 

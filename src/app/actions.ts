@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { ObjectId } from 'mongodb';
+import { ObjectId, type UpdateFilter } from 'mongodb';
 import clientPromise from '@/lib/mongodb';
 import type { Book, BookGenre, BookStatus, Post, User, Community, Organization, Report, Review, Chat, Comment, Notification, WishlistItem, PasswordResetToken, Exchange, ExchangeStatus, Donation, DonationStatus, DonationStatusUpdate, OrganizationRepresentative } from '@/lib/types';
 
@@ -705,7 +705,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                             'members.userId': user.id  // Only update if user IS a member
                         },
                         {
-                            $pull: { members: { userId: user.id } },
+                            $pull: { members: { userId: user.id } } as any,
                             $inc: { memberCount: -1 }
                         },
                         { session }
@@ -1428,7 +1428,7 @@ export async function unblockUser(userIdToUnblock: string) {
         await db.collection("users").updateOne(
             { _id: new ObjectId(user.id) },
             { 
-                $pull: { blockedUsers: validatedUnblockUserId.toString() }
+                $pull: { blockedUsers: validatedUnblockUserId.toString() } as any
             }
         );
 
@@ -1997,8 +1997,8 @@ export async function applyForOrganizationWithFile(formData: FormData) {
             return { success: false, message: validation.error };
         }
 
-        // Validate and process image file
-        const fileValidation = validateFileFromFormData(formData, 'image');
+        // Validate and process image file (includes magic number validation)
+        const fileValidation = await validateFileFromFormData(formData, 'image');
         if (!fileValidation.isValid || !fileValidation.file) {
             return { success: false, message: fileValidation.error || 'Image file is required' };
         }
@@ -2576,7 +2576,7 @@ export async function updateDonationStatus(
             { _id: new ObjectId(donationId) },
             { 
                 $set: updateDoc,
-                $push: { statusHistory: statusUpdate }
+                $push: { statusHistory: statusUpdate } as any
             }
         );
 
@@ -2722,7 +2722,7 @@ export async function confirmDonationReceipt(
             { _id: new ObjectId(donationId) },
             { 
                 $set: updateDoc,
-                $push: { statusHistory: statusUpdate }
+                $push: { statusHistory: statusUpdate } as any
             }
         );
 
@@ -4168,21 +4168,21 @@ export async function getOrganizationDetails(organizationId: string): Promise<{ 
         // Get donation statistics
         const donations = await db.collection("donations").find({ 
             organizationId: organizationId 
-        }).toArray();
+        }).toArray() as Donation[];
 
         const stats = {
             totalDonations: donations.length,
-            pendingDonations: donations.filter((d: Donation) => d.status === 'pending').length,
-            confirmedDonations: donations.filter((d: Donation) => d.status === 'confirmed').length,
-            inProgressDonations: donations.filter((d: Donation) => d.status === 'in_progress').length,
-            completedDonations: donations.filter((d: Donation) => d.status === 'completed').length,
-            cancelledDonations: donations.filter((d: Donation) => d.status === 'cancelled').length,
-            rejectedDonations: donations.filter((d: Donation) => d.status === 'rejected').length,
+            pendingDonations: donations.filter((d) => d.status === 'pending').length,
+            confirmedDonations: donations.filter((d) => d.status === 'confirmed').length,
+            inProgressDonations: donations.filter((d) => d.status === 'in_progress').length,
+            completedDonations: donations.filter((d) => d.status === 'completed').length,
+            cancelledDonations: donations.filter((d) => d.status === 'cancelled').length,
+            rejectedDonations: donations.filter((d) => d.status === 'rejected').length,
             totalBooksReceived: donations
-                .filter((d: Donation) => d.status === 'completed')
-                .reduce((sum: number, d: Donation) => sum + (d.books?.length || 0), 0),
+                .filter((d) => d.status === 'completed')
+                .reduce((sum, d) => sum + (d.books?.length || 0), 0),
             acceptanceRate: donations.length > 0 
-                ? Math.round((donations.filter((d: Donation) => d.status === 'confirmed' || d.status === 'in_progress' || d.status === 'completed').length / donations.length) * 100)
+                ? Math.round((donations.filter((d) => d.status === 'confirmed' || d.status === 'in_progress' || d.status === 'completed').length / donations.length) * 100)
                 : 0
         };
 
@@ -4567,10 +4567,10 @@ export async function deleteUser(userId: string): Promise<{ success: true; data:
                         deletedCounts.chats++;
                     } else {
                         // Remove user from participant list
+                        const pullUpdate: UpdateFilter<Chat> = { $pull: { participantIds: userId } };
                         await db.collection("chats").updateOne(
                             { _id: chat._id },
-                            // @ts-ignore: MongoDB $pull operator type issue
-                            { $pull: { participantIds: userId } },
+                            pullUpdate as any,
                             { session }
                         );
                     }
@@ -4612,10 +4612,12 @@ export async function deleteUser(userId: string): Promise<{ success: true; data:
                 deletedCounts.exchanges = exchangesResult.modifiedCount;
 
                 // 8. Delete wishlist items
+                const pullWishlistUpdate: UpdateFilter<User> = { 
+                    $pull: { wishlist: { bookId: { $exists: true } } } 
+                };
                 const wishlistResult = await db.collection("users").updateMany(
                     { 'wishlist.bookId': { $exists: true } },
-                    // @ts-ignore: MongoDB $pull operator type issue
-                    { $pull: { wishlist: { bookId: { $exists: true } } } },
+                    pullWishlistUpdate as any,
                     { session }
                 );
                 // Note: This is a simplified approach. In a real scenario, you'd want to be more specific
@@ -4686,7 +4688,7 @@ export async function getMyProfileData(userId: string): Promise<{ success: true;
             if (wishlistBookIds.length > 0) {
                 const books = await db.collection("books").find({ 
                     _id: { $in: wishlistBookIds.map((id: any) => new ObjectId(id)) }
-                }).toArray();
+                }).toArray() as Book[];
                 wishlistBooks.push(...books);
             }
         }
@@ -5118,7 +5120,11 @@ export async function proposeExchange(
             };
             
             const chatResult = await db.collection("chats").insertOne(newChat);
-            chat = { _id: chatResult.insertedId, ...newChat } as Chat;
+            chat = { _id: chatResult.insertedId, ...newChat };
+        }
+        
+        if (!chat) {
+            throw new Error('Failed to create or find chat');
         }
         
         // Create the exchange proposal
@@ -5204,7 +5210,7 @@ export async function proposeExchange(
         
         // Emit real-time status update for new exchange
         try {
-            const { emitExchangeStatusUpdate } = await import('../server');
+            const { emitExchangeStatusUpdate } = await import('../../server');
             await emitExchangeStatusUpdate(exchangeResult.insertedId.toString(), {
                 status: 'proposed',
                 updatedAt: now,
@@ -5317,7 +5323,7 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
         // Emit real-time status update
         try {
             // Import the emit function dynamically to avoid circular dependencies
-            const { emitExchangeStatusUpdate } = await import('../server');
+            const { emitExchangeStatusUpdate } = await import('../../server');
             await emitExchangeStatusUpdate(exchangeId, {
                 status: 'accepted',
                 updatedAt: now,
@@ -5433,7 +5439,7 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
         
         // Emit real-time status update
         try {
-            const { emitExchangeStatusUpdate } = await import('../server');
+            const { emitExchangeStatusUpdate } = await import('../../server');
             await emitExchangeStatusUpdate(exchangeId, {
                 status: bothConfirmed ? 'completed' : 'in_progress',
                 updatedAt: now,
@@ -5524,7 +5530,7 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
         
         // Emit real-time status update
         try {
-            const { emitExchangeStatusUpdate } = await import('../server');
+            const { emitExchangeStatusUpdate } = await import('../../server');
             await emitExchangeStatusUpdate(exchangeId, {
                 status: 'cancelled',
                 updatedAt: now

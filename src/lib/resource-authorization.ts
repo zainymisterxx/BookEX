@@ -276,7 +276,20 @@ export class ResourceAuthority {
 }
 
 /**
- * Middleware function to validate resource access
+ * Validates user access to a specific resource and operation
+ * Throws AppError if access is denied
+ * 
+ * @param user - Authorized user object with id, role, and status
+ * @param resourceType - Type of resource being accessed
+ * @param resourceId - MongoDB ObjectId of the resource as string
+ * @param operation - Operation being performed on the resource
+ * 
+ * @throws {AppError} ACCESS_DENIED - When user lacks permission
+ * @throws {AppError} NOT_FOUND - When resource doesn't exist
+ * 
+ * @example
+ * await validateResourceAccess(user, 'book', bookId, 'update');
+ * // If user doesn't own the book and isn't admin, throws error
  */
 export async function validateResourceAccess(
   user: AuthorizedUser,

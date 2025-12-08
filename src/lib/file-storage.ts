@@ -6,11 +6,12 @@
 import path from 'path';
 import { writeFile, mkdir } from 'fs/promises';
 import crypto from 'crypto';
+import { fileTypeFromBuffer } from 'file-type';
 
 /**
- * Validates file upload with enhanced security checks
+ * Validates file upload with enhanced security checks including magic number validation
  */
-export function validateImageFile(file: File): { isValid: boolean; error?: string } {
+export async function validateImageFile(file: File): Promise<{ isValid: boolean; error?: string }> {
   // Check file size (max 5MB)
   const MAX_FILE_SIZE = 5 * 1024 * 1024;
   if (file.size > MAX_FILE_SIZE) {
@@ -37,6 +38,34 @@ export function validateImageFile(file: File): { isValid: boolean; error?: strin
     return { isValid: false, error: 'File extension does not match file type' };
   }
 
+  // Magic number validation - verify actual file content
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    // Read first 4100 bytes for file type detection
+    const fileTypeResult = await fileTypeFromBuffer(buffer);
+    
+    if (!fileTypeResult) {
+      return { isValid: false, error: 'Could not determine file type from content' };
+    }
+
+    // Verify the actual file type matches the claimed MIME type
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedMimeTypes.includes(fileTypeResult.mime)) {
+      return { isValid: false, error: `File content does not match claimed type. Detected: ${fileTypeResult.mime}` };
+    }
+
+    // Additional check: ensure claimed type matches detected type
+    if (file.type !== fileTypeResult.mime) {
+      return { isValid: false, error: `File MIME type mismatch. Claimed: ${file.type}, Detected: ${fileTypeResult.mime}` };
+    }
+
+  } catch (error) {
+    console.error('Error validating file content:', error);
+    return { isValid: false, error: 'Failed to validate file content' };
+  }
+
   return { isValid: true };
 }
 
@@ -56,8 +85,8 @@ function generateSecureFilename(originalName: string): string {
  */
 export async function saveImageFile(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
   try {
-    // Validate the file first
-    const validation = validateImageFile(file);
+    // Validate the file first (now includes magic number validation)
+    const validation = await validateImageFile(file);
     if (!validation.isValid) {
       return { success: false, error: validation.error };
     }
@@ -92,14 +121,14 @@ export async function saveImageFile(file: File): Promise<{ success: boolean; url
 /**
  * Enhanced file validation that works with both File objects and form data
  */
-export function validateFileFromFormData(formData: FormData, fieldName: string): { isValid: boolean; file?: File; error?: string } {
+export async function validateFileFromFormData(formData: FormData, fieldName: string): Promise<{ isValid: boolean; file?: File; error?: string }> {
   const file = formData.get(fieldName) as File;
   
   if (!file || file.size === 0) {
     return { isValid: false, error: 'No file provided' };
   }
 
-  const validation = validateImageFile(file);
+  const validation = await validateImageFile(file);
   if (!validation.isValid) {
     return { isValid: false, error: validation.error };
   }

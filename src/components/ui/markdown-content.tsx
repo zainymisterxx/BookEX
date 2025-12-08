@@ -1,6 +1,7 @@
 "use client";
 
 import React from 'react';
+import DOMPurify from 'dompurify';
 
 interface MarkdownContentProps {
   content: string;
@@ -8,6 +9,7 @@ interface MarkdownContentProps {
 }
 
 // Very lightweight markdown renderer supporting bold, italics, links, lists, and line breaks
+// Now with proper XSS protection via DOMPurify
 function escapeHtml(unsafe: string): string {
   return unsafe
     .replace(/&/g, "&amp;")
@@ -31,7 +33,12 @@ function renderBasicMarkdown(md: string): string {
   html = html.replace(/(?:<li>.*<\/li>\n?)+/g, (match) => `<ul class="list-disc pl-6 space-y-1">${match.replace(/\n/g, '')}</ul>`);
   // Line breaks
   html = html.replace(/\n/g, '<br/>');
-  return html;
+  
+  // Sanitize the HTML to prevent XSS attacks
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['a', 'strong', 'em', 'ul', 'li', 'br'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'class']
+  });
 }
 
 export function MarkdownContent({ content, className }: MarkdownContentProps) {
