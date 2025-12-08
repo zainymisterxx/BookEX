@@ -265,7 +265,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
     loadChats();
   }, []);
 
-  // Auto-select chat from URL query parameter (e.g., from donation flow)
+  // Auto-select chat from URL query parameter (e.g., from donation flow or community sidebar)
   useEffect(() => {
     const chatIdParam = searchParams.get('chatId');
     
@@ -282,9 +282,42 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
       
       if (chatToSelect) {
         setSelectedChat(chatToSelect);
+      } else {
+        // Chat not found in list - it might be a new chat
+        // Try to create/find it by extracting participant IDs from chatId
+        const participantIds = chatIdParam.includes('_') ? chatIdParam.split('_') : [];
+        const otherUserId = participantIds.find(id => id !== currentUser.id);
+        
+        if (otherUserId) {
+          // Use start-chat API to get/create the chat with user info
+          apiFetch('/api/messages/start-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: otherUserId })
+          })
+            .then(res => res.json())
+            .then(data => {
+              if (data.chatId && data.otherParticipant) {
+                const newChat: Chat = {
+                  _id: data.chatId,
+                  participantIds: [currentUser.id, otherUserId],
+                  otherParticipant: data.otherParticipant,
+                  unreadCount: 0
+                };
+                
+                // Add to chats list if not already there
+                if (!data.existing) {
+                  setChats(prev => [newChat, ...prev]);
+                }
+                
+                setSelectedChat(newChat);
+              }
+            })
+            .catch(err => console.error('Failed to start chat:', err));
+        }
       }
     }
-  }, [searchParams, chats, selectedChat, isLoading]);
+  }, [searchParams, chats, selectedChat, isLoading, currentUser.id]);
 
   // Listen for presence updates (separate from checking presence)
   useEffect(() => {
