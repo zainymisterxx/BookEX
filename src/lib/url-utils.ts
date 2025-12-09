@@ -23,17 +23,26 @@ export function getBaseUrl(): string {
  * Get the socket URL for WebSocket connections
  */
 export function getSocketUrl(): string {
+  // Allow explicit override via environment variable
   if (process.env.NEXT_PUBLIC_SOCKET_URL) {
     return process.env.NEXT_PUBLIC_SOCKET_URL;
   }
   
-  if (process.env.NODE_ENV === 'production') {
-    // In production, socket server runs on the same domain as the app
-    return getBaseUrl();
+  // Check if we're in browser environment
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    
+    // If on Vercel or production domain (not localhost)
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      // Use same domain with secure protocol
+      return `${protocol}//${hostname}`;
+    }
   }
   
-  // Development fallback
-  return 'http://localhost:3001';
+  // Development/localhost - use dedicated socket port
+  const socketPort = process.env.SOCKET_PORT || '3001';
+  return `http://localhost:${socketPort}`;
 }
 
 /**
