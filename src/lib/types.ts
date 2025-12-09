@@ -100,6 +100,7 @@ export interface Post {
     _id: string;
     name: string;
     avatarUrl?: string;
+    role?: CommunityRole;
   };
   content: string; // Markdown supported
   communityId: string;
@@ -119,6 +120,7 @@ export interface Comment {
     _id: string;
     name: string;
     avatarUrl?: string;
+    role?: CommunityRole;
   };
   content: string;
   createdAt: string;
