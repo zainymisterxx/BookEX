@@ -6,6 +6,14 @@
  * Get the base URL for the application
  */
 export function getBaseUrl(): string {
+  // Check if we're in browser environment
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, port } = window.location;
+    // Use current browser URL (works for all environments)
+    return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
+  }
+  
+  // Server-side: use environment variable
   if (process.env.NEXT_PUBLIC_APP_URL) {
     return process.env.NEXT_PUBLIC_APP_URL;
   }

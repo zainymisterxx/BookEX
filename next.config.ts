@@ -125,9 +125,7 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: `default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: ${process.env.NODE_ENV === 'production' 
-              ? `https://${process.env.VERCEL_URL || 'your-app.vercel.app'} wss://${process.env.VERCEL_URL || 'your-app.vercel.app'}` 
-              : 'http://localhost:3001 ws://localhost:3001'}; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
+            value: `default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:* ${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL} wss://${process.env.VERCEL_URL}` : ''}; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
           },
           {
             key: 'Permissions-Policy',
