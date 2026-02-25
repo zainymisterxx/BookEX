@@ -315,6 +315,64 @@ export const searchQuerySchema = z.object({
     .default('relevance')
 });
 
+// ─── Community Admin Schemas ──────────────────────────────────────────────────
+
+export const PostingPermissionSchema = z.enum(['anyone', 'members_only', 'admins_only']);
+export const CommentPermissionSchema = z.enum(['anyone', 'members_only', 'admins_only']);
+export const InvitePermissionSchema  = z.enum(['anyone', 'admins_only']);
+
+/** PATCH /api/communities/:id/settings */
+export const communitySettingsSchema = z.object({
+  name: z.string().min(3).max(50).trim().optional(),
+  description: z.string().min(10).max(1000).trim().optional(),
+  imageUrl: z.string().url().optional().or(z.literal('')),
+  coverImage: z.string().url().optional().or(z.literal('')),
+  rules: z.string().max(5000).optional(),
+  visibility: z.enum(['public', 'private']).optional(),
+  postingPermissions: PostingPermissionSchema.optional(),
+  commentPermissions: CommentPermissionSchema.optional(),
+  invitePermissions: InvitePermissionSchema.optional(),
+}).refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided',
+});
+
+/** POST /api/communities/:id/members/:userId – promote / demote / remove */
+export const memberActionSchema = z.object({
+  action: z.enum(['promote', 'demote', 'remove']),
+  targetRole: z.enum(['creator', 'admin', 'moderator', 'member']).optional(),
+});
+
+/** POST /api/communities/:id/ban */
+export const banMemberSchema = z.object({
+  targetUserId: z.string().min(1),
+  reason: z.string().min(1, 'Reason is required').max(500),
+});
+
+/** POST /api/communities/:id/transfer-ownership */
+export const transferOwnershipSchema = z.object({
+  newOwnerId: z.string().min(1, 'New owner ID is required'),
+  confirmName: z.string().min(1, 'Community name confirmation is required'),
+});
+
+/** PATCH /api/communities/:id/join-requests/:requestId */
+export const joinRequestActionSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  reason: z.string().max(500).optional(),
+});
+
+/** POST /api/communities/:id/posts/:postId/admin-actions */
+export const postAdminActionSchema = z.object({
+  action: z.enum(['pin', 'unpin', 'lock', 'unlock', 'delete']),
+  reason: z.string().max(500).optional(),
+});
+
+/** DELETE /api/communities/:id/posts/:postId/comments/:commentId */
+export const commentAdminActionSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+// ─── End Community Admin Schemas ──────────────────────────────────────────────
+
 // Utility function to validate data with a schema
 export function validateWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): {
   success: true;

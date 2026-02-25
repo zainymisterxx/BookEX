@@ -28,6 +28,15 @@ import type { Post, Comment, CommunityRole } from '@/lib/types';
 import type { Session } from 'next-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useSocket } from '@/components/socket-provider';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { deletePost } from '@/app/actions';
+import { adminDeletePost, setPinPost } from '@/app/community-admin-actions';
 
 interface ForumChannelProps {
   channelId: string;
@@ -296,7 +305,7 @@ export function ForumChannel({
         if (response.ok) {
           // Emit real-time update
           try {
-            emitPostLiked(channelId, postId, currentUser.id, !isLiked);
+            emitPostLiked(communityId, postId, currentUser.id, !isLiked);
           } catch (emitError) {
             console.warn('Failed to emit real-time like update:', emitError);
           }
@@ -337,7 +346,7 @@ export function ForumChannel({
             
             // Emit real-time update
             try {
-              emitCommentCreated(channelId, postId, result.newComment);
+              emitCommentCreated(communityId, postId, result.newComment);
             } catch (emitError) {
               console.warn('Failed to emit real-time comment creation:', emitError);
             }
@@ -349,6 +358,42 @@ export function ForumChannel({
         }
       } catch (error) {
         toast({ variant: "destructive", title: "Failed to post comment." });
+      }
+    });
+  };
+
+  const handleDeletePost = (postId: string, isOwnPost: boolean) => {
+    startTransition(async () => {
+      try {
+        const result = isOwnPost
+          ? await deletePost(communityId, postId)
+          : await adminDeletePost(communityId, postId);
+        if (result?.success) {
+          setPosts(prev => prev.filter(p => String(p._id) !== postId));
+          toast({ title: 'Post deleted.' });
+        } else {
+          toast({ variant: 'destructive', title: (result as any)?.message || 'Failed to delete post.' });
+        }
+      } catch {
+        toast({ variant: 'destructive', title: 'Failed to delete post.' });
+      }
+    });
+  };
+
+  const handlePinPost = (postId: string, currentlyPinned: boolean) => {
+    startTransition(async () => {
+      try {
+        const result = await setPinPost(communityId, postId, !currentlyPinned);
+        if (result?.success) {
+          setPosts(prev => prev.map(p =>
+            String(p._id) === postId ? { ...p, isPinned: !currentlyPinned } : p
+          ));
+          toast({ title: currentlyPinned ? 'Post unpinned.' : 'Post pinned.' });
+        } else {
+          toast({ variant: 'destructive', title: (result as any)?.message || 'Failed to pin post.' });
+        }
+      } catch {
+        toast({ variant: 'destructive', title: 'Failed to pin post.' });
       }
     });
   };
@@ -444,19 +489,53 @@ export function ForumChannel({
                           <p className="text-xs text-muted-foreground">{formatDate(post.createdAt)}</p>
                         </div>
                         <div className="flex items-center gap-1">
-                          {(userRole === 'admin' || userRole === 'moderator') && (
-                            <>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <Flag className="h-3 w-3" />
+                                <MoreHorizontal className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            </>
-                          )}
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-44">
+                              {/* Author can delete their own post */}
+                              {currentUser && post.authorId === currentUser.id && (
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => handleDeletePost(postId, true)}
+                                  disabled={isPending}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                  Delete post
+                                </DropdownMenuItem>
+                              )}
+                              {/* Admin/Moderator actions */}
+                              {(userRole === 'admin' || userRole === 'moderator') && (
+                                <>
+                                  {currentUser && post.authorId !== currentUser.id && (
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => handleDeletePost(postId, false)}
+                                      disabled={isPending}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                      Remove post
+                                    </DropdownMenuItem>
+                                  )}
+                                  {userRole === 'admin' && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={() => handlePinPost(postId, !!post.isPinned)}
+                                        disabled={isPending}
+                                      >
+                                        <Flag className="h-3.5 w-3.5 mr-2" />
+                                        {post.isPinned ? 'Unpin post' : 'Pin post'}
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </div>
                     </div>

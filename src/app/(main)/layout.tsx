@@ -1,9 +1,14 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
 import { Footer } from '@/components/footer';
 import { Header } from '@/components/header';
-import { FloatingAiAssistant } from '@/components/floating-ai-assistant';
+
+const FloatingAiAssistant = dynamic(
+  () => import('@/components/floating-ai-assistant').then(m => m.FloatingAiAssistant),
+  { ssr: false }
+);
 
 export default function MainLayout({
   children,

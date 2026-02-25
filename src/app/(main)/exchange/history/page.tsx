@@ -222,12 +222,14 @@ export default function ExchangeHistoryPage() {
 
             {/* Action Buttons */}
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" asChild>
-                <Link href={`/messages/${exchange.chatId}`}>
-                  <MessageSquare className="h-4 w-4 mr-1" />
-                  Chat
-                </Link>
-              </Button>
+              {exchange.chatId && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/messages/${exchange.chatId}`}>
+                    <MessageSquare className="h-4 w-4 mr-1" />
+                    Chat
+                  </Link>
+                </Button>
+              )}
             </div>
           </div>
 

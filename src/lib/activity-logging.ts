@@ -44,7 +44,23 @@ export type ActivityType =
   | 'organization_status_change'
   | 'organization_status_toggle'
   | 'BLOCK_USER'
-  | 'UNBLOCK_USER';
+  | 'UNBLOCK_USER'
+  // Community admin actions
+  | 'community_settings_updated'
+  | 'community_member_promoted'
+  | 'community_member_demoted'
+  | 'community_member_removed'
+  | 'community_member_banned'
+  | 'community_member_unbanned'
+  | 'community_join_request_approved'
+  | 'community_join_request_rejected'
+  | 'community_post_pinned'
+  | 'community_post_unpinned'
+  | 'community_post_locked'
+  | 'community_post_unlocked'
+  | 'community_post_deleted'
+  | 'community_comment_deleted'
+  | 'community_ownership_transferred';
 
 export type ActivitySeverity = 'low' | 'medium' | 'high' | 'critical';
 

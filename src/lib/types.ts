@@ -68,15 +68,29 @@ export interface Community {
   description: string;
   memberCount: number;
   imageUrl: string;
+  coverImage?: string;
+  rules?: string; // Markdown, max 5000 chars
+
+  // Privacy & permissions
+  visibility: 'public' | 'private'; // 'public' = anyone can join, 'private' = requires approval
+  postingPermissions: PostingPermission;
+  commentPermissions: CommentPermission;
+  invitePermissions: InvitePermission;
+
   // Role-based membership for per-community permissions
   members: Array<{
     userId: string;
-    role: CommunityRole; // 'admin' | 'moderator' | 'member'
+    role: CommunityRole;
     joinedAt: string;
     banned?: boolean;
     banReason?: string;
     bannedAt?: string;
+    bannedBy?: string;
   }>;
+
+  // Pending join requests (private communities)
+  pendingRequests?: JoinRequest[];
+
   // Channel-based structure
   channels: Array<{
     _id: string;
@@ -86,12 +100,65 @@ export interface Community {
     order: number;
     createdAt: string;
   }>;
+
   // Backward compatibility: some communities might still have embedded posts until migration
   posts?: Post[];
-  createdBy: string;
+
+  // Ownership & audit
+  createdBy: string; // userId of current owner (creator / transferred-to user)
+  deletedAt?: string;
 }
 
-export type CommunityRole = 'admin' | 'moderator' | 'member';
+export type CommunityRole = 'creator' | 'admin' | 'moderator' | 'member';
+
+export type PostingPermission = 'anyone' | 'members_only' | 'admins_only';
+export type CommentPermission = 'anyone' | 'members_only' | 'admins_only';
+export type InvitePermission = 'anyone' | 'admins_only';
+
+export interface JoinRequest {
+  _id?: ObjectId | string;
+  userId: string;
+  userName: string;
+  userAvatarUrl?: string;
+  communityId: string;
+  message?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+}
+
+export type CommunityAdminActionType =
+  | 'member_promoted'
+  | 'member_demoted'
+  | 'member_removed'
+  | 'member_banned'
+  | 'member_unbanned'
+  | 'join_request_approved'
+  | 'join_request_rejected'
+  | 'post_pinned'
+  | 'post_unpinned'
+  | 'post_locked'
+  | 'post_unlocked'
+  | 'post_deleted'
+  | 'comment_deleted'
+  | 'settings_updated'
+  | 'ownership_transferred';
+
+export interface CommunityModerationLog {
+  _id?: ObjectId | string;
+  communityId: string;
+  actorId: string;
+  actorName: string;
+  actionType: CommunityAdminActionType;
+  targetUserId?: string;
+  targetUserName?: string;
+  targetContentId?: string;
+  targetContentType?: 'post' | 'comment' | 'member' | 'community';
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
 
 export interface Post {
   _id: ObjectId | string;
@@ -104,6 +171,7 @@ export interface Post {
   };
   content: string; // Markdown supported
   communityId: string;
+  channelId?: string;
   likes: number;
   likedBy?: string[]; // Array of user IDs who liked the post
   // Comments moved to separate collection; keep optional for legacy reads
@@ -112,6 +180,17 @@ export interface Post {
   createdAt: string; // ISO 8601 date string
   editedAt?: string; // ISO 8601 date string for edited posts
   editHistory?: Array<{ content: string; editedAt: string }>;
+
+  // Moderation fields (admin/moderator actions)
+  isPinned?: boolean;   // Pinned posts appear at top of feed
+  isLocked?: boolean;   // Locked posts prevent new comments
+  pinnedAt?: string;    // ISO 8601 when pinned
+  pinnedBy?: string;    // userId who pinned
+  lockedAt?: string;    // ISO 8601 when locked
+  lockedBy?: string;    // userId who locked
+  deletedAt?: string;   // Soft delete timestamp
+  deletedBy?: string;   // userId who deleted (admin/mod)
+  status?: 'published' | 'quarantined' | 'deleted';
 }
 
 export interface Comment {

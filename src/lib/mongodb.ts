@@ -16,10 +16,12 @@ console.log('MongoDB URI being used:', uri ? uri.substring(0, 50) + '...' : 'und
 
 // Server-only MongoDB configuration without client-side encryption
 const options = {
-  // Other server-only optimizations
   maxPoolSize: 10,
-  serverSelectionTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 15000, // increased for Azure VM cold-start / transient restarts
+  connectTimeoutMS: 15000,
   socketTimeoutMS: 45000,
+  retryWrites: true,
+  retryReads: true,
 };
 
 let client: MongoClient;

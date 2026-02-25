@@ -716,3 +716,215 @@ export async function emitNewCommunity(community: any) {
     console.error("Error emitting new community:", error);
   }
 }
+
+// ─── Community Admin Real-Time Events ─────────────────────────────────────────
+
+/**
+ * Emit when community settings (name, description, visibility, permissions) change.
+ * Clients in the community room reload settings; listed views update metadata.
+ */
+export async function emitCommunitySettingsUpdated(
+  communityId: string,
+  updatedFields: Record<string, unknown>
+) {
+  try {
+    const payload = {
+      communityId,
+      updatedFields,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('communitySettingsUpdated', payload);
+    // Also broadcast globally so community list cards update
+    io.emit('communityMetaUpdated', { communityId, ...updatedFields });
+  } catch (error) {
+    console.error('Error emitting communitySettingsUpdated:', error);
+  }
+}
+
+/**
+ * Emit when a member's role changes (promote/demote).
+ * Notifies the community room and the affected user's personal room so their
+ * UI permissions are refreshed immediately.
+ */
+export async function emitCommunityMemberRoleChanged(
+  communityId: string,
+  targetUserId: string,
+  newRole: string,
+  actorId: string
+) {
+  try {
+    const payload = {
+      communityId,
+      targetUserId,
+      newRole,
+      actorId,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('communityMemberRoleChanged', payload);
+    io.to(`user_${targetUserId}`).emit('communityRoleChanged', payload);
+  } catch (error) {
+    console.error('Error emitting communityMemberRoleChanged:', error);
+  }
+}
+
+/**
+ * Emit when a member is removed from a community.
+ * The removed user's client can then redirect them out of the community view.
+ */
+export async function emitCommunityMemberRemoved(
+  communityId: string,
+  removedUserId: string,
+  actorId: string
+) {
+  try {
+    const payload = {
+      communityId,
+      removedUserId,
+      actorId,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('communityMemberRemoved', payload);
+    io.to(`user_${removedUserId}`).emit('communityRemoved', payload);
+  } catch (error) {
+    console.error('Error emitting communityMemberRemoved:', error);
+  }
+}
+
+/**
+ * Emit when a member is banned or unbanned.
+ * Banned user's client session is invalidated for this community in real-time.
+ */
+export async function emitCommunityMemberBanned(
+  communityId: string,
+  targetUserId: string,
+  banned: boolean,
+  reason?: string
+) {
+  try {
+    const payload = {
+      communityId,
+      targetUserId,
+      banned,
+      reason,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('communityMemberBanned', payload);
+    io.to(`user_${targetUserId}`).emit(banned ? 'communityBanned' : 'communityUnbanned', payload);
+  } catch (error) {
+    console.error('Error emitting communityMemberBanned:', error);
+  }
+}
+
+/**
+ * Emit when a post is pinned or unpinned.
+ */
+export async function emitCommunityPostPinStatusChanged(
+  communityId: string,
+  postId: string,
+  isPinned: boolean,
+  actorId: string
+) {
+  try {
+    const payload = {
+      communityId,
+      postId,
+      isPinned,
+      actorId,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('postPinStatusChanged', payload);
+  } catch (error) {
+    console.error('Error emitting postPinStatusChanged:', error);
+  }
+}
+
+/**
+ * Emit when a post is locked or unlocked (prevents/allows new comments).
+ */
+export async function emitCommunityPostLockStatusChanged(
+  communityId: string,
+  postId: string,
+  isLocked: boolean,
+  actorId: string
+) {
+  try {
+    const payload = {
+      communityId,
+      postId,
+      isLocked,
+      actorId,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('postLockStatusChanged', payload);
+  } catch (error) {
+    console.error('Error emitting postLockStatusChanged:', error);
+  }
+}
+
+/**
+ * Emit when a post is deleted by an admin/moderator.
+ */
+export async function emitCommunityPostAdminDeleted(
+  communityId: string,
+  postId: string,
+  actorId: string
+) {
+  try {
+    const payload = {
+      communityId,
+      postId,
+      actorId,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('postAdminDeleted', payload);
+  } catch (error) {
+    console.error('Error emitting postAdminDeleted:', error);
+  }
+}
+
+/**
+ * Emit when ownership is transferred to a different member.
+ */
+export async function emitCommunityOwnershipTransferred(
+  communityId: string,
+  previousOwnerId: string,
+  newOwnerId: string
+) {
+  try {
+    const payload = {
+      communityId,
+      previousOwnerId,
+      newOwnerId,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('communityOwnershipTransferred', payload);
+    io.to(`user_${previousOwnerId}`).emit('communityOwnershipLost', payload);
+    io.to(`user_${newOwnerId}`).emit('communityOwnershipGained', payload);
+  } catch (error) {
+    console.error('Error emitting communityOwnershipTransferred:', error);
+  }
+}
+
+/**
+ * Emit when a join request status changes (approved / rejected).
+ */
+export async function emitCommunityJoinRequestUpdated(
+  communityId: string,
+  requestUserId: string,
+  status: 'approved' | 'rejected'
+) {
+  try {
+    const payload = {
+      communityId,
+      requestUserId,
+      status,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(`community_${communityId}`).emit('communityJoinRequestUpdated', payload);
+    io.to(`user_${requestUserId}`).emit('joinRequestStatusChanged', payload);
+  } catch (error) {
+    console.error('Error emitting communityJoinRequestUpdated:', error);
+  }
+}
+
+// ─── End Community Admin Real-Time Events ─────────────────────────────────────

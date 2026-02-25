@@ -75,7 +75,7 @@ export function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header suppressHydrationWarning className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-20 items-center">
         <div className="mr-4 hidden md:flex">
           <Link href="/" className="flex items-center gap-2">
@@ -165,7 +165,7 @@ export function Header() {
                   ) : notifications.length > 0 ? (
                     notifications.map(notif => (
                         <DropdownMenuItem key={String(notif._id)} asChild className="cursor-pointer">
-                            <Link href={notif.link} className="flex flex-col items-start !whitespace-normal">
+                            <Link href={notif.link || '#'} className="flex flex-col items-start !whitespace-normal">
                                 <p className={notif.read ? 'text-muted-foreground' : 'font-semibold'}>{notif.message}</p>
                                 <p className="text-xs text-muted-foreground">{new Date(notif.createdAt).toLocaleString()}</p>
                             </Link>

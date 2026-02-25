@@ -338,10 +338,46 @@ export function SocketProvider({ children }: SocketProviderProps) {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const noOp = (..._args: any[]) => {};
+
+const defaultSocketContext: SocketContextType = {
+  socket: null,
+  isConnected: false,
+  joinCommunity: noOp,
+  leaveCommunity: noOp,
+  joinChannel: noOp,
+  leaveChannel: noOp,
+  emitPostCreated: noOp,
+  emitCommentCreated: noOp,
+  emitPostLiked: noOp,
+  emitChatMessage: noOp,
+  emitPersonalMessage: noOp,
+  onNewPost: noOp,
+  onNewComment: noOp,
+  onPostLikeUpdate: noOp,
+  onChatMessage: noOp,
+  onPersonalMessage: noOp,
+  onUserOnline: noOp,
+  onUserOffline: noOp,
+  offNewPost: noOp,
+  offNewComment: noOp,
+  offPostLikeUpdate: noOp,
+  offChatMessage: noOp,
+  offPersonalMessage: noOp,
+  offUserOnline: noOp,
+  offUserOffline: noOp,
+};
+
 export function useSocket() {
   const context = useContext(SocketContext);
   if (context === undefined) {
-    throw new Error('useSocket must be used within a SocketProvider');
+    // Gracefully degrade when called outside a SocketProvider (e.g. Turbopack
+    // module-duplication edge cases or SSR boundary mismatches).
+    if (typeof window !== 'undefined') {
+      console.warn('useSocket: called outside SocketProvider, returning no-op fallback');
+    }
+    return defaultSocketContext;
   }
   return context;
 }

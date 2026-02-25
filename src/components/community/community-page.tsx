@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -204,9 +205,11 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
               <h1 className="font-semibold text-lg truncate">{community.name}</h1>
               <p className="text-sm text-muted-foreground truncate">{community.description}</p>
             </div>
-            {userRole && (userRole === 'admin' || userRole === 'moderator') && (
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <Settings className="h-4 w-4" />
+            {userRole && (userRole === 'creator' || userRole === 'admin') && (
+              <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+                <Link href={`/community/${community._id}/settings`}>
+                  <Settings className="h-4 w-4" />
+                </Link>
               </Button>
             )}
           </div>

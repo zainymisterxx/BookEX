@@ -52,6 +52,14 @@ export const RATE_LIMITS = {
   CREATE_COMMUNITY: { windowMs: 5 * 60 * 1000, maxRequests: 2 }, // 2 per 5 minutes
   ADD_POST: { windowMs: 60 * 1000, maxRequests: 5 }, // 5 per minute
   ADD_COMMENT: { windowMs: 30 * 1000, maxRequests: 10 }, // 10 per 30 seconds
+
+  // Community admin operations (rate-limited separately to prevent abuse)
+  COMMUNITY_SETTINGS_UPDATE: { windowMs: 5 * 60 * 1000, maxRequests: 10 },     // 10 per 5 min
+  COMMUNITY_MEMBER_ACTION: { windowMs: 60 * 1000, maxRequests: 20 },            // 20 per min
+  COMMUNITY_BAN: { windowMs: 60 * 1000, maxRequests: 10 },                      // 10 per min
+  COMMUNITY_JOIN_REQUEST: { windowMs: 60 * 1000, maxRequests: 30 },             // 30 per min
+  COMMUNITY_POST_ADMIN_ACTION: { windowMs: 60 * 1000, maxRequests: 20 },        // 20 per min
+  COMMUNITY_OWNERSHIP_TRANSFER: { windowMs: 60 * 60 * 1000, maxRequests: 3 },  // 3 per hr
   
   // Profile operations
   UPDATE_PROFILE: { windowMs: 60 * 1000, maxRequests: 5 }, // 5 per minute
