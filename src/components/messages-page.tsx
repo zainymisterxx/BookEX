@@ -277,44 +277,46 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
       return;
     }
     
-    if (chats.length > 0) {
-      const chatToSelect = chats.find(chat => chat._id === chatIdParam);
-      
-      if (chatToSelect) {
-        setSelectedChat(chatToSelect);
-      } else {
-        // Chat not found in list - it might be a new chat
-        // Try to create/find it by extracting participant IDs from chatId
-        const participantIds = chatIdParam.includes('_') ? chatIdParam.split('_') : [];
-        const otherUserId = participantIds.find(id => id !== currentUser.id);
-        
-        if (otherUserId) {
-          // Use start-chat API to get/create the chat with user info
-          apiFetch('/api/messages/start-chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: otherUserId })
+    // Try to find the chat in the loaded list
+    const chatToSelect = chats.find(chat => chat._id === chatIdParam);
+
+    if (chatToSelect) {
+      setSelectedChat(chatToSelect);
+    } else {
+      // Chat not found in list - it might be a brand-new conversation.
+      // Extract the other participant's ID from the chatId (legacy _ format)
+      // or fall back to a userId query param (new format from community sidebar).
+      const userIdParam = searchParams.get('userId');
+      const participantIds = chatIdParam.includes('_') ? chatIdParam.split('_') : [];
+      const otherUserId = userIdParam || participantIds.find(id => id !== currentUser.id);
+
+      if (otherUserId) {
+        // Use start-chat API to get/create the chat with user info
+        apiFetch('/api/messages/start-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: otherUserId })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.chatId && data.otherParticipant) {
+              const newChat: Chat = {
+                _id: data.chatId,
+                participantIds: [currentUser.id, otherUserId],
+                otherParticipant: data.otherParticipant,
+                unreadCount: 0
+              };
+
+              // Add to chats list if not already there
+              setChats(prev => {
+                if (prev.some(c => c._id === newChat._id)) return prev;
+                return [newChat, ...prev];
+              });
+
+              setSelectedChat(newChat);
+            }
           })
-            .then(res => res.json())
-            .then(data => {
-              if (data.chatId && data.otherParticipant) {
-                const newChat: Chat = {
-                  _id: data.chatId,
-                  participantIds: [currentUser.id, otherUserId],
-                  otherParticipant: data.otherParticipant,
-                  unreadCount: 0
-                };
-                
-                // Add to chats list if not already there
-                if (!data.existing) {
-                  setChats(prev => [newChat, ...prev]);
-                }
-                
-                setSelectedChat(newChat);
-              }
-            })
-            .catch(err => console.error('Failed to start chat:', err));
-        }
+          .catch(err => console.error('Failed to start chat:', err));
       }
     }
   }, [searchParams, chats, selectedChat, isLoading, currentUser.id]);

@@ -391,8 +391,9 @@ function MemberItem({
 
       if (response.ok) {
         const data = await response.json();
-        // Navigate to messages page with the chatId
-        window.location.href = `/messages?chatId=${data.chatId}`;
+        // Navigate to messages page with both chatId and userId so the page
+        // can open the correct conversation even if it has no prior messages.
+        window.location.href = `/messages?chatId=${data.chatId}&userId=${member.userId}`;
       } else {
         toast({
           variant: 'destructive',

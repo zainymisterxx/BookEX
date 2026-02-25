@@ -69,12 +69,18 @@ export const authOptions: NextAuthOptions = {
     })
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.role = (user as any).role;
         token.status = (user as any).status;
         token.profileCompleted = (user as any).profileCompleted;
         token.username = (user as any).username;
+      }
+      // Persist fields updated via useSession().update()
+      if (trigger === 'update' && session) {
+        if (session.name !== undefined) token.name = session.name;
+        if (session.username !== undefined) token.username = session.username;
+        if (session.image !== undefined) token.picture = session.image;
       }
       return token;
     },
@@ -85,6 +91,10 @@ export const authOptions: NextAuthOptions = {
         session.user.status = token.status as 'active' | 'suspended' | 'deactivated';
         session.user.profileCompleted = token.profileCompleted as boolean;
         session.user.username = token.username as string;
+        // Sync image from JWT so profile picture updates are reflected immediately
+        if (token.picture !== undefined) {
+          session.user.image = token.picture as string | null;
+        }
       }
       return session;
     },
