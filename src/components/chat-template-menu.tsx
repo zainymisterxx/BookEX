@@ -250,7 +250,7 @@ export function ChatTemplateMenu({ onSelectTemplate, context }: ChatTemplateMenu
                             ))}
                         </div>
                     </>
-                )}
+                ) : null}
             </DropdownMenuContent>
         </DropdownMenu>
     );

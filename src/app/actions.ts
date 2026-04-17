@@ -1330,6 +1330,10 @@ export async function createCommunity(communityData: { name: string, description
             description: sanitizeInput(validatedData.description),
             imageUrl: communityData.imageUrl,
             createdBy: user.id,
+            visibility: 'public',
+            postingPermissions: 'anyone',
+            commentPermissions: 'anyone',
+            invitePermissions: 'anyone',
             members: [{ userId: user.id, role: 'admin', joinedAt: new Date().toISOString() }] as any,
             memberCount: 1,
             posts: [],
@@ -1737,7 +1741,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
                 await sendBookContactEmail(
                     otherUser.email,
                     otherUser.name,
-                    user.name || 'BookEx User',
+                    currentUser.name || 'BookEx User',
                     targetBook.title,
                     'exchange',
                     result.insertedId.toString()
