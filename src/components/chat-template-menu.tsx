@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
@@ -16,14 +16,15 @@ interface MessageTemplate {
     id: string;
     label: string;
     text: string;
-    icon: React.ReactNode;
-    category: 'donor' | 'organization' | 'common';
+    icon: ReactNode;
+    category: 'sell' | 'exchange' | 'donation' | 'common';
 }
+
+type ChatTemplateContext = 'sell' | 'exchange' | 'donation';
 
 interface ChatTemplateMenuProps {
     onSelectTemplate: (text: string) => void;
-    userRole?: 'donor' | 'organization';  // Determines which templates to show
-    donationStatus?: string;              // Current donation status for contextual templates
+    context?: ChatTemplateContext;
 }
 
 const templates: MessageTemplate[] = [
@@ -31,102 +32,134 @@ const templates: MessageTemplate[] = [
     {
         id: 'greeting',
         label: 'Greeting',
-        text: 'Hello! Thank you for connecting with me.',
+        text: 'Hi! Thanks for reaching out.',
         icon: <MessageSquare className="w-4 h-4" />,
         category: 'common'
     },
     {
         id: 'thank_you',
         label: 'Thank You',
-        text: 'Thank you so much for your help!',
+        text: 'Thanks, I appreciate the quick response.',
         icon: <CheckCircle className="w-4 h-4" />,
         category: 'common'
     },
     
-    // Donor templates
+    // Sell templates
     {
-        id: 'donor_intro',
-        label: 'Introduction (Donor)',
-        text: 'Hi! I have some books I\'d like to donate to your organization. Please let me know the best way to arrange this.',
+        id: 'sell_interest',
+        label: 'Interested in Buying',
+        text: 'Hi! I am interested in this book. Is it still available?',
         icon: <Package className="w-4 h-4" />,
-        category: 'donor'
+        category: 'sell'
     },
     {
-        id: 'donor_schedule',
-        label: 'Schedule Pickup',
-        text: 'I\'m available for pickup on [day/time]. Would this work for you?',
+        id: 'sell_price',
+        label: 'Ask About Price',
+        text: 'Could you confirm the final price and preferred payment method?',
         icon: <Calendar className="w-4 h-4" />,
-        category: 'donor'
+        category: 'sell'
     },
     {
-        id: 'donor_location',
-        label: 'Share Location',
-        text: 'I\'m located in [area]. Can you arrange pickup from this location?',
+        id: 'sell_meetup',
+        label: 'Arrange Meetup',
+        text: 'I can meet at a convenient public location. What time works best for you?',
         icon: <MapPin className="w-4 h-4" />,
-        category: 'donor'
+        category: 'sell'
     },
     {
-        id: 'donor_confirm_delivered',
-        label: 'Confirm Delivery',
-        text: 'I\'ve dropped off the books at the agreed location. Please confirm when you receive them.',
+        id: 'sell_follow_up',
+        label: 'Follow Up',
+        text: 'Just checking in to see if you still want to move forward with the purchase.',
         icon: <CheckCircle className="w-4 h-4" />,
-        category: 'donor'
+        category: 'sell'
     },
     
-    // Organization templates
+    // Exchange templates
     {
-        id: 'org_thank_donor',
-        label: 'Thank Donor',
-        text: 'Thank you so much for your generous donation! We really appreciate your support in promoting literacy.',
+        id: 'exchange_intro',
+        label: 'Propose Exchange',
+        text: 'Hi! I am interested in exchanging books with you. Would you consider a trade?',
         icon: <MessageSquare className="w-4 h-4" />,
-        category: 'organization'
+        category: 'exchange'
     },
     {
-        id: 'org_arrange_pickup',
-        label: 'Arrange Pickup',
-        text: 'We would love to accept your donation! Our team can arrange a pickup at your convenience. What dates work best for you?',
+        id: 'exchange_offer',
+        label: 'Share My Offer',
+        text: 'I can offer one of my listed books in exchange. Let me know if any of them interest you.',
         icon: <Calendar className="w-4 h-4" />,
-        category: 'organization'
+        category: 'exchange'
     },
     {
-        id: 'org_pickup_scheduled',
-        label: 'Pickup Scheduled',
-        text: 'Great! We\'ve scheduled the pickup for [date/time]. Our representative will contact you shortly.',
+        id: 'exchange_condition',
+        label: 'Confirm Condition',
+        text: 'Before we decide, could you share a bit more about the book\'s condition?',
         icon: <Calendar className="w-4 h-4" />,
-        category: 'organization'
+        category: 'exchange'
     },
     {
-        id: 'org_confirm_received',
-        label: 'Confirm Receipt',
-        text: 'We\'ve received the books! They\'re in excellent condition. Thank you again for your generous contribution.',
+        id: 'exchange_meetup',
+        label: 'Arrange Swap',
+        text: 'I am happy to meet in a public place to complete the swap. What works for you?',
         icon: <CheckCircle className="w-4 h-4" />,
-        category: 'organization'
+        category: 'exchange'
     },
     {
-        id: 'org_cannot_accept',
-        label: 'Cannot Accept',
-        text: 'Thank you for thinking of us! Unfortunately, we cannot accept this donation at this time due to [reason]. We appreciate your understanding.',
+        id: 'exchange_follow_up',
+        label: 'Follow Up',
+        text: 'Just following up to see if you are still interested in the exchange.',
         icon: <XCircle className="w-4 h-4" />,
-        category: 'organization'
+        category: 'exchange'
     },
     
-    // Status-specific templates
+    // Donation templates
     {
-        id: 'status_in_progress',
-        label: 'Books In Progress',
-        text: 'The books are being processed and will be on their way soon! Expected delivery: [date/time].',
+        id: 'donation_intro',
+        label: 'Introduction (Donation)',
+        text: 'Hi! I would like to donate some books. Please let me know the best way to arrange it.',
         icon: <Package className="w-4 h-4" />,
-        category: 'common'
+        category: 'donation'
+    },
+    {
+        id: 'donation_schedule',
+        label: 'Schedule Pickup',
+        text: 'I am available for pickup on [day/time]. Would that work for your team?',
+        icon: <Calendar className="w-4 h-4" />,
+        category: 'donation'
+    },
+    {
+        id: 'donation_location',
+        label: 'Share Location',
+        text: 'I am located in [area]. Can you arrange pickup from there?',
+        icon: <MapPin className="w-4 h-4" />,
+        category: 'donation'
+    },
+    {
+        id: 'donation_confirm',
+        label: 'Confirm Delivery',
+        text: 'I have dropped off the books at the agreed location. Please confirm when they are received.',
+        icon: <CheckCircle className="w-4 h-4" />,
+        category: 'donation'
+    },
+    {
+        id: 'donation_status',
+        label: 'Processing Update',
+        text: 'The books are being processed and will be on their way soon. Expected delivery: [date/time].',
+        icon: <Package className="w-4 h-4" />,
+        category: 'donation'
     }
 ];
 
-export function ChatTemplateMenu({ onSelectTemplate, userRole, donationStatus }: ChatTemplateMenuProps) {
-    // Filter templates based on user role
+export function ChatTemplateMenu({ onSelectTemplate, context }: ChatTemplateMenuProps) {
+    // Filter templates based on the current conversation type
     const filteredTemplates = templates.filter(template => {
         if (template.category === 'common') return true;
-        if (!userRole) return true;
-        return template.category === userRole;
+        if (!context) return template.category === 'sell' || template.category === 'exchange';
+        return template.category === context;
     });
+
+    const marketplaceTemplates = filteredTemplates.filter(
+        (template) => template.category === 'sell' || template.category === 'exchange'
+    );
 
     const handleSelectTemplate = (templateText: string) => {
         onSelectTemplate(templateText);
@@ -166,16 +199,16 @@ export function ChatTemplateMenu({ onSelectTemplate, userRole, donationStatus }:
                         ))}
                 </div>
                 
-                {/* Role-specific templates */}
-                {userRole && (
+                {/* Context-specific templates */}
+                {context ? (
                     <>
                         <DropdownMenuSeparator />
                         <div className="py-1">
                             <p className="px-2 py-1 text-xs font-semibold text-gray-500 capitalize">
-                                {userRole} Templates
+                                {context} Templates
                             </p>
                             {filteredTemplates
-                                .filter(t => t.category === userRole)
+                                .filter(t => t.category === context)
                                 .map((template) => (
                                     <DropdownMenuItem
                                         key={template.id}
@@ -191,6 +224,30 @@ export function ChatTemplateMenu({ onSelectTemplate, userRole, donationStatus }:
                                         </div>
                                     </DropdownMenuItem>
                                 ))}
+                        </div>
+                    </>
+                ) : marketplaceTemplates.length > 0 ? (
+                    <>
+                        <DropdownMenuSeparator />
+                        <div className="py-1">
+                            <p className="px-2 py-1 text-xs font-semibold text-gray-500">
+                                Marketplace
+                            </p>
+                            {marketplaceTemplates.map((template) => (
+                                <DropdownMenuItem
+                                    key={template.id}
+                                    onClick={() => handleSelectTemplate(template.text)}
+                                    className="cursor-pointer"
+                                >
+                                    <div className="flex items-start gap-2 w-full">
+                                        <div className="mt-0.5">{template.icon}</div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-medium text-sm">{template.label}</p>
+                                            <p className="text-xs text-gray-500 line-clamp-2">{template.text}</p>
+                                        </div>
+                                    </div>
+                                </DropdownMenuItem>
+                            ))}
                         </div>
                     </>
                 )}
