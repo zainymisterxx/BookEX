@@ -52,7 +52,7 @@ export function ExchangeStatusBar({ exchange, currentUserId, onStatusUpdate }: E
 
   const isProposer = exchange.proposerId === currentUserId;
   const canAccept = !isProposer && exchange.status === 'proposed';
-  const canConfirmCompletion = exchange.status === 'in_progress';
+  const canConfirmCompletion = exchange.status === 'accepted' || exchange.status === 'in_progress';
   const canCancel = exchange.status === 'proposed' || exchange.status === 'accepted';
 
   const getStatusIcon = (status: ExchangeStatus) => {

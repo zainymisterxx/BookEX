@@ -91,6 +91,13 @@ export async function signUpUser(userData: Pick<User, 'name' | 'email' | 'passwo
     const db = client.db("bookex");
     const usersCollection = db.collection("users");
 
+    // Validate email format
+    const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+    if (!emailRegex.test(userData.email)) {
+      recordAuthResult('SIGNUP', false, userData.email.toLowerCase());
+      return { success: false, message: "Please enter a valid email address." };
+    }
+
     // Normalize email to lowercase for consistent storage and lookup
     const normalizedEmail = userData.email.toLowerCase();
 
@@ -210,7 +217,7 @@ export async function requestPasswordReset(email: string) {
 
     // Generate secure reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const hashedToken = await hash(resetToken, 10); // Hash the token before storage
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex'); // Hash the token before storage
     const expiresAt = addHours(getCurrentTimestamp(), 1); // 1 hour from now
 
     // Store reset token in database
@@ -261,7 +268,7 @@ export async function resetPassword(token: string, newPassword: string) {
     const tokensCollection = db.collection<PasswordResetToken>("passwordResetTokens");
 
     // Hash the input token to compare with stored hashed tokens
-    const hashedInputToken = await hash(token, 10);
+    const hashedInputToken = crypto.createHash('sha256').update(token).digest('hex');
 
     // Find and validate the reset token
     const resetTokenData = await tokensCollection.findOne({ 
@@ -482,10 +489,12 @@ export async function listBook(bookData: { title: string, author: string, descri
     }
     const validatedBookData = validation.data;
 
-    // Validate image data URI
-    const imageValidation = validateImageDataUri(bookData.imageUrl);
-    if (!imageValidation.isValid) {
-      throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
+    // Validate image data URI optionally (only if it's actually provided and is a Data URI)
+    if (bookData.imageUrl && bookData.imageUrl.startsWith('data:')) {
+      const imageValidation = validateImageDataUri(bookData.imageUrl);
+      if (!imageValidation.isValid) {
+        throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
+      }
     }
 
     // Create deduplication fields
@@ -515,13 +524,10 @@ export async function listBook(bookData: { title: string, author: string, descri
       }
     }
 
-    // Start a transaction for data consistency
-    const client = await clientPromise;
-    const session = client.startSession();
+    // Note: Bypassing transactions to ensure compatibility with local standalone MongoDB instances
     let insertedId: any;
     
     try {
-      await session.withTransaction(async () => {
         const now = getCurrentTimestamp();
 
         const newBook: Omit<Book, '_id'> = {
@@ -544,7 +550,7 @@ export async function listBook(bookData: { title: string, author: string, descri
           duplicateHash,
         };
 
-        const result = await db.collection("books").insertOne(newBook, { session });
+        const result = await db.collection("books").insertOne(newBook);
 
         if (!result.insertedId) {
           throw new Error('Failed to insert book.');
@@ -570,7 +576,7 @@ export async function listBook(bookData: { title: string, author: string, descri
             const existingNotification = await db.collection("notifications").findOne({
               userId: String(u._id),
               "metadata.deduplicationKey": deduplicationKey
-            }, { session });
+            });
 
             if (!existingNotification) {
               return {
@@ -595,7 +601,7 @@ export async function listBook(bookData: { title: string, author: string, descri
           const notifications = (await Promise.all(notificationPromises)).filter(Boolean);
           
           if (notifications.length > 0) {
-            await db.collection("notifications").insertMany(notifications as any[], { session });
+            await db.collection("notifications").insertMany(notifications as any[]);
             
             // Emit real-time notifications for wishlist matches
             const { emitUserNotification } = await import('../../server');
@@ -610,9 +616,10 @@ export async function listBook(bookData: { title: string, author: string, descri
             }
           }
         }
-      });
-    } finally {
-      await session.endSession();
+      
+    } catch (error) {
+      console.error('Failed to list book:', error);
+      throw error;
     }
 
     // Invalidate user profile cache since listings have changed
@@ -1577,7 +1584,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
         const result = await db.collection("chats").insertOne(newChat);
         
         // Send email notification to book seller (if they have email notifications enabled)
-        if (validatedBookId && chat === null) { // Only for new chats about books
+        if (validatedBookId && !chat) { // Only for new chats about books
             try {
                 const book = await db.collection("books").findOne({ _id: validatedBookId });
                 if (book) {
@@ -1722,6 +1729,24 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         };
 
         const result = await db.collection("chats").insertOne(newChat);
+        
+        // Send email notification to book seller (if they have email notifications enabled)
+        try {
+            const otherUserEmailPrefs = otherUser.emailPreferences;
+            if (!otherUserEmailPrefs || otherUserEmailPrefs.contactNotifications !== false) {
+                await sendBookContactEmail(
+                    otherUser.email,
+                    otherUser.name,
+                    user.name || 'BookEx User',
+                    targetBook.title,
+                    'exchange',
+                    result.insertedId.toString()
+                );
+            }
+        } catch (emailError) {
+            // Log email error but don't fail the exchange creation
+            console.warn('Failed to send book contact email for exchange:', emailError);
+        }
         
         // Log successful exchange initiation for monitoring
         console.log(`Exchange chat initiated: User ${user.id} -> User ${otherUserId} for book ${bookId}`);
@@ -5407,6 +5432,27 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                 } as any
             }
         );
+
+        if (bothConfirmed) {
+            const exchangedBookIds = [exchange.proposerBookId, exchange.responderBookId].map((bookId) => new ObjectId(String(bookId)));
+
+            await db.collection("books").updateMany(
+                { _id: { $in: exchangedBookIds } },
+                {
+                    $set: {
+                        status: 'exchanged',
+                        updatedAt: now
+                    }
+                }
+            );
+
+            revalidatePath('/books');
+            revalidatePath('/exchange');
+            revalidatePath('/exchange/history');
+            revalidatePath('/profile/me');
+            revalidatePath(`/books/${exchange.proposerBookId}`);
+            revalidatePath(`/books/${exchange.responderBookId}`);
+        }
         
         // Add system message to chat
         let messageText: string;
