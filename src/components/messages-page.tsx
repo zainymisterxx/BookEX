@@ -29,7 +29,7 @@ import { ChatTemplateMenu } from '@/components/chat-template-menu';
 import { FileAttachmentUpload } from '@/components/file-attachment-upload';
 import { MessageAttachmentDisplay } from '@/components/message-attachment-display';
 import { ChatControlsMenu } from '@/components/chat-controls-menu';
-import type { MessageAttachment } from '@/lib/types';
+import type { Book, MessageAttachment } from '@/lib/types';
 
 interface Message {
   _id: string;
@@ -58,6 +58,7 @@ interface Chat {
   _id: string;
   participantIds: string[];
   lastMessage?: Message;
+  book?: Book;
   otherParticipant?: {
     _id: string;
     name: string;
@@ -113,6 +114,14 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
   
   const { socket, isConnected } = useSocket();
   const { toast } = useToast();
+
+  const templateContext = selectedChat?.organization
+    ? 'donation'
+    : selectedChat?.book?.type === 'exchange'
+      ? 'exchange'
+      : selectedChat?.book?.type === 'sell'
+        ? 'sell'
+        : undefined;
 
   // Handle starting a new chat with a selected user
   const handleStartChat = async (user: { _id: string; name: string; username?: string; avatarUrl?: string }) => {
@@ -955,6 +964,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
                     {/* Message Input with Templates */}
                     <div className="flex gap-2">
                       <ChatTemplateMenu
+                        context={templateContext}
                         onSelectTemplate={(text) => setNewMessage(text)}
                       />
                       <Input
