@@ -109,7 +109,7 @@ erDiagram
         string _id PK
         string userId FK
         string token
-        string expiresAt
+        datetime expiresAt
         bool used
     }
 
