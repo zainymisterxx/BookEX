@@ -51,7 +51,7 @@ erDiagram
 
     CHAT {
         string _id PK
-        string participantIds
+        string[] participantIds
         string bookId FK
         string organizationId FK
         string exchangeId FK
@@ -110,7 +110,7 @@ erDiagram
         string _id PK
         string userId FK
         string token
-        timestamp expiresAt
+        date expiresAt
         bool used
     }
 
@@ -181,6 +181,7 @@ erDiagram
     ORGANIZATION ||--o{ DONATION : receives
     ORGANIZATION ||--o{ CHAT : coordinates_in
 
+    %% Constraint: in a chat, only one contextual link is active at a time (exchangeId or donationId)
     CHAT ||--o{ MESSAGE : contains
     CHAT o|--o| EXCHANGE : linked_exchange
     CHAT o|--o| DONATION : linked_donation
