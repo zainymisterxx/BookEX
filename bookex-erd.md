@@ -51,6 +51,7 @@ erDiagram
 
     CHAT {
         string _id PK
+        string participantIds
         string bookId FK
         string organizationId FK
         string exchangeId FK
@@ -168,6 +169,7 @@ erDiagram
     USER ||--o{ ADMIN_NOTIFICATION : resolves
 
     USER }o--o{ COMMUNITY : joins
+    USER }o--o{ CHAT : participates
     COMMUNITY ||--o{ POST : contains
     POST ||--o{ COMMENT : has
     COMMUNITY ||--o{ COMMUNITY_MODERATION_LOG : logs
@@ -180,6 +182,6 @@ erDiagram
     ORGANIZATION ||--o{ CHAT : coordinates_in
 
     CHAT ||--o{ MESSAGE : contains
-    CHAT o|--|| EXCHANGE : linked_exchange
-    CHAT o|--|| DONATION : linked_donation
+    CHAT o|--o| EXCHANGE : linked_exchange
+    CHAT o|--o| DONATION : linked_donation
 ```

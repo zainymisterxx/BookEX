@@ -214,6 +214,7 @@ classDiagram
     User "*" --> "*" Chat : participates
     Chat "1" --> "0..*" Message : contains
     User "1" --> "0..*" Message : sends
+    note for Chat "At most one of exchangeId or donationId is linked at a time."
 
     User "1" --> "0..*" Exchange : proposer
     User "1" --> "0..*" Exchange : responder
