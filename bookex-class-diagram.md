@@ -151,7 +151,7 @@ classDiagram
         +string _id
         +string userId
         +string token
-        +datetime expiresAt
+        +Date expiresAt
         +bool used
         +issueToken()
         +validateToken()
