@@ -58,6 +58,7 @@ import { withAuthenticatedAction, withAuthenticatedUserFull } from '@/lib/action
 import { bookSchema, communitySchema, postSchema, commentSchema, organizationSchema, reportSchema, reviewSchema, userProfileSchema, exchangeSchema, chatMessageSchema, paginationSchema, searchQuerySchema, donationStatusUpdateSchema, validateWithSchema } from '@/lib/schemas';
 import crypto from 'crypto';
 import { normalizeMediaUrl } from '@/lib/media-url';
+import { createExchangeProposalNotification, createExchangeUpdateNotification } from '@/lib/notification-utils';
 import { 
   createCommunityMemberAddOperation, 
   createCommunityMemberRemoveOperation,
@@ -2422,15 +2423,28 @@ export async function updateDonationBooks(
             );
         }
 
+        // Validate any provided bookIds exist and belong to the donor
+        const booksWithIds = books.filter(b => b.bookId && ObjectId.isValid(b.bookId));
+        if (booksWithIds.length > 0) {
+            const bookDocs = await db.collection("books").find({
+                _id: { $in: booksWithIds.map(b => new ObjectId(b.bookId!)) },
+                sellerId: donation.donorId,
+                status: { $in: ['active', 'inactive'] }
+            }).toArray();
+            if (bookDocs.length !== booksWithIds.length) {
+                throw createAppError(ErrorType.VALIDATION, 'One or more books not found or do not belong to the donor');
+            }
+        }
+
         // Update donation with new books
         const result = await db.collection("donations").updateOne(
             { _id: new ObjectId(donationId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     books: books,
                     updatedAt: new Date().toISOString(),
                     lastUpdatedBy: user.id
-                } 
+                }
             }
         );
 
@@ -2476,6 +2490,93 @@ export async function updateDonationBooks(
                 bookCount: books.length
             }
         };
+    });
+}
+
+/**
+ * Organization explicitly accepts or rejects a pending donation offer.
+ */
+export async function confirmDonationOffer(
+    donationId: string,
+    action: 'accept' | 'reject',
+    notes?: string
+): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(donationId)) {
+            return { success: false, message: 'Invalid donation ID.' };
+        }
+
+        const donation = await db.collection("donations").findOne({ _id: new ObjectId(donationId) });
+        if (!donation) return { success: false, message: 'Donation not found.' };
+
+        if (donation.status !== 'pending') {
+            return { success: false, message: `Cannot ${action} a donation in ${donation.status} status.` };
+        }
+
+        const org = await db.collection("organizations").findOne({ _id: new ObjectId(donation.organizationId) });
+        if (!org) return { success: false, message: 'Organization not found.' };
+
+        const isOrgRep = org.representatives?.some((r: any) => r.userId === user.id);
+        if (!isOrgRep) {
+            return { success: false, message: 'Only organization representatives can accept or reject donations.' };
+        }
+
+        const now = new Date().toISOString();
+        const newStatus: DonationStatus = action === 'accept' ? 'confirmed' : 'rejected';
+
+        await db.collection("donations").updateOne(
+            { _id: new ObjectId(donationId), status: 'pending' },
+            {
+                $set: { status: newStatus, orgConfirmed: action === 'accept', updatedAt: now },
+                $push: {
+                    statusHistory: { status: newStatus, timestamp: now, updatedBy: user.id, notes }
+                } as any
+            }
+        );
+
+        // Notify donor
+        await db.collection("notifications").insertOne({
+            userId: donation.donorId,
+            type: 'donation_update',
+            title: action === 'accept' ? `${org.name} accepted your donation!` : `${org.name} declined your donation`,
+            message: action === 'accept'
+                ? `${org.name} has accepted your donation offer. They will contact you to arrange delivery.`
+                : `${org.name} has declined your donation offer.${notes ? ' Reason: ' + notes : ''}`,
+            link: `/messages/${donation.chatId}`,
+            read: false,
+            createdAt: now,
+            metadata: { donationId, organizationId: donation.organizationId, action }
+        });
+
+        // Email donor
+        try {
+            const donor = await db.collection("users").findOne({ _id: new ObjectId(donation.donorId) });
+            if (donor?.email) {
+                await sendDonationStatusUpdateEmail(
+                    donor.email,
+                    donor.name || 'BookEx User',
+                    org.name,
+                    newStatus,
+                    notes,
+                    donation.chatId?.toString()
+                );
+            }
+        } catch (e) { console.warn('Failed to send donation offer email:', e); }
+
+        // System message in chat
+        const text = action === 'accept'
+            ? `✅ ${org.name} has accepted your donation offer! Please coordinate delivery details.`
+            : `❌ ${org.name} has declined the donation offer.${notes ? ' Reason: ' + notes : ''}`;
+        await db.collection("chats").updateOne(
+            { _id: new ObjectId(String(donation.chatId)) },
+            {
+                $push: { messages: { _id: new ObjectId(), senderId: 'system', text, createdAt: now } } as any,
+                $set: { lastMessage: text, updatedAt: now }
+            }
+        );
+
+        revalidatePath('/donate');
+        return { data: { message: action === 'accept' ? 'Donation accepted.' : 'Donation declined.' } };
     });
 }
 
@@ -2732,6 +2833,17 @@ export async function confirmDonationReceipt(
                 $push: { statusHistory: statusUpdate } as any
             }
         );
+
+        // Mark donated books as 'donated' in the books collection
+        const donatedBookIds = (donation.books || [])
+            .filter((b: any) => b.bookId && ObjectId.isValid(b.bookId))
+            .map((b: any) => new ObjectId(b.bookId));
+        if (donatedBookIds.length > 0) {
+            await db.collection("books").updateMany(
+                { _id: { $in: donatedBookIds }, sellerId: donation.donorId },
+                { $set: { status: 'donated', updatedAt: new Date().toISOString() } }
+            );
+        }
 
         // Create notification for donor
         await db.collection("notifications").insertOne({
@@ -5206,10 +5318,21 @@ export async function proposeExchange(
                 );
             }
         } catch (emailError) {
-            // Log email error but don't fail the exchange creation
             console.warn('Failed to send exchange proposal email:', emailError);
         }
-        
+
+        // In-app notification for responder
+        try {
+            await createExchangeProposalNotification(
+                responderUserId,
+                proposer.name || 'Someone',
+                proposerBook.title,
+                exchangeResult.insertedId.toString()
+            );
+        } catch (notifError) {
+            console.warn('Failed to create exchange proposal notification:', notifError);
+        }
+
         // Emit real-time status update for new exchange
         try {
             const { emitExchangeStatusUpdate } = await import('../../server');
@@ -5279,9 +5402,14 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
         );
 
         if (updateResult.modifiedCount === 0) {
-            // Another process may have modified the exchange (race), return an informative error
             throw new Error('Failed to accept exchange: it may have been accepted or cancelled already.');
         }
+
+        // Mark both books as reserved so they can't enter other exchanges
+        await db.collection("books").updateMany(
+            { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
+            { $set: { status: 'reserved', updatedAt: now } }
+        );
 
         // Add system message to chat
         const systemMessage = {
@@ -5323,13 +5451,24 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
                 }
             }
         } catch (emailError) {
-            // Log email error but don't fail the exchange acceptance
             console.warn('Failed to send exchange acceptance email:', emailError);
+        }
+
+        // In-app notification for proposer
+        try {
+            const responderBook = await db.collection("books").findOne({ _id: new ObjectId(String(exchange.responderBookId)) });
+            await createExchangeUpdateNotification(
+                exchange.proposerId,
+                'accepted',
+                responderBook?.title || 'your book',
+                exchangeId
+            );
+        } catch (notifError) {
+            console.warn('Failed to create exchange accepted notification:', notifError);
         }
 
         // Emit real-time status update
         try {
-            // Import the emit function dynamically to avoid circular dependencies
             const { emitExchangeStatusUpdate } = await import('../../server');
             await emitExchangeStatusUpdate(exchangeId, {
                 status: 'accepted',
@@ -5343,6 +5482,64 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
         return {
             message: "Exchange accepted successfully! Coordinate with the other user to complete the exchange."
         };
+    });
+}
+
+/**
+ * Rejects a pending exchange proposal
+ */
+export async function rejectExchange(exchangeId: string, reason?: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedUserFull(async ({ db, user }) => {
+        const { validateObjectId, ValidationError } = await import('@/lib/validation');
+        const validatedExchangeId = validateObjectId(exchangeId);
+
+        const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
+        if (!exchange) throw new ValidationError("Exchange not found");
+        if (exchange.responderId !== user.id) throw new ValidationError("You can only reject exchanges proposed to you");
+        if (exchange.status !== 'proposed') throw new Error(`Cannot reject exchange in ${exchange.status} status`);
+
+        const now = new Date().toISOString();
+
+        const updateResult = await db.collection("exchanges").updateOne(
+            { _id: validatedExchangeId, responderId: user.id, status: 'proposed' },
+            {
+                $set: { status: 'rejected', updatedAt: now },
+                $push: { statusHistory: { status: 'rejected' as ExchangeStatus, timestamp: now, updatedBy: user.id, notes: reason } } as any
+            }
+        );
+
+        if (updateResult.modifiedCount === 0) throw new Error('Failed to reject exchange.');
+
+        // System message in chat
+        const systemMessage = { _id: new ObjectId(), senderId: 'system', text: `❌ Exchange Declined${reason ? `\n\nReason: ${reason}` : ''}`, createdAt: now };
+        await db.collection("chats").updateOne(
+            { _id: new ObjectId(String(exchange.chatId)) },
+            { $push: { messages: systemMessage } as any, $set: { lastMessage: systemMessage.text, updatedAt: now } }
+        );
+
+        // Notify proposer
+        try {
+            const responderBook = await db.collection("books").findOne({ _id: new ObjectId(String(exchange.responderBookId)) });
+            await createExchangeUpdateNotification(exchange.proposerId, 'rejected', responderBook?.title || 'your book', exchangeId);
+        } catch (e) { console.warn('Failed to create rejection notification:', e); }
+
+        // Email proposer
+        try {
+            const proposer = await db.collection("users").findOne({ _id: new ObjectId(exchange.proposerId) });
+            const responderBook = await db.collection("books").findOne({ _id: new ObjectId(String(exchange.responderBookId)) });
+            if (proposer && responderBook) {
+                await sendExchangeStatusUpdateEmail(proposer.email, proposer.name, user.name || 'BookEx User', responderBook.title, 'rejected', exchangeId);
+            }
+        } catch (e) { console.warn('Failed to send rejection email:', e); }
+
+        // Real-time update
+        try {
+            const { emitExchangeStatusUpdate } = await import('../../server');
+            await emitExchangeStatusUpdate(exchangeId, { status: 'rejected', updatedAt: now });
+        } catch (e) { console.warn('Failed to emit rejection update:', e); }
+
+        revalidatePath('/exchange/history');
+        return { message: "Exchange declined." };
     });
 }
 
@@ -5473,8 +5670,26 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
             revalidatePath('/profile/me');
             revalidatePath(`/books/${exchange.proposerBookId}`);
             revalidatePath(`/books/${exchange.responderBookId}`);
+
+            // Emails + notifications to both parties on completion
+            try {
+                const [proposer, responder, proposerBook, responderBook] = await Promise.all([
+                    db.collection("users").findOne({ _id: new ObjectId(exchange.proposerId) }),
+                    db.collection("users").findOne({ _id: new ObjectId(exchange.responderId) }),
+                    db.collection("books").findOne({ _id: new ObjectId(String(exchange.proposerBookId)) }),
+                    db.collection("books").findOne({ _id: new ObjectId(String(exchange.responderBookId)) }),
+                ]);
+                if (proposer && responderBook) {
+                    await sendExchangeStatusUpdateEmail(proposer.email, proposer.name, responder?.name || 'BookEx User', responderBook.title, 'completed', exchangeId);
+                    await createExchangeUpdateNotification(exchange.proposerId, 'completed', responderBook.title, exchangeId);
+                }
+                if (responder && proposerBook) {
+                    await sendExchangeStatusUpdateEmail(responder.email, responder.name, proposer?.name || 'BookEx User', proposerBook.title, 'completed', exchangeId);
+                    await createExchangeUpdateNotification(exchange.responderId, 'completed', proposerBook.title, exchangeId);
+                }
+            } catch (e) { console.warn('Failed to send completion emails/notifications:', e); }
         }
-        
+
         // Add system message to chat
         let messageText: string;
         if (bothConfirmed) {
@@ -5567,16 +5782,35 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
         await db.collection("exchanges").updateOne(
             { _id: validatedExchangeId },
             {
-                $set: {
-                    status: 'cancelled',
-                    updatedAt: now
-                },
-                $push: {
-                    statusHistory: statusUpdate
-                } as any
+                $set: { status: 'cancelled', updatedAt: now },
+                $push: { statusHistory: statusUpdate } as any
             }
         );
-        
+
+        // Restore both books to active if they were reserved
+        if (['accepted', 'in_progress'].includes(exchange.status)) {
+            await db.collection("books").updateMany(
+                {
+                    _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] },
+                    status: 'reserved'
+                },
+                { $set: { status: 'active', updatedAt: now } }
+            );
+        }
+
+        // Notify and email the other party
+        const otherUserId = exchange.proposerId === user.id ? exchange.responderId : exchange.proposerId;
+        try {
+            const [otherUser, proposerBook] = await Promise.all([
+                db.collection("users").findOne({ _id: new ObjectId(otherUserId) }),
+                db.collection("books").findOne({ _id: new ObjectId(String(exchange.proposerBookId)) }),
+            ]);
+            if (otherUser && proposerBook) {
+                await createExchangeUpdateNotification(otherUserId, 'cancelled', proposerBook.title, exchangeId);
+                await sendExchangeStatusUpdateEmail(otherUser.email, otherUser.name, user.name || 'BookEx User', proposerBook.title, 'cancelled', exchangeId);
+            }
+        } catch (e) { console.warn('Failed to send cancellation notification/email:', e); }
+
         // Add system message to chat
         const systemMessage = {
             _id: new ObjectId(),

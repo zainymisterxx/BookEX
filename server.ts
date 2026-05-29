@@ -285,6 +285,18 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left community ${communityId}`);
   });
 
+  socket.on('joinExchange', (exchangeId) => {
+    if (!socket.userId) {
+      socket.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+    socket.join(`exchange_${exchangeId}`);
+  });
+
+  socket.on('leaveExchange', (exchangeId) => {
+    socket.leave(`exchange_${exchangeId}`);
+  });
+
   // Channel events with authorization
   socket.on('joinChannel', async (data) => {
     const { channelId, communityId } = data;
