@@ -30,19 +30,28 @@ export function ProfileCompletionProvider({ children }: { children: React.ReactN
   useEffect(() => {
     // Only check once the session is loaded and we haven't checked before
     if (status === 'loading' || hasChecked || forceClosed) return;
-    
-    // If user is authenticated and profile is not completed
-    if (session?.user && !session.user.profileCompleted) {
-      // Small delay to ensure the page has loaded
-      const timer = setTimeout(() => {
-        setIsModalOpen(true);
+
+    const check = async () => {
+      if (!session?.user) {
         setHasChecked(true);
-      }, 1000);
-      
-      return () => clearTimeout(timer);
-    }
-    
-    setHasChecked(true);
+        return;
+      }
+
+      // Call server action to compute completeness
+      const { checkProfileCompletion } = await import('@/app/actions');
+      const result = await checkProfileCompletion();
+      if (result.isAuthenticated && !result.isProfileComplete) {
+        const timer = setTimeout(() => {
+          setIsModalOpen(true);
+          setHasChecked(true);
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
+
+      setHasChecked(true);
+    };
+
+    check();
   }, [session, status, hasChecked, forceClosed]);
 
   const openModal = () => setIsModalOpen(true);
@@ -69,7 +78,7 @@ export function ProfileCompletionProvider({ children }: { children: React.ReactN
   return (
     <ProfileCompletionContext.Provider value={contextValue}>
       {children}
-      {session?.user && !session.user.profileCompleted && !forceClosed && (
+      {session?.user && isModalOpen && !forceClosed && (
         <ProfileCompletionModal
           isOpen={isModalOpen}
           onClose={closeModal}

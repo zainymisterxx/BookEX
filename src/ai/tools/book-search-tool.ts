@@ -52,7 +52,9 @@ export const searchBooksTool = ai.defineTool(
                 query.condition = input.condition;
             }
             if (input.city) {
-                query.city = { $regex: input.city, $options: 'i' };
+                const { findCanonicalCity, makeNormalizedKey } = await import('@/lib/location/location-utils');
+                const m = await findCanonicalCity(input.city);
+                query.cityNormalized = m?.normalized || makeNormalizedKey(input.city);
             }
             if (input.type) {
                 query.type = input.type;
@@ -70,7 +72,8 @@ export const searchBooksTool = ai.defineTool(
                 type: book.type,
                 genre: book.genre,
                 condition: book.condition,
-                city: book.city,
+                city: (book as any).cityName || (book as any).city || null,
+                cityNormalized: (book as any).cityNormalized || null,
                 // Explicitly exclude sensitive fields like sellerId, sellerContact, etc.
             }));
             

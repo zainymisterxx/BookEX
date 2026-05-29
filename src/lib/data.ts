@@ -51,6 +51,7 @@ export async function getRecentListings(count: number): Promise<Book[]> {
           type: 1,
           condition: 1,
           genre: 1,
+          cityNormalized: 1,
           city: 1,
           sellerId: 1,
           status: 1,
@@ -62,7 +63,18 @@ export async function getRecentListings(count: number): Promise<Book[]> {
       .limit(Math.min(count, 50)) // Limit maximum to prevent abuse
       .toArray();
     
-    return serialize(books);
+    // Attach display names for city where possible
+    const { findCanonicalCity } = await import('./location/location-utils');
+    const mapped = await Promise.all(books.map(async (b: any) => {
+      const canon = await findCanonicalCity(b.cityNormalized || '');
+      return {
+        ...b,
+        cityNormalized: canon?.normalized || b.cityNormalized || null,
+        cityName: canon?.name || null
+      };
+    }));
+
+    return serialize(mapped);
   } catch (error) {
     console.error("Error fetching recent listings:", error);
     return [];
@@ -122,6 +134,9 @@ export async function getBookAndSellerDetails(id: string): Promise<{ book: Book;
     }
 
     let seller: User | null = null;
+      // Attach canonical city fields
+      const { findCanonicalCity } = await import('./location/location-utils');
+    
     if (book.sellerId && ObjectId.isValid(book.sellerId)) {
       // Try to get seller from cache first
       const sellerCacheKey = `user:${book.sellerId}`;
@@ -142,7 +157,22 @@ export async function getBookAndSellerDetails(id: string): Promise<{ book: Book;
       }
     }
 
-    return { book: serialize(book), seller: serialize(seller) };
+      const b = serialize(book) as any;
+      const bookCanon = await findCanonicalCity(b.cityNormalized || '');
+      const bookOut = {
+        ...b,
+        cityNormalized: bookCanon?.normalized || b.cityNormalized || null,
+        cityName: bookCanon?.name || null
+      };
+
+      const s = seller ? serialize(seller) : null;
+      let sellerOut = null;
+      if (s) {
+        const sellerCanon = await findCanonicalCity(s.cityNormalized || '');
+        sellerOut = { ...s, cityNormalized: sellerCanon?.normalized || s.cityNormalized || null, cityName: sellerCanon?.name || null };
+      }
+
+      return { book: bookOut, seller: sellerOut };
   } catch (error) {
     console.error("Error fetching book and seller details:", error);
     return null;
@@ -178,13 +208,32 @@ export async function getUserProfileData(userId: string): Promise<{ profileUser:
       return null;
     }
 
-    profileUser = calculateAverageRating(profileUser);
+    const profileData = calculateAverageRating(profileUser);
+    if (!profileData) {
+      return null;
+    }
 
     const userListings = await db.collection("books")
         .find({ sellerId: userId })
         .toArray();
 
-    const result = { profileUser: serialize(profileUser), userListings: serialize(userListings) };
+    // Normalize/attach city names for profile and books
+    const { findCanonicalCity } = await import('./location/location-utils');
+    const profileCanon = await findCanonicalCity(profileData.cityNormalized || '');
+    const profileOut: any = serialize(profileData);
+    profileOut.cityNormalized = profileCanon?.normalized || profileOut.cityNormalized || null;
+    profileOut.cityName = profileCanon?.name || null;
+
+    const mappedListings = await Promise.all(userListings.map(async (b: any) => {
+      const canon = await findCanonicalCity(b.cityNormalized || '');
+      return {
+        ...b,
+        cityNormalized: canon?.normalized || b.cityNormalized || null,
+        cityName: canon?.name || null
+      };
+    }));
+
+    const result = { profileUser: profileOut, userListings: serialize(mappedListings) };
 
     // Cache the result for 30 minutes
     await redisCache.set(cacheKey, result, 1800);
@@ -338,13 +387,11 @@ export async function getBooksForExchange(filters: EnhancedBookFilters & { page?
       query.condition = validatedFilters.condition;
     }
     
-    // City filter with optimized regex (only if provided)
+    // City filter uses a single canonical normalized key
     if (validatedFilters.city) {
-      // Use case-insensitive prefix match for better performance
-      query.city = { 
-        $regex: `^${validatedFilters.city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 
-        $options: 'i' 
-      };
+      const { findCanonicalCity, makeNormalizedKey } = await import('./location/location-utils');
+      const m = await findCanonicalCity(validatedFilters.city);
+      query.cityNormalized = m?.normalized || makeNormalizedKey(validatedFilters.city);
     }
 
     // Build optimized sort options
@@ -441,19 +488,26 @@ export async function getAvailableBookFilters(type: 'sell' | 'exchange') {
         const db = client.db("bookex");
         const pipeline = [
             { $match: { type: type } },
-            { $group: {
-                _id: null,
-                genres: { $addToSet: "$genre" },
-                cities: { $addToSet: "$city" }
-            }}
+          { $group: {
+            _id: null,
+            genres: { $addToSet: "$genre" },
+            cities: { $addToSet: "$cityNormalized" }
+          }}
         ];
         const result = await db.collection("books").aggregate(pipeline).toArray();
         const filters = result[0] || { genres: [], cities: [] };
-        
+        // Map normalized city keys back to display names
+        const normCities: string[] = (filters.cities || []).filter(Boolean);
+        const { findCanonicalCity } = await import('./location/location-utils');
+        const cities = await Promise.all(normCities.map(async (n) => {
+          const c = await findCanonicalCity(n);
+          return c?.name || n;
+        }));
+
         return {
-            genres: (filters.genres || []).filter(Boolean),
-            conditions: ['new', 'like-new', 'used', 'worn'],
-            cities: (filters.cities || []).filter(Boolean),
+          genres: (filters.genres || []).filter(Boolean),
+          conditions: ['new', 'like-new', 'used', 'worn'],
+          cities,
         };
     } catch (error) {
         console.error("Error fetching available filters:", error);

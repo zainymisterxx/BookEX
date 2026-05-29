@@ -93,7 +93,7 @@ export default function MyProfilePage() {
                           <div className="flex items-center justify-center md:justify-start gap-6 text-muted-foreground mt-2">
                               <div className="flex items-center gap-2">
                                   <MapPin className="h-4 w-4" />
-                                  <span>{profileUser.city || 'City not set'}</span>
+                                  <span>{profileUser.cityName || 'City not set'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                   <Star className="w-5 h-5 text-accent fill-accent" />

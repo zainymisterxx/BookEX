@@ -11,7 +11,7 @@ import { Loader2, UploadCloud, Building } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useSession } from 'next-auth/react';
 import { addOrganizationByAdmin } from '@/app/actions';
-import { fileToDataUri } from '@/lib/utils';
+import { uploadImageFile } from '@/lib/upload-client';
 
 export function AddOrganizationModal({ children, onOrganizationAdded }: { children: React.ReactNode, onOrganizationAdded: () => void }) {
   const [open, setOpen] = useState(false);
@@ -46,7 +46,7 @@ export function AddOrganizationModal({ children, onOrganizationAdded }: { childr
     
     setIsSubmitting(true);
     try {
-      const imageUrl = await fileToDataUri(logoImage);
+      const imageUrl = (await uploadImageFile(logoImage, 'organizationImage', 'community', session.user.id)).url;
       const result = await addOrganizationByAdmin({ 
         name, 
         description, 

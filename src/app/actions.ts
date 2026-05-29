@@ -49,7 +49,6 @@ import { getCurrentTimestamp, formatForDatabase, addDays, addHours } from '@/lib
 import { OptimizedQueries } from '@/lib/database-optimization';
 import { runDatabaseMaintenance, DatabaseMaintenance } from '@/lib/database-maintenance';
 import { ConsistentWishlistOperations, normalizeText, SchemaMigration } from '@/lib/schema-migration';
-import { saveImageFile, validateFileFromFormData } from '@/lib/file-storage';
 import { ensureDatabaseIndexes, checkIndexHealth, createMissingIndexes } from '@/lib/database-setup';
 import { createAppError, ErrorType, logError } from '@/lib/error-handling';
 import { checkUserRateLimit, RATE_LIMITS } from '@/lib/rate-limiting';
@@ -58,6 +57,7 @@ import { checkAuthRateLimit, recordAuthResult } from '@/lib/auth-rate-limiting';
 import { withAuthenticatedAction, withAuthenticatedUserFull } from '@/lib/action-utils';
 import { bookSchema, communitySchema, postSchema, commentSchema, organizationSchema, reportSchema, reviewSchema, userProfileSchema, exchangeSchema, chatMessageSchema, paginationSchema, searchQuerySchema, donationStatusUpdateSchema, validateWithSchema } from '@/lib/schemas';
 import crypto from 'crypto';
+import { normalizeMediaUrl } from '@/lib/media-url';
 import { 
   createCommunityMemberAddOperation, 
   createCommunityMemberRemoveOperation,
@@ -132,12 +132,10 @@ export async function signUpUser(userData: Pick<User, 'name' | 'email' | 'passwo
       email: normalizedEmail, // Use normalized email
       password: hashedPassword,
       avatarUrl: `https://placehold.co/100x100/EFEFEF/4A4A4A?text=${userData.name.charAt(0)}`,
-      city: "",
       reviews: 0,
       totalRatingPoints: 0,
       role: role,
       status: 'active',
-      profileCompleted: false, // Initialize as false to trigger profile completion
       wishlist: [],
       createdAt: new Date().toISOString(),
     };
@@ -329,10 +327,13 @@ export async function getUserForUpdate(userId: string) {
         
         const userData = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!userData) return null;
+        const { findCanonicalCity } = await import('@/lib/location/location-utils');
+        const canonical = await findCanonicalCity(userData.cityNormalized || '');
         return {
             name: userData.name,
             username: userData.username,
-            city: userData.city,
+            cityName: canonical?.name || null,
+            cityNormalized: userData.cityNormalized || null,
             avatarUrl: userData.avatarUrl
         };
     });
@@ -388,21 +389,22 @@ export async function updateUserProfile(profileData: { userId: string, name: str
         }
         const validatedData = validation.data;
 
-        // Validate avatar if provided
-        if (profileData.avatarUrl) {
-            const imageValidation = validateImageDataUri(profileData.avatarUrl);
-            if (!imageValidation.isValid) {
-                throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
-            }
-        }
-        
         const currentUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!currentUser) throw new Error("User not found");
 
         const updateData: Partial<User> = {
             name: sanitizeInput(validatedData.name),
-            city: sanitizeInput(validatedData.city),
         };
+
+        // Validate and normalize city using canonical city database
+        try {
+            const { validateUserCity } = await import('@/lib/validation');
+            const canonicalNormalized = await validateUserCity(validatedData.city);
+            updateData.cityNormalized = sanitizeInput(canonicalNormalized);
+        } catch (cityErr) {
+            // If city validation fails, propagate a validation error
+            throw createAppError(ErrorType.VALIDATION, (cityErr as Error).message || 'Invalid city');
+        }
         
         // Handle username update
         if (profileData.username !== undefined && profileData.username !== currentUser.username) {
@@ -429,7 +431,7 @@ export async function updateUserProfile(profileData: { userId: string, name: str
         
         // Handle avatar update
         if (profileData.avatarUrl) {
-            updateData.avatarUrl = profileData.avatarUrl;
+            updateData.avatarUrl = normalizeMediaUrl(profileData.avatarUrl);
         }
 
         await db.collection("users").updateOne(
@@ -489,14 +491,6 @@ export async function listBook(bookData: { title: string, author: string, descri
     }
     const validatedBookData = validation.data;
 
-    // Validate image data URI optionally (only if it's actually provided and is a Data URI)
-    if (bookData.imageUrl && bookData.imageUrl.startsWith('data:')) {
-      const imageValidation = validateImageDataUri(bookData.imageUrl);
-      if (!imageValidation.isValid) {
-        throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
-      }
-    }
-
     // Create deduplication fields
     const titleNormalized = normalizeForDeduplication(bookData.title);
     const authorNormalized = normalizeForDeduplication(bookData.author);
@@ -530,7 +524,7 @@ export async function listBook(bookData: { title: string, author: string, descri
     try {
         const now = getCurrentTimestamp();
 
-        const newBook: Omit<Book, '_id'> = {
+                const newBook: Omit<Book, '_id'> = {
           title: validatedBookData.title,
           author: validatedBookData.author,
           description: validatedBookData.description || '',
@@ -538,9 +532,10 @@ export async function listBook(bookData: { title: string, author: string, descri
           condition: validatedBookData.condition,
           type: validatedBookData.type,
           price: bookData.price, // Price not validated by schema
-          imageUrl: bookData.imageUrl, // Image URL not validated by schema
+          imageUrl: normalizeMediaUrl(bookData.imageUrl),
           sellerId: user.id,
-          city: validatedBookData.city,
+                city: validatedBookData.city,
+                    cityNormalized: validatedBookData.city,
           status: 'active',
           createdAt: now,
           updatedAt: now,
@@ -661,7 +656,10 @@ export async function getUserCity(userId: string) {
         if (user.id !== userId) throw new Error("Unauthorized");
 
         const userData = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
-        return userData?.city || null;
+        if (!userData) return null;
+        const { findCanonicalCity } = await import('@/lib/location/location-utils');
+        const canonical = await findCanonicalCity(userData.cityNormalized || '');
+        return canonical?.name || null;
     });
 }
 
@@ -1319,16 +1317,10 @@ export async function createCommunity(communityData: { name: string, description
         }
         const validatedData = validation.data;
 
-        // Validate image data URI
-        const imageValidation = validateImageDataUri(communityData.imageUrl);
-        if (!imageValidation.isValid) {
-            throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
-        }
-
         const newCommunity: Omit<Community, '_id'> = {
             name: sanitizeInput(validatedData.name),
             description: sanitizeInput(validatedData.description),
-            imageUrl: communityData.imageUrl,
+            imageUrl: normalizeMediaUrl(communityData.imageUrl),
             createdBy: user.id,
             visibility: 'public',
             postingPermissions: 'anyone',
@@ -1520,7 +1512,7 @@ export async function getBlockedUsers() {
  * @param bookId The ID of the book being discussed (optional).
  * @returns An object with the result of the operation and the chat ID.
  */
-export async function startChat(otherUserId: string, bookId?: string) {
+export async function startChat(otherUserId: string, bookId?: string): Promise<{ success: true; data: { chatId: string } } | { success: false; message: string }> {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
@@ -1574,7 +1566,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
         });
 
         if (chat) {
-            return { success: true, chatId: chat._id.toString() };
+            return { chatId: chat._id.toString() };
         }
 
         // Create new chat
@@ -1613,7 +1605,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
         // Log successful chat initiation
         console.log(`Chat initiated: User ${user.id} -> User ${otherUserId}${bookId ? ` for book ${bookId}` : ''}`);
         
-        return { success: true, chatId: result.insertedId.toString() };
+        return { chatId: result.insertedId.toString() };
     });
 }
 
@@ -1623,7 +1615,7 @@ export async function startChat(otherUserId: string, bookId?: string) {
  * @param bookId The ID of the book being discussed.
  * @returns An object with the result of the operation and the chat ID.
  */
-export async function startExchangeChat(otherUserId: string, bookId: string) {
+export async function startExchangeChat(otherUserId: string, bookId: string): Promise<{ success: true; data: { chatId: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateChatParams, validateUserCity, ValidationError } = await import('@/lib/validation');
@@ -1677,30 +1669,21 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         });
         
         if (!userExchangeBook) {
-            return { 
-                success: false, 
-                message: "You must have at least one book listed for exchange to start a trade." 
-            };
+            throw new Error("You must have at least one book listed for exchange to start a trade.");
         }
 
-        // CRITICAL: Validate same-city requirement for exchanges
-        if (!currentUser.city || !otherUser.city) {
-            return {
-                success: false,
-                message: "Both users must have their city set in their profile to exchange books."
-            };
-        }
-        
-        // Normalize cities for comparison (case-insensitive, trim whitespace)
-        const currentUserCity = currentUser.city.toLowerCase().trim();
-        const otherUserCity = otherUser.city.toLowerCase().trim();
-        
-        if (currentUserCity !== otherUserCity) {
-            return {
-                success: false,
-                message: `Book exchanges are only available within the same city. You are in ${currentUser.city}, but the book owner is in ${otherUser.city}.`
-            };
-        }
+                // Centralized eligibility check (server authoritative)
+                const { default: locationUtils } = await import('@/lib/location/location-utils');
+                const eligibility = locationUtils.canUserExchange({
+                    proposer: { id: user.id, cityNormalized: currentUser.cityNormalized, avatarUrl: currentUser.avatarUrl, bio: currentUser.bio },
+                    responder: { id: otherUser.id, cityNormalized: otherUser.cityNormalized, avatarUrl: otherUser.avatarUrl, bio: otherUser.bio },
+                    proposerBook: { sellerId: undefined, status: 'active' },
+                    responderBook: { sellerId: undefined, status: 'active' }
+                });
+
+                if (!eligibility.allowed) {
+                    throw new Error(eligibility.reason || 'Users are not eligible to exchange');
+                }
 
         // Check if chat already exists
         const participantIds = [user.id, otherUserId].sort();
@@ -1711,7 +1694,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         });
 
         if (chat) {
-            return { success: true, chatId: chat._id.toString() };
+            return { chatId: chat._id.toString() };
         }
 
         // Create initial exchange message
@@ -1733,7 +1716,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         };
 
         const result = await db.collection("chats").insertOne(newChat);
-        
+
         // Send email notification to book seller (if they have email notifications enabled)
         try {
             const otherUserEmailPrefs = otherUser.emailPreferences;
@@ -1754,8 +1737,8 @@ export async function startExchangeChat(otherUserId: string, bookId: string) {
         
         // Log successful exchange initiation for monitoring
         console.log(`Exchange chat initiated: User ${user.id} -> User ${otherUserId} for book ${bookId}`);
-        
-        return { success: true, chatId: result.insertedId.toString() };
+
+        return { chatId: result.insertedId.toString() };
     });
 }
 
@@ -2026,17 +2009,12 @@ export async function applyForOrganizationWithFile(formData: FormData) {
             return { success: false, message: validation.error };
         }
 
-        // Validate and process image file (includes magic number validation)
-        const fileValidation = await validateFileFromFormData(formData, 'image');
-        if (!fileValidation.isValid || !fileValidation.file) {
-            return { success: false, message: fileValidation.error || 'Image file is required' };
+        const imageUrl = formData.get('imageUrl') as string;
+        if (!imageUrl) {
+            return { success: false, message: 'Image URL is required' };
         }
 
-        // Save the image file
-        const fileResult = await saveImageFile(fileValidation.file);
-        if (!fileResult.success || !fileResult.url) {
-            return { success: false, message: fileResult.error || 'Failed to save image' };
-        }
+        const normalizedImageUrl = normalizeMediaUrl(imageUrl);
 
         // Check for duplicate organization names
         const sanitizedName = sanitizeOrganizationName(name);
@@ -2057,7 +2035,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
             name: name.trim(),
             description: description.trim(),
             location: location.trim(),
-            imageUrl: fileResult.url,
+            imageUrl: normalizedImageUrl,
             contactEmail: contactEmail?.trim(),
             contactPhone: contactPhone?.trim(),
             website: website?.trim(),
@@ -4722,9 +4700,24 @@ export async function getMyProfileData(userId: string): Promise<{ success: true;
             }
         }
 
+        const { findCanonicalCity } = await import('@/lib/location/location-utils');
+        const profileCity = await findCanonicalCity(profileUser.cityNormalized || '');
+        const normalizedProfile = JSON.parse(JSON.stringify(profileUser));
+        normalizedProfile.cityName = profileCity?.name || null;
+        normalizedProfile.cityNormalized = profileUser.cityNormalized || null;
+
+        const normalizedListings = await Promise.all(userListings.map(async (book: any) => {
+            const bookCity = await findCanonicalCity(book.cityNormalized || '');
+            return {
+                ...book,
+                cityName: bookCity?.name || null,
+                cityNormalized: book.cityNormalized || null,
+            };
+        }));
+
         return JSON.parse(JSON.stringify({
-            profileUser: profileUser,
-            userListings: userListings,
+            profileUser: normalizedProfile,
+            userListings: normalizedListings,
             wishlist: wishlistBooks,
             userCommunities: userCommunities,
         }));
@@ -4995,11 +4988,16 @@ export async function completeUserProfile({
         if (user.id !== userId) throw new Error("Unauthorized");
         
         const updateData: any = {
-            name: profileData.name,
-            city: profileData.city,
-            profileCompleted: true,
-            updatedAt: new Date()
-        };
+                        name: profileData.name,
+                        updatedAt: new Date()
+                };
+
+                // Normalize and store canonical city key
+                if (profileData.city) {
+                    const { validateUserCity } = await import('@/lib/validation');
+                    const normalized = await validateUserCity(profileData.city);
+                    updateData.cityNormalized = normalized;
+                }
 
         // Add optional fields if provided
         if (profileData.phone) updateData.phone = profileData.phone;
@@ -5018,36 +5016,7 @@ export async function completeUserProfile({
     });
 }
 
-/**
- * Migration function to set profileCompleted for existing users.
- * This function should be run once to update existing users.
- */
-export async function migrateExistingUsersProfileCompleted(): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
-    return withAuthenticatedAction(async ({ db, user, userId }) => {
-        // Set profileCompleted to true for all existing users who have a city
-        // and false for those who don't have a city
-        const result = await db.collection("users").updateMany(
-            { profileCompleted: { $exists: false } },
-            [
-                {
-                    $set: {
-                        profileCompleted: {
-                            $cond: {
-                                if: { $and: [{ $ne: ["$city", null] }, { $ne: ["$city", ""] }] },
-                                then: true,
-                                else: false
-                            }
-                        }
-                    }
-                }
-            ]
-        );
-        
-        return { 
-            message: `Updated ${result.modifiedCount} users` 
-        };
-    }, 'admin');
-}
+// Legacy profile completeness migration removed; completeness is computed at runtime.
 
 // ===== EXCHANGE MANAGEMENT FUNCTIONS =====
 // These functions handle formal exchange proposals, tracking, and completion
@@ -5099,14 +5068,18 @@ export async function proposeExchange(
             throw new ValidationError("Both books must be listed for exchange");
         }
         
-        // Same-city validation (reuse existing logic)
-        if (!proposer.city || !responder.city) {
-            throw new Error("Both users must have their city set in their profile to exchange books.");
-        }
-        
-        if (proposer.city.toLowerCase().trim() !== responder.city.toLowerCase().trim()) {
-            throw new Error(`Book exchanges are only available within the same city. You are in ${proposer.city}, but the other user is in ${responder.city}.`);
-        }
+                // Centralized eligibility and location checks
+                const { default: locationUtils } = await import('@/lib/location/location-utils');
+                const eligibility = locationUtils.canUserExchange({
+                    proposer: { id: String(proposer._id), cityNormalized: proposer.cityNormalized, avatarUrl: proposer.avatarUrl, bio: proposer.bio },
+                    responder: { id: String(responder._id), cityNormalized: responder.cityNormalized, avatarUrl: responder.avatarUrl, bio: responder.bio },
+                    proposerBook: { sellerId: proposerBook.sellerId, status: proposerBook.status },
+                    responderBook: { sellerId: responderBook.sellerId, status: responderBook.status }
+                });
+
+                if (!eligibility.allowed) {
+                    throw new ValidationError(eligibility.reason || 'Exchange not allowed');
+                }
         
         // Check if there's already an active exchange between these books
         const existingExchange = await db.collection("exchanges").findOne({
@@ -5249,7 +5222,7 @@ export async function proposeExchange(
             console.warn('Failed to emit real-time update for new exchange:', emitError);
         }
         
-        return { 
+        return {
             exchangeId: exchangeResult.insertedId.toString(),
             chatId: chat._id.toString(),
             message: "Exchange proposal sent successfully!"
@@ -5283,16 +5256,16 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
             throw new Error(`Cannot accept exchange in ${exchange.status} status`);
         }
         
-        // Update exchange status
+        // Atomically update exchange status from 'proposed' -> 'accepted'
         const now = new Date().toISOString();
         const statusUpdate = {
             status: 'accepted' as ExchangeStatus,
             timestamp: now,
             updatedBy: user.id
         };
-        
-        await db.collection("exchanges").updateOne(
-            { _id: validatedExchangeId },
+
+        const updateResult = await db.collection("exchanges").updateOne(
+            { _id: validatedExchangeId, responderId: user.id, status: 'proposed' },
             {
                 $set: {
                     status: 'accepted',
@@ -5304,7 +5277,12 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
                 } as any
             }
         );
-        
+
+        if (updateResult.modifiedCount === 0) {
+            // Another process may have modified the exchange (race), return an informative error
+            throw new Error('Failed to accept exchange: it may have been accepted or cancelled already.');
+        }
+
         // Add system message to chat
         const systemMessage = {
             _id: new ObjectId(),
@@ -5312,7 +5290,7 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
             text: `✅ Exchange Accepted! The exchange is now active. Please coordinate with each other to complete the book exchange.`,
             createdAt: now
         };
-        
+
         await db.collection("chats").updateOne(
             { _id: new ObjectId(exchange.chatId) },
             {
@@ -5438,17 +5416,56 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
         );
 
         if (bothConfirmed) {
-            const exchangedBookIds = [exchange.proposerBookId, exchange.responderBookId].map((bookId) => new ObjectId(String(bookId)));
+            // Perform ownership transfer and record history in a transaction
+            const client = await clientPromise;
+            const session = client.startSession();
+            try {
+                await session.withTransaction(async () => {
+                    const proposerBookIdObj = new ObjectId(String(exchange.proposerBookId));
+                    const responderBookIdObj = new ObjectId(String(exchange.responderBookId));
 
-            await db.collection("books").updateMany(
-                { _id: { $in: exchangedBookIds } },
-                {
-                    $set: {
-                        status: 'exchanged',
-                        updatedAt: now
+                    const proposerBook = await db.collection("books").findOne({ _id: proposerBookIdObj }, { session });
+                    const responderBook = await db.collection("books").findOne({ _id: responderBookIdObj }, { session });
+
+                    // Only proceed if both books still exist
+                    if (proposerBook && responderBook) {
+                        // Swap ownership: proposerBook -> responder, responderBook -> proposer
+                        await db.collection("books").updateOne(
+                            { _id: proposerBookIdObj },
+                            { $set: { sellerId: exchange.responderId, status: 'exchanged', updatedAt: now } },
+                            { session }
+                        );
+
+                        await db.collection("books").updateOne(
+                            { _id: responderBookIdObj },
+                            { $set: { sellerId: exchange.proposerId, status: 'exchanged', updatedAt: now } },
+                            { session }
+                        );
+
+                        // Record ownership history for auditability
+                        const ownershipHistoryEntries = [
+                            {
+                                bookId: String(proposerBookIdObj),
+                                previousOwnerId: proposerBook.sellerId || null,
+                                newOwnerId: exchange.responderId,
+                                exchangeId: String(validatedExchangeId),
+                                timestamp: now
+                            },
+                            {
+                                bookId: String(responderBookIdObj),
+                                previousOwnerId: responderBook.sellerId || null,
+                                newOwnerId: exchange.proposerId,
+                                exchangeId: String(validatedExchangeId),
+                                timestamp: now
+                            }
+                        ];
+
+                        await db.collection('bookOwnershipHistory').insertMany(ownershipHistoryEntries, { session });
                     }
-                }
-            );
+                });
+            } finally {
+                await session.endSession();
+            }
 
             revalidatePath('/books');
             revalidatePath('/exchange');
@@ -5502,10 +5519,13 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
         }
         
         return {
-            completed: bothConfirmed,
-            message: bothConfirmed 
-                ? "Exchange completed successfully! You can now rate your exchange partner."
-                : "Your confirmation has been recorded. Waiting for the other user to confirm."
+            success: true,
+            data: {
+                completed: bothConfirmed,
+                message: bothConfirmed
+                    ? "Exchange completed successfully! You can now rate your exchange partner."
+                    : "Your confirmation has been recorded. Waiting for the other user to confirm."
+            }
         };
     });
 }
@@ -6077,6 +6097,19 @@ export async function deleteBookListing(bookId: string) {
                     throw createAppError(ErrorType.AUTHORIZATION, "You can only delete your own listings");
                 }
 
+                    // Prevent deletion if there are active exchanges involving this book
+                    const activeExchange = await db.collection("exchanges").findOne({
+                        $or: [
+                            { proposerBookId: new ObjectId(bookId) },
+                            { responderBookId: new ObjectId(bookId) }
+                        ],
+                        status: { $in: ['proposed', 'accepted', 'in_progress'] }
+                    }, { session });
+
+                    if (activeExchange) {
+                        throw createAppError(ErrorType.VALIDATION, "Cannot delete listing while an active exchange is in progress or proposed for this book.");
+                    }
+
                 // Delete the book
                 const deleteResult = await db.collection("books").deleteOne(
                     { _id: new ObjectId(bookId) },
@@ -6089,31 +6122,42 @@ export async function deleteBookListing(bookId: string) {
 
                 // Clean up related data
                 await Promise.all([
-                    // Remove from wishlists
+                    // Remove from wishlists (handle both string and ObjectId stored values)
                     db.collection("users").updateMany(
                         { "wishlist.bookId": new ObjectId(bookId) },
                         { $pull: { wishlist: { bookId: new ObjectId(bookId) } } } as any,
                         { session }
                     ),
-                    
-                    // Delete related chats
+                    db.collection("users").updateMany(
+                        { "wishlist.bookId": bookId },
+                        { $pull: { wishlist: { bookId: bookId } } } as any,
+                        { session }
+                    ),
+
+                    // Delete related chats (by ObjectId bookId)
                     db.collection("chats").deleteMany(
                         { bookId: new ObjectId(bookId) },
                         { session }
                     ),
-                    
-                    // Delete related notifications
+
+                    // Delete related notifications (handle string or ObjectId in metadata)
                     db.collection("notifications").deleteMany(
-                        { "metadata.bookId": bookId },
+                        { $or: [ { "metadata.bookId": bookId }, { "metadata.bookId": new ObjectId(bookId) } ] },
                         { session }
                     ),
-                    
-                    // Delete related exchanges
+
+                    // Delete related exchanges (use correct field names)
                     db.collection("exchanges").deleteMany(
                         { $or: [
-                            { "proposer.bookId": new ObjectId(bookId) },
-                            { "proposee.bookId": new ObjectId(bookId) }
-                        ]},
+                            { proposerBookId: new ObjectId(bookId) },
+                            { responderBookId: new ObjectId(bookId) }
+                        ] },
+                        { session }
+                    ),
+
+                    // Delete related reports referencing this book
+                    db.collection("reports").deleteMany(
+                        { $and: [ { reportedContentType: 'book' }, { $or: [ { reportedContentId: bookId }, { reportedContentId: new ObjectId(bookId) } ] } ] },
                         { session }
                     )
                 ]);
@@ -6251,7 +6295,13 @@ export async function getBookForEdit(bookId: string) {
             throw createAppError(ErrorType.AUTHORIZATION, "You can only edit your own listings");
         }
 
-        return JSON.parse(JSON.stringify(book));
+        const { findCanonicalCity } = await import('@/lib/location/location-utils');
+        const canonical = await findCanonicalCity(book.cityNormalized || '');
+        return JSON.parse(JSON.stringify({
+            ...book,
+            cityNormalized: book.cityNormalized || null,
+            cityName: canonical?.name || null,
+        }));
     });
 }
 
@@ -6286,14 +6336,6 @@ export async function updateBookListing(bookId: string, bookData: {
             throw createAppError(ErrorType.VALIDATION, validation.message);
         }
         const validatedBookData = validation.data;
-
-        // Validate image data URI if provided
-        if (bookData.imageUrl) {
-            const imageValidation = validateImageDataUri(bookData.imageUrl);
-            if (!imageValidation.isValid) {
-                throw createAppError(ErrorType.FILE_UPLOAD, imageValidation.error || "Invalid image format");
-            }
-        }
 
         // Get current book data
         const existingBook = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
@@ -6349,7 +6391,7 @@ export async function updateBookListing(bookId: string, bookData: {
             genre: validatedBookData.genre || 'other',
             condition: validatedBookData.condition,
             type: validatedBookData.type,
-            city: validatedBookData.city,
+            cityNormalized: validatedBookData.city,
             updatedAt: now,
         };
 
@@ -6360,16 +6402,16 @@ export async function updateBookListing(bookId: string, bookData: {
             updateData.price = null; // Remove price for exchange books
         }
 
-        // Update image if provided
-        if (bookData.imageUrl) {
-            updateData.imageUrl = bookData.imageUrl;
-        }
-
         // Update deduplication fields if title/author changed
         if (titleChanged || authorChanged) {
             updateData.titleNormalized = normalizeForDeduplication(bookData.title);
             updateData.authorNormalized = normalizeForDeduplication(bookData.author);
             updateData.duplicateHash = createBookDuplicateHash(bookData.title, bookData.author, user.id);
+        }
+
+        // Update image if provided
+        if (bookData.imageUrl) {
+            updateData.imageUrl = normalizeMediaUrl(bookData.imageUrl);
         }
 
         // Update the book
@@ -6454,19 +6496,44 @@ export async function checkProfileCompletion() {
     try {
         const { getSession } = await import('@/lib/auth');
         const session = await getSession();
-        
         if (!session?.user) {
-            return { isAuthenticated: false, profileCompleted: false };
+            return { isAuthenticated: false, isProfileComplete: false };
         }
-        
-        return { 
-            isAuthenticated: true, 
-            profileCompleted: session.user.profileCompleted || false 
-        };
+
+        // Compute completeness from DB to avoid stored drift
+        const client = await clientPromise;
+        const db = client.db('bookex');
+        const userDoc = await db.collection('users').findOne({ _id: new ObjectId(session.user.id) });
+        const listingsCount = await db.collection('books').countDocuments({ sellerId: session.user.id, status: 'active' });
+
+        const { getProfileCompleteness, isProfileComplete } = await import('@/lib/location/location-utils');
+        const completeness = getProfileCompleteness({ ...(userDoc || {}), listingsCount });
+
+        return { isAuthenticated: true, isProfileComplete: isProfileComplete({ ...(userDoc || {}), listingsCount }), percent: completeness.percent, missing: completeness.missing };
     } catch (error) {
         console.error('Error checking profile completion:', error);
-        return { isAuthenticated: false, profileCompleted: false };
+        return { isAuthenticated: false, isProfileComplete: false };
     }
+}
+
+/**
+ * Returns detailed profile completeness information for the current user
+ */
+export async function getProfileCompleteness() {
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        const usersColl = db.collection('users');
+        const booksColl = db.collection('books');
+
+        const profileUser = await usersColl.findOne({ _id: new ObjectId(user.id) });
+        if (!profileUser) throw new Error('User not found');
+
+        const listingsCount = await booksColl.countDocuments({ sellerId: user.id, status: 'active' });
+
+        const { getProfileCompleteness } = await import('@/lib/location/location-utils');
+        const result = getProfileCompleteness({ ...profileUser, listingsCount });
+
+        return { success: true, data: result };
+    });
 }
 
 /**

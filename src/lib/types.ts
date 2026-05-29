@@ -14,6 +14,7 @@ export interface Book {
   imageUrl: string;
   sellerId: string;
   city: string;
+  cityNormalized?: string;
   type: 'sell' | 'exchange';
   description: string;
   genre: BookGenre;
@@ -34,12 +35,15 @@ export interface WishlistItem {
 
 export interface User {
   _id: ObjectId | string;
+  id?: string;
   name: string;
   username?: string; // unique, lowercase handle for public references
   email: string;
   password?: string; // Hashed password
   avatarUrl?: string;
   city?: string;
+  cityName?: string;
+  cityNormalized?: string;
   phone?: string; // Added for profile completion
   bio?: string; // Added for profile completion
   interests?: string[]; // Added for profile completion
@@ -49,7 +53,6 @@ export interface User {
   averageRating?: number; // Calculated on read: totalRatingPoints / reviews
   role?: 'user' | 'admin';
   status?: 'active' | 'suspended' | 'deactivated'; // User account status
-  profileCompleted?: boolean; // Whether user has completed their profile
   createdAt?: string; // ISO 8601 date string (UTC) - when account was created
   updatedAt?: string; // ISO 8601 date string (UTC) - Last profile update timestamp
   wishlist?: WishlistItem[];
@@ -375,6 +378,15 @@ export interface Notification {
         organizationId?: string; // NEW: For organization-related notifications
         [key: string]: any;
     };
+}
+
+export interface BookOwnershipHistoryEntry {
+  _id?: ObjectId | string;
+  bookId: string;
+  previousOwnerId?: string | null;
+  newOwnerId: string;
+  exchangeId?: string;
+  timestamp: string; // ISO 8601
 }
 
 export interface PasswordResetToken {

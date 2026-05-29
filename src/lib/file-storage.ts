@@ -1,12 +1,11 @@
 /**
- * Secure file storage utility for handling image uploads
- * Supports both local storage (development) and cloud storage (production)
+ * Backward-compatible image storage helpers.
+ * The production path now writes to filesystem-backed upload directories.
  */
 
 import path from 'path';
-import { writeFile, mkdir } from 'fs/promises';
-import crypto from 'crypto';
 import { fileTypeFromBuffer } from 'file-type';
+import { storeImageFile, storeImageDataUri, type ImageStorageCategory } from './image-storage';
 
 /**
  * Validates file upload with enhanced security checks including magic number validation
@@ -19,7 +18,7 @@ export async function validateImageFile(file: File): Promise<{ isValid: boolean;
   }
 
   // Check file type - be more specific about allowed types
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (!allowedTypes.includes(file.type)) {
     return { isValid: false, error: 'Only JPEG, PNG, WebP, and GIF images are allowed' };
   }
@@ -30,7 +29,7 @@ export async function validateImageFile(file: File): Promise<{ isValid: boolean;
     'image/jpeg': ['jpg', 'jpeg'],
     'image/png': ['png'],
     'image/webp': ['webp'],
-    'image/gif': ['gif']
+    
   };
 
   const expectedExtensions = validExtensions[file.type];
@@ -51,7 +50,7 @@ export async function validateImageFile(file: File): Promise<{ isValid: boolean;
     }
 
     // Verify the actual file type matches the claimed MIME type
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedMimeTypes.includes(fileTypeResult.mime)) {
       return { isValid: false, error: `File content does not match claimed type. Detected: ${fileTypeResult.mime}` };
     }
@@ -70,20 +69,12 @@ export async function validateImageFile(file: File): Promise<{ isValid: boolean;
 }
 
 /**
- * Generates a secure filename to prevent path traversal and conflicts
+ * Saves file to filesystem-backed uploads directory.
  */
-function generateSecureFilename(originalName: string): string {
-  const extension = path.extname(originalName).toLowerCase();
-  const timestamp = Date.now();
-  const randomId = crypto.randomBytes(8).toString('hex');
-  return `org_${timestamp}_${randomId}${extension}`;
-}
-
-/**
- * Saves file to local uploads directory (for development/self-hosted)
- * In production, you would replace this with cloud storage (AWS S3, Cloudinary, etc.)
- */
-export async function saveImageFile(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
+export async function saveImageFile(
+  file: File,
+  category: ImageStorageCategory = 'communities'
+): Promise<{ success: boolean; url?: string; error?: string }> {
   try {
     // Validate the file first (now includes magic number validation)
     const validation = await validateImageFile(file);
@@ -91,25 +82,8 @@ export async function saveImageFile(file: File): Promise<{ success: boolean; url
       return { success: false, error: validation.error };
     }
 
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'organizations');
-    try {
-      await mkdir(uploadsDir, { recursive: true });
-    } catch {
-      // Directory might already exist, that's fine
-    }
-
-    // Generate secure filename
-    const filename = generateSecureFilename(file.name);
-    const filePath = path.join(uploadsDir, filename);
-
-    // Convert file to buffer and save
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    await writeFile(filePath, buffer);
-
-    // Return the public URL
-    const publicUrl = `/uploads/organizations/${filename}`;
+    const stored = await storeImageFile(file, category);
+    const publicUrl = stored.publicUrl;
     return { success: true, url: publicUrl };
 
   } catch (error) {
@@ -141,13 +115,6 @@ export async function validateFileFromFormData(formData: FormData, fieldName: st
  * Replace the saveImageFile function with this for production
  */
 export async function saveImageToCloud(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
-  // Placeholder for cloud storage integration
-  // This is where you would integrate with:
-  // - AWS S3
-  // - Cloudinary
-  // - Google Cloud Storage
-  // - Azure Blob Storage
-  
-  // For now, fall back to local storage
+  // Backward-compatible wrapper retained for existing callers.
   return saveImageFile(file);
 }

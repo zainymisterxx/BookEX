@@ -10,6 +10,7 @@
     "start": "concurrently \"npm:start:next\" \"npm:start:socket\"",
     "start:next": "next start",
     "start:socket": "tsx server.ts",
+    "media:serve": "tsx media-api/server.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "dev:next": "next dev --turbopack -p 9002",
@@ -17,6 +18,8 @@
     "setup:db": "tsx scripts/setup-database.ts",
     "optimize:db": "tsx scripts/optimize-database.ts",
     "setup:indexes": "tsx scripts/setup-critical-indexes.ts",
+    "storage:setup": "tsx scripts/setup-image-storage.ts",
+    "migrate:image-storage": "tsx scripts/migrate-image-storage.ts",
     "file:cleanup": "tsx scripts/file-security-maintenance.ts",
     "business:maintenance": "tsx scripts/business-logic-maintenance.ts",
     "content:maintenance": "tsx scripts/content-moderation-maintenance.ts",
@@ -73,6 +76,7 @@
     "socket.io-client": "^4.7.5",
     "tailwind-merge": "^3.0.1",
     "tailwindcss-animate": "^1.0.7",
+    "web-vitals": "^5.2.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {

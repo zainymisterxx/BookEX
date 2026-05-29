@@ -35,6 +35,8 @@ export function ExchangeProposalModal({
   const [proposalMessage, setProposalMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [invalidReason, setInvalidReason] = useState<string | null>(null);
+  const [currentUserCity, setCurrentUserCity] = useState<string | null>(null);
   
   const { toast } = useToast();
   const router = useRouter();
@@ -55,6 +57,26 @@ export function ExchangeProposalModal({
           (book: Book) => book.type === 'exchange' && String(book._id) !== String(targetBook._id)
         );
         setMyBooks(exchangeBooks);
+        // capture user's city for same-city prevalidation
+        const profileUser = profileData.data.profileUser || {};
+        const city = profileUser.cityName || null;
+        setCurrentUserCity(city);
+        // Client-side normalized key helper (simple, authoritative check is server-side)
+        const normalizeKey = (s?: string | null) => (s ? String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, '') : '');
+        const myKey = normalizeKey(profileUser.cityNormalized || profileUser.city);
+        const theirKey = normalizeKey((targetBook as any).cityNormalized || targetBook.city);
+
+        if (!city) {
+          setInvalidReason('Please set your city in your profile before proposing exchanges.');
+        } else if (theirKey && myKey !== theirKey) {
+          setInvalidReason(`Exchanges are limited to users in the same city. You are in ${profileUser.cityName || profileUser.city} and the owner is in ${(targetBook as any).cityName || (targetBook as any).city}.`);
+        } else if (currentUserId === targetUserId) {
+          setInvalidReason('You cannot propose an exchange on your own listing.');
+        } else if (targetBook.status && targetBook.status !== 'active') {
+          setInvalidReason('This listing is not currently available for exchange.');
+        } else {
+          setInvalidReason(null);
+        }
       }
     } catch (error) {
       console.error('Error fetching books:', error);
@@ -253,14 +275,19 @@ export function ExchangeProposalModal({
             </p>
           </div>
 
-          {/* Action Buttons */}
+                {/* Action Buttons */}
+          {invalidReason && (
+            <div className="mb-3">
+              <div className="text-sm text-red-700 bg-red-50 border border-red-100 p-3 rounded">{invalidReason}</div>
+            </div>
+          )}
           <div className="flex gap-3 pt-4">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1">
               Cancel
             </Button>
             <Button 
               type="submit" 
-              disabled={isSubmitting || myBooks.length === 0 || !selectedBookId}
+              disabled={isSubmitting || myBooks.length === 0 || !selectedBookId || !!invalidReason}
               className="flex-1"
             >
               {isSubmitting ? (

@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, UploadCloud, Users } from 'lucide-react';
 import { AuthModal } from './auth-modal';
 import { createCommunity } from '@/app/actions';
-import { fileToDataUri } from '@/lib/utils';
+import { uploadImageFile } from '@/lib/upload-client';
 
 
 export function CreateCommunityModal({ children }: { children: React.ReactNode }) {
@@ -48,7 +48,7 @@ export function CreateCommunityModal({ children }: { children: React.ReactNode }
     
     setIsSubmitting(true);
     try {
-      const imageUrl = await fileToDataUri(coverImage);
+      const imageUrl = (await uploadImageFile(coverImage, 'communityImage', 'community', user.id)).url;
       
       const result = await createCommunity({
         name,

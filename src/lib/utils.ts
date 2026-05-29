@@ -220,8 +220,8 @@ export function validateBookData(bookData: any): { isValid: boolean; error?: str
     }
   }
 
-  // City validation
-  if (!bookData.city || typeof bookData.city !== 'string' || bookData.city.trim().length === 0) {
+  // City validation - accept either normalized key or legacy city string
+  if (!bookData.cityNormalized && (!bookData.city || typeof bookData.city !== 'string' || bookData.city.trim().length === 0)) {
     return { isValid: false, error: 'City is required' };
   }
 

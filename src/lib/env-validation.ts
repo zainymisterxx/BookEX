@@ -23,6 +23,12 @@ const envSchema = z.object({
   
   // Application URLs
   NEXT_PUBLIC_APP_URL: z.string().url('NEXT_PUBLIC_APP_URL must be a valid URL').optional(),
+
+  // Upload storage root for filesystem-backed image storage
+  BOOKEX_UPLOAD_ROOT: z.string().min(1, 'BOOKEX_UPLOAD_ROOT is required for filesystem image storage').optional(),
+
+  // Optional migration backup directory
+  BOOKEX_IMAGE_BACKUP_DIR: z.string().min(1, 'BOOKEX_IMAGE_BACKUP_DIR must be a valid path').optional(),
   
   // Socket.IO
   SOCKET_PORT: z.string().regex(/^\d+$/, 'SOCKET_PORT must be a valid port number').optional().default('3001'),

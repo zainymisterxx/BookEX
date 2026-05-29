@@ -269,20 +269,17 @@ export async function validateExchangePermissions(
       return { valid: false, error: 'User not found' };
     }
     
-    // Check if both users have cities set
-    if (!user.city || !targetUser.city) {
-      return { 
-        valid: false, 
-        error: 'Both users must have their city set for exchanges' 
-      };
-    }
-    
-    // Check same city requirement
-    if (user.city.toLowerCase().trim() !== targetUser.city.toLowerCase().trim()) {
-      return { 
-        valid: false, 
-        error: 'Book exchanges are only available within the same city' 
-      };
+    // Use centralized eligibility/location helper
+    const { default: locationUtils } = await import('@/lib/location/location-utils');
+    const eligibility = locationUtils.canUserExchange({
+      proposer: { id: String(user._id), cityNormalized: user.cityNormalized, avatarUrl: user.avatarUrl, bio: user.bio },
+      responder: { id: String(targetUser._id), cityNormalized: targetUser.cityNormalized, avatarUrl: targetUser.avatarUrl, bio: targetUser.bio },
+      proposerBook: { sellerId: undefined, status: 'active' },
+      responderBook: { sellerId: undefined, status: 'active' }
+    });
+
+    if (!eligibility.allowed) {
+      return { valid: false, error: eligibility.reason || 'Book exchanges are not allowed between these users' };
     }
     
     // If bookId provided, validate book

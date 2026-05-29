@@ -78,10 +78,10 @@ export function UserProfile({ user, listings, currentUser }: UserProfileProps) {
                 <div className="space-y-2">
                   <h1 className="text-2xl font-bold">{user.name}</h1>
 
-                  {user.city && (
+                  {(user as any).cityName && (
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <MapPin className="h-4 w-4" />
-                      <span>{user.city}</span>
+                      <span>{(user as any).cityName}</span>
                     </div>
                   )}
 

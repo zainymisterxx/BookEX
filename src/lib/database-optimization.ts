@@ -26,7 +26,7 @@ export const RECOMMENDED_INDEXES: IndexDefinition[] = [
   // Books collection indexes
   {
     collection: 'books',
-    index: { type: 1, city: 1, createdAt: -1 },
+    index: { type: 1, cityNormalized: 1, createdAt: -1 },
     options: { name: 'type_city_created', background: true }
   },
   {
@@ -58,7 +58,7 @@ export const RECOMMENDED_INDEXES: IndexDefinition[] = [
   },
   {
     collection: 'users',
-    index: { city: 1 },
+    index: { cityNormalized: 1 },
     options: { name: 'city_index', background: true }
   },
   {
@@ -238,6 +238,7 @@ export class OptimizedQueries {
     const client = await clientPromise;
     const db = client.db('bookex');
     const collection = db.collection('books');
+    const { findCanonicalCity } = await import('./location/location-utils');
 
     const page = filters.page || 1;
     const limit = Math.min(filters.limit || 20, 100); // Max 100 items per page
@@ -247,7 +248,11 @@ export class OptimizedQueries {
     const query: any = {};
     
     if (filters.type) query.type = filters.type;
-    if (filters.city) query.city = filters.city;
+    if (filters.city) {
+      const canonical = await findCanonicalCity(filters.city);
+      const { makeNormalizedKey } = await import('./location/location-utils');
+      query.cityNormalized = canonical?.normalized || makeNormalizedKey(filters.city);
+    }
     if (filters.genre) query.genre = filters.genre;
     if (filters.condition) query.condition = filters.condition;
     
@@ -274,7 +279,7 @@ export class OptimizedQueries {
           localField: 'sellerId',
           foreignField: '_id',
           as: 'seller',
-          pipeline: [{ $project: { name: 1, avatarUrl: 1, city: 1 } }]
+          pipeline: [{ $project: { name: 1, avatarUrl: 1, cityNormalized: 1 } }]
         }
       },
       { $unwind: { path: '$seller', preserveNullAndEmptyArrays: true } }

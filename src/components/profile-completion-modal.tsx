@@ -74,12 +74,8 @@ export function ProfileCompletionModal({ isOpen, onClose, onForceClose, user }: 
           description: "Welcome to BookEx! Your profile has been set up successfully.",
         });
         
-        // Update the session to reflect the profile completion
-        await update({ profileCompleted: true });
-        
+        // Refresh to reflect computed completeness
         onForceClose();
-        
-        // Small delay then refresh to ensure everything is updated
         setTimeout(() => {
           window.location.reload();
         }, 500);

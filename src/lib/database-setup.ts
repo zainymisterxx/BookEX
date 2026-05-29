@@ -44,7 +44,7 @@ export async function ensureDatabaseIndexes() {
     // Books - Core search indexes
     await createIndexSafely(
       db.collection('books'),
-      { city: 1, type: 1, genre: 1 }, 
+      { cityNormalized: 1, type: 1, genre: 1 }, 
       { background: true, name: 'city_type_genre_compound' }
     );
     
@@ -222,7 +222,7 @@ export async function checkIndexHealth() {
       { 
         collection: 'books', 
         index: 'city_type_genre_compound',
-        fields: { city: 1, type: 1, genre: 1 }
+        fields: { cityNormalized: 1, type: 1, genre: 1 }
       },
       { 
         collection: 'organizations', 
@@ -319,7 +319,7 @@ export async function createMissingIndexes() {
           case 'city_type_genre_compound':
             try {
               await db.collection('books').createIndex(
-                { city: 1, type: 1, genre: 1 }, 
+                { cityNormalized: 1, type: 1, genre: 1 }, 
                 { background: true, name: 'city_type_genre_compound' }
               );
               console.log(`✅ Created index: ${indexName}`);

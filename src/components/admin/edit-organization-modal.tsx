@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, UploadCloud } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { updateOrganizationProfile } from '@/app/actions';
-import { fileToDataUri } from '@/lib/utils';
+import { uploadImageFile } from '@/lib/upload-client';
 import Image from 'next/image';
 
 interface EditOrganizationModalProps {
@@ -73,7 +73,7 @@ export function EditOrganizationModal({
 
       // Only include imageUrl if a new image was selected
       if (logoImage) {
-        updateData.imageUrl = await fileToDataUri(logoImage);
+        updateData.imageUrl = (await uploadImageFile(logoImage, 'organizationImage', 'community', organizationId)).url;
       }
 
       const result = await updateOrganizationProfile(organizationId, updateData);

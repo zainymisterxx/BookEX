@@ -18,8 +18,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useSession } from 'next-auth/react';
 import { getUserForUpdate, updateUserProfile, getCitiesByCountryAction, getPopularCitiesAction, searchCitiesAction, getAvailableCountriesAction, checkUsernameAvailability } from '@/app/actions';
-import { fileToDataUri } from '@/lib/utils';
 import { validateUsername } from '@/lib/username-utils';
+import pakistanCities from '@/lib/location/pakistan-cities';
+import { uploadImageFile } from '@/lib/upload-client';
 
 const DEFAULT_COUNTRY = "Pakistan";
 
@@ -46,9 +47,14 @@ export default function SettingsPage() {
   useEffect(() => {
     // Load available cities
     const loadCities = async () => {
-      const citiesData = await getCitiesByCountryAction(DEFAULT_COUNTRY);
-      const cities = citiesData.map(city => city.name);
-      setAvailableCities(cities);
+      try {
+        const citiesData = await getCitiesByCountryAction(DEFAULT_COUNTRY);
+        const cities = (citiesData.length > 0 ? citiesData : pakistanCities).map(city => city.name);
+        setAvailableCities(Array.from(new Set(cities)));
+      } catch (error) {
+        console.error('Error loading cities for profile settings:', error);
+        setAvailableCities(pakistanCities.map(city => city.name));
+      }
     };
     loadCities();
 
@@ -59,9 +65,9 @@ export default function SettingsPage() {
         if (userData.success && userData.data) {
           setName(userData.data.name || '');
           setUsername(userData.data.username || '');
-          setCity(userData.data.city || '');
+          setCity(userData.data.cityName || userData.data.cityNormalized || '');
           setAvatarPreview(userData.data.avatarUrl || null);
-          if (!userData.data.city) {
+          if (!userData.data.cityNormalized) {
             setIsProfileIncomplete(true);
           }
         }
@@ -144,10 +150,10 @@ export default function SettingsPage() {
 
     setIsSaving(true);
     try {
-      let newAvatarDataUrl: string | undefined = undefined;
+      let newAvatarUrl: string | undefined = undefined;
 
       if (avatarFile) {
-        newAvatarDataUrl = await fileToDataUri(avatarFile);
+        newAvatarUrl = (await uploadImageFile(avatarFile, 'userAvatar', 'user', user.id)).url;
       }
       
       // Validate username before saving
@@ -172,7 +178,7 @@ export default function SettingsPage() {
         name: name,
         username: username,
         city: city,
-        avatarUrl: newAvatarDataUrl,
+        avatarUrl: newAvatarUrl,
       });
       
       if (!result.success) {

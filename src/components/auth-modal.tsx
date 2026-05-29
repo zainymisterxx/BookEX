@@ -112,7 +112,8 @@ function AuthTabs({ initialTab, closeModal }: { initialTab: "login" | "signup", 
 
         toast({ title: 'Account created!', description: "You've successfully signed up." });
         closeModal();
-        router.refresh();
+        // Redirect new users to profile settings to complete their city and profile
+        router.push('/profile/settings');
     } catch (error: any) {
         toast({ variant: 'destructive', title: 'Signup failed', description: error.message || 'An unexpected error occurred.' });
     } finally {

@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+const publicImageUrlSchema = z
+  .string()
+  .min(1, 'Image URL is required')
+  .refine((value) => /^https?:\/\//i.test(value) || /^\/uploads\/(books|profiles|communities|temp)\/[A-Za-z0-9._-]+$/i.test(value), {
+    message: 'Image URL must be a valid remote URL or an uploaded file path',
+  });
+
+const optionalPublicImageUrlSchema = publicImageUrlSchema.optional();
+
 // Book Genre enum
 export const BookGenreSchema = z.enum(['fantasy', 'sci-fi', 'mystery', 'romance', 'self-help', 'historical-fiction', 'other']);
 
@@ -50,9 +59,7 @@ export const bookSchema = z.object({
   price: z.number()
     .positive('Price must be positive')
     .optional(),
-  imageUrl: z.string()
-    .url('Image URL must be valid')
-    .optional(),
+  imageUrl: optionalPublicImageUrlSchema,
   city: z.string()
     .min(1, 'City is required')
     .max(100, 'City name must be 100 characters or less')
@@ -79,9 +86,7 @@ export const communitySchema = z.object({
     .min(10, 'Description must be at least 10 characters')
     .max(500, 'Description must be 500 characters or less')
     .trim(),
-  imageUrl: z.string()
-    .url('Image URL must be valid')
-    .optional(),
+  imageUrl: optionalPublicImageUrlSchema,
   createdBy: z.string()
     .min(1, 'Creator ID is required')
 });
@@ -164,9 +169,7 @@ export const organizationSchema = z.object({
     .min(1, 'Location is required')
     .max(200, 'Location must be 200 characters or less')
     .trim(),
-  imageUrl: z.string()
-    .url('Image URL must be valid')
-    .optional(),
+  imageUrl: optionalPublicImageUrlSchema,
   contactEmail: z.string()
     .email('Contact email must be valid')
     .optional(),
@@ -229,9 +232,7 @@ export const userProfileSchema = z.object({
     .min(1, 'City is required')
     .max(100, 'City name must be 100 characters or less')
     .trim(),
-  avatarUrl: z.string()
-    .url('Avatar URL must be valid')
-    .optional(),
+  avatarUrl: optionalPublicImageUrlSchema,
   phone: z.string()
     .max(20, 'Phone number must be 20 characters or less')
     .optional(),
@@ -325,8 +326,8 @@ export const InvitePermissionSchema  = z.enum(['anyone', 'admins_only']);
 export const communitySettingsSchema = z.object({
   name: z.string().min(3).max(50).trim().optional(),
   description: z.string().min(10).max(1000).trim().optional(),
-  imageUrl: z.string().url().optional().or(z.literal('')),
-  coverImage: z.string().url().optional().or(z.literal('')),
+  imageUrl: optionalPublicImageUrlSchema.or(z.literal('')),
+  coverImage: optionalPublicImageUrlSchema.or(z.literal('')),
   rules: z.string().max(5000).optional(),
   visibility: z.enum(['public', 'private']).optional(),
   postingPermissions: PostingPermissionSchema.optional(),

@@ -13,7 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useSession } from 'next-auth/react';
 import { AuthModal } from '@/components/auth-modal';
 import { applyForOrganization } from '@/app/actions';
-import { fileToDataUri } from '@/lib/utils';
+import { uploadImageFile } from '@/lib/upload-client';
 
 export default function ApplyToDonatePage() {
   const [name, setName] = useState('');
@@ -60,7 +60,7 @@ export default function ApplyToDonatePage() {
     
     setIsSubmitting(true);
     try {
-      const imageUrl = await fileToDataUri(logoImage);
+      const imageUrl = (await uploadImageFile(logoImage, 'organizationImage', 'community', session.user.id)).url;
       
       const result = await applyForOrganization({
         name,

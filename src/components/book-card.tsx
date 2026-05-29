@@ -90,7 +90,7 @@ export function BookCard({ book, className, searchTerm = '', showManageOptions =
                 <div className="flex items-center justify-between text-xs sm:text-sm text-muted-foreground">
                   <div className="flex items-center">
                     <MapPin className="h-3 w-3 sm:h-4 sm:w-4 mr-1.5 flex-shrink-0" />
-                    <span className="truncate">{book.city}</span>
+                    <span className="truncate">{(book as any).cityName || (book as any).city || ''}</span>
                   </div>
                   <button
                     type="button"

@@ -20,6 +20,7 @@ import { analyzeBookCondition, type AnalyzeBookConditionOutput } from '@/ai/flow
 import { listBook, getUserCity, getBookForEdit, updateBookListing, checkProfileCompletion } from '@/app/actions';
 import { useSession } from 'next-auth/react';
 import { fileToDataUri } from '@/lib/utils';
+import { uploadImageFile } from '@/lib/upload-client';
 
 const genres: BookGenre[] = ["fantasy", "sci-fi", "mystery", "romance", "self-help", "historical-fiction", "other"];
 
@@ -71,7 +72,7 @@ function SellBookForm() {
       if (status === 'loading') return;
       
       const result = await checkProfileCompletion();
-      if (result.isAuthenticated && !result.profileCompleted) {
+      if (result.isAuthenticated && !result.isProfileComplete) {
         router.push('/profile/settings');
       }
     };
@@ -221,7 +222,7 @@ function SellBookForm() {
     try {
       let imageUrl = '';
       if (coverImage) {
-        imageUrl = await fileToDataUri(coverImage);
+        imageUrl = (await uploadImageFile(coverImage, 'bookImage', 'book', session.user.id)).url;
       }
       
       if (isEditMode && editBookId) {

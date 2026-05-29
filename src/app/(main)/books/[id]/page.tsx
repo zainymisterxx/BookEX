@@ -89,7 +89,7 @@ export default async function BookDetailPage({ params }: { params: Promise<{ id:
                             <Link href={`/profile/${seller._id}`} className="hover:underline">
                               <p className="font-semibold text-lg">{seller.name}</p>
                             </Link>
-                            <p className="text-sm text-muted-foreground">{seller.city}</p>
+                            <p className="text-sm text-muted-foreground">{(seller as any).cityName || ''}</p>
                             <div className="flex items-center gap-1 text-sm text-muted-foreground mt-1">
                             <Star className="w-4 h-4 text-accent fill-accent" />
                             <span>{seller.averageRating} ({seller.reviews} reviews)</span>

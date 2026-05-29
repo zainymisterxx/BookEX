@@ -1,0 +1,16 @@
+{
+  "name": "bookex-media-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "file-type": "^21.1.1",
+    "mongodb": "^6.8.0",
+    "tsx": "^4.16.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30"
+  }
+}

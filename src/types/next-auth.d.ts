@@ -10,7 +10,6 @@ declare module "next-auth" {
       username?: string;
       role: 'user' | 'admin';
       status?: 'active' | 'suspended' | 'deactivated';
-      profileCompleted?: boolean;
     } & DefaultSession["user"]
   }
 }

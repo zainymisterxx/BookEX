@@ -224,11 +224,14 @@ export class ResourceAuthority {
       return targetUser;
     } else {
       // Return limited public profile
+      const cityNorm = targetUser.cityNormalized || undefined;
+      const cityName = (targetUser as any).cityName || null;
       return {
         _id: targetUser._id,
         name: targetUser.name,
         avatarUrl: targetUser.avatarUrl,
-        city: targetUser.city,
+        cityNormalized: cityNorm,
+        cityName: cityName,
         bio: targetUser.bio,
         interests: targetUser.interests,
         reviews: targetUser.reviews,

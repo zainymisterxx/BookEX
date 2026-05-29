@@ -202,7 +202,7 @@ export function validateChatParams(
   };
 }
 
-import { validateUserCity as validateCityFromDatabase } from './city-validation';
+import { validateUserCityCanonical as validateCityFromDatabase } from './location/location-validation';
 
 /**
  * Validates and sanitizes user city using the city database
@@ -217,7 +217,7 @@ export async function validateUserCity(city: unknown): Promise<string> {
     throw new ValidationError(validation.error || 'Invalid city');
   }
 
-  return validation.cityData!.name; // Return the properly formatted city name
+  return validation.city!.normalized; // Return the canonical normalized key for storage
 }
 
 /**

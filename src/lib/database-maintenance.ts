@@ -48,7 +48,7 @@ export const CRITICAL_INDEXES = [
   },
   {
     collection: 'users',
-    index: { city: 1, role: 1 },
+    index: { cityNormalized: 1, role: 1 },
     options: { background: true, name: 'users_location_role' }
   },
 
@@ -60,7 +60,7 @@ export const CRITICAL_INDEXES = [
   },
   {
     collection: 'books',
-    index: { type: 1, city: 1, genre: 1 },
+    index: { type: 1, cityNormalized: 1, genre: 1 },
     options: { background: true, name: 'books_type_location_genre' }
   },
   {

@@ -30,7 +30,7 @@ async function setupIndexes() {
     // Books Collection Indexes
     console.log('  📚 Creating Books indexes...');
     await db.collection('books').createIndex({ 
-      city: 1, 
+      cityNormalized: 1, 
       type: 1, 
       genre: 1 
     }, { 
@@ -108,7 +108,7 @@ async function setupIndexes() {
     });
     
     await db.collection('users').createIndex({ 
-      city: 1 
+      cityNormalized: 1 
     }, { 
       name: 'users_city_idx',
       background: true 
@@ -365,7 +365,7 @@ export async function analyzeQueryPerformance() {
       {
         name: 'Books by city and type',
         collection: 'books',
-        query: { city: 'Karachi', type: 'sell' }
+        query: { cityNormalized: 'karachi', type: 'sell' }
       },
       {
         name: 'Approved organizations',

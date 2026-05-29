@@ -37,7 +37,7 @@ const CRITICAL_INDEXES = {
     },
     {
       name: 'city_search',
-      keys: { city: 1 },
+      keys: { city: 1, cityNormalized: 1 },
       options: { background: true }
     },
     {
@@ -56,7 +56,7 @@ const CRITICAL_INDEXES = {
     },
     {
       name: 'city_type_genre_compound',
-      keys: { city: 1, type: 1, genre: 1 },
+      keys: { cityNormalized: 1, type: 1, genre: 1 },
       options: { background: true }
     },
     {

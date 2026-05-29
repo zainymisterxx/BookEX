@@ -8,6 +8,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { createAppError, ErrorType } from './error-handling';
 import { ResourceAuthority, type AuthorizedUser } from './resource-authorization';
+import { getImageStorageRoot } from './image-storage';
 
 export interface FileUploadConfig {
   maxFileSize: number;
@@ -15,6 +16,7 @@ export interface FileUploadConfig {
   allowedExtensions: string[];
   quarantineDays: number;
   virusScanEnabled: boolean;
+  storageCategory: 'books' | 'profiles' | 'communities' | 'temp';
 }
 
 export interface SecureFileMetadata {
@@ -28,11 +30,13 @@ export interface SecureFileMetadata {
   scanStatus: 'pending' | 'clean' | 'infected' | 'error';
   scanResult?: any;
   accessLevel: 'public' | 'private' | 'restricted';
+  storageCategory: 'books' | 'profiles' | 'communities' | 'temp';
   associatedResource?: {
     type: 'book' | 'user' | 'community';
     id: string;
   };
   storageLocation: string;
+  publicUrl?: string;
   expiresAt?: string;
 }
 
@@ -53,21 +57,40 @@ export const FILE_CONFIGS: Record<string, FileUploadConfig> = {
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
     allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp'],
     quarantineDays: 3,
-    virusScanEnabled: true
+    virusScanEnabled: true,
+    storageCategory: 'profiles'
   },
   bookImage: {
     maxFileSize: 5 * 1024 * 1024, // 5MB
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
     allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp'],
     quarantineDays: 7,
-    virusScanEnabled: true
+    virusScanEnabled: true,
+    storageCategory: 'books'
+  },
+  communityImage: {
+    maxFileSize: 5 * 1024 * 1024,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    quarantineDays: 7,
+    virusScanEnabled: true,
+    storageCategory: 'communities'
+  },
+  organizationImage: {
+    maxFileSize: 5 * 1024 * 1024,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp'],
+    quarantineDays: 7,
+    virusScanEnabled: true,
+    storageCategory: 'communities'
   },
   document: {
     maxFileSize: 10 * 1024 * 1024, // 10MB
     allowedMimeTypes: ['application/pdf', 'text/plain'],
     allowedExtensions: ['.pdf', '.txt'],
     quarantineDays: 14,
-    virusScanEnabled: true
+    virusScanEnabled: true,
+    storageCategory: 'temp'
   },
   chatAttachment: {
     maxFileSize: 25 * 1024 * 1024, // 25MB
@@ -78,7 +101,8 @@ export const FILE_CONFIGS: Record<string, FileUploadConfig> = {
     ],
     allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.txt', '.doc', '.docx'],
     quarantineDays: 30,
-    virusScanEnabled: true
+    virusScanEnabled: true,
+    storageCategory: 'temp'
   }
 };
 
@@ -86,8 +110,8 @@ export const FILE_CONFIGS: Record<string, FileUploadConfig> = {
  * Secure file upload and management system
  */
 export class SecureFileManager {
-  private static readonly UPLOAD_DIR = process.env.SECURE_UPLOAD_DIR || './secure-uploads';
-  private static readonly QUARANTINE_DIR = process.env.QUARANTINE_DIR || './quarantine';
+  private static readonly UPLOAD_ROOT = getImageStorageRoot();
+  private static readonly QUARANTINE_DIR = path.join(this.UPLOAD_ROOT, 'temp', 'quarantine');
   private static readonly MAX_FILENAME_LENGTH = 255;
   
   /**
@@ -369,7 +393,9 @@ export class SecureFileManager {
       const secureFilename = `${fileId}${extension}`;
       
       // Determine storage directory based on scan status
-      const storageDir = metadata.scanStatus === 'clean' ? this.UPLOAD_DIR : this.QUARANTINE_DIR;
+      const storageDir = metadata.scanStatus === 'clean'
+        ? path.join(this.UPLOAD_ROOT, metadata.storageCategory)
+        : this.QUARANTINE_DIR;
       const storagePath = path.join(storageDir, secureFilename);
       
       // Ensure storage directory exists
@@ -383,7 +409,8 @@ export class SecureFileManager {
         id: fileId,
         hash: fileHash,
         uploadedAt: new Date().toISOString(),
-        storageLocation: storagePath
+        storageLocation: storagePath,
+        publicUrl: metadata.scanStatus === 'clean' ? `/uploads/${metadata.storageCategory}/${secureFilename}` : undefined
       };
 
       // Store metadata in database

@@ -21,10 +21,15 @@ export async function ProfileCompletionGuard({
     return <>{children}</>;
   }
 
-  // If profile is not completed, redirect to settings
-  if (!session.user.profileCompleted) {
-    redirect(redirectTo);
-  }
+  // Compute profile completeness server-side to avoid relying on stored flag
+  const client = await (await import('@/lib/mongodb')).default;
+  const db = client.db('bookex');
+  const { ObjectId } = await import('mongodb');
+  const userDoc = await db.collection('users').findOne({ _id: new ObjectId(session.user.id) });
+  const listingsCount = await db.collection('books').countDocuments({ sellerId: session.user.id, status: 'active' });
+  const { computeProfileCompleteness } = await import('@/lib/location/location-utils');
+  const completeness = computeProfileCompleteness({ ...(userDoc || {}), listingsCount });
+  if (!completeness.isComplete) redirect(redirectTo);
 
   // Profile is complete, render children
   return <>{children}</>;

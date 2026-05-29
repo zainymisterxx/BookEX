@@ -59,7 +59,6 @@ export const authOptions: NextAuthOptions = {
             image: user.avatarUrl || null,
             role: user.role || 'user',
             status: user.status || 'active',
-            profileCompleted: user.profileCompleted || false,
           };
         } catch (error) {
           console.error('Authentication error:', error);
@@ -73,7 +72,6 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.role = (user as any).role;
         token.status = (user as any).status;
-        token.profileCompleted = (user as any).profileCompleted;
         token.username = (user as any).username;
       }
       // Persist fields updated via useSession().update()
@@ -89,7 +87,6 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.sub!;
         session.user.role = token.role as 'user' | 'admin';
         session.user.status = token.status as 'active' | 'suspended' | 'deactivated';
-        session.user.profileCompleted = token.profileCompleted as boolean;
         session.user.username = token.username as string;
         // Sync image from JWT so profile picture updates are reflected immediately
         if (token.picture !== undefined) {
