@@ -320,11 +320,13 @@ export function isValidStatusTransition(
 ): { isValid: boolean; error?: string } {
   // Define valid transitions
   const validTransitions: Record<BookStatus, BookStatus[]> = {
-    'active': ['sold', 'exchanged', 'inactive', 'expired'],
-    'sold': ['active'], // Can reactivate if sale fell through
-    'exchanged': ['active'], // Can reactivate if exchange fell through
+    'active': ['sold', 'exchanged', 'inactive', 'expired', 'reserved'],
+    'sold': ['active'],
+    'exchanged': ['active'],
     'inactive': ['active', 'expired'],
-    'expired': ['active'] // Can renew expired listings
+    'expired': ['active'],
+    'reserved': ['active', 'exchanged'],  // restored on cancel, finalised on completion
+    'donated': [],                         // terminal — cannot transition out
   };
 
   if (!validTransitions[currentStatus]?.includes(newStatus)) {

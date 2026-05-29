@@ -2524,7 +2524,7 @@ export async function confirmDonationOffer(
         const now = new Date().toISOString();
         const newStatus: DonationStatus = action === 'accept' ? 'confirmed' : 'rejected';
 
-        await db.collection("donations").updateOne(
+        const offerUpdate = await db.collection("donations").updateOne(
             { _id: new ObjectId(donationId), status: 'pending' },
             {
                 $set: { status: newStatus, orgConfirmed: action === 'accept', updatedAt: now },
@@ -2533,6 +2533,10 @@ export async function confirmDonationOffer(
                 } as any
             }
         );
+
+        if (offerUpdate.modifiedCount === 0) {
+            return { success: false, message: 'Donation was already actioned by another representative.' };
+        }
 
         // Notify donor
         await db.collection("notifications").insertOne({
@@ -2576,7 +2580,7 @@ export async function confirmDonationOffer(
         );
 
         revalidatePath('/donate');
-        return { data: { message: action === 'accept' ? 'Donation accepted.' : 'Donation declined.' } };
+        return { message: action === 'accept' ? 'Donation accepted.' : 'Donation declined.' };
     });
 }
 
@@ -5405,11 +5409,20 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
             throw new Error('Failed to accept exchange: it may have been accepted or cancelled already.');
         }
 
-        // Mark both books as reserved so they can't enter other exchanges
-        await db.collection("books").updateMany(
-            { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
-            { $set: { status: 'reserved', updatedAt: now } }
-        );
+        // Mark both books as reserved atomically in a transaction
+        const mongoClient = await clientPromise;
+        const txSession = mongoClient.startSession();
+        try {
+            await txSession.withTransaction(async () => {
+                await db.collection("books").updateMany(
+                    { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
+                    { $set: { status: 'reserved', updatedAt: now } },
+                    { session: txSession }
+                );
+            });
+        } finally {
+            await txSession.endSession();
+        }
 
         // Add system message to chat
         const systemMessage = {
@@ -5779,13 +5792,17 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
             notes: reason
         };
         
-        await db.collection("exchanges").updateOne(
-            { _id: validatedExchangeId },
+        const cancelResult = await db.collection("exchanges").updateOne(
+            { _id: validatedExchangeId, status: { $nin: ['cancelled', 'completed'] } },
             {
                 $set: { status: 'cancelled', updatedAt: now },
                 $push: { statusHistory: statusUpdate } as any
             }
         );
+
+        if (cancelResult.modifiedCount === 0) {
+            throw new Error('Exchange has already been cancelled or completed.');
+        }
 
         // Restore both books to active if they were reserved
         if (['accepted', 'in_progress'].includes(exchange.status)) {

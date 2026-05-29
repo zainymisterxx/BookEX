@@ -285,12 +285,23 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left community ${communityId}`);
   });
 
-  socket.on('joinExchange', (exchangeId) => {
+  socket.on('joinExchange', async (exchangeId) => {
     if (!socket.userId) {
       socket.emit('error', { message: 'Not authenticated' });
       return;
     }
-    socket.join(`exchange_${exchangeId}`);
+    try {
+      const client = await clientPromise;
+      const db = client.db('bookex');
+      const exchange = await db.collection('exchanges').findOne({ _id: new ObjectId(exchangeId) });
+      if (!exchange || (exchange.proposerId !== socket.userId && exchange.responderId !== socket.userId)) {
+        socket.emit('error', { message: 'Not a participant in this exchange' });
+        return;
+      }
+      socket.join(`exchange_${exchangeId}`);
+    } catch {
+      socket.emit('error', { message: 'Failed to join exchange room' });
+    }
   });
 
   socket.on('leaveExchange', (exchangeId) => {
