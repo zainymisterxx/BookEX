@@ -55,13 +55,23 @@ async function setupIndexes() {
       background: true 
     });
     
-    await db.collection('books').createIndex({ 
-      price: 1 
-    }, { 
+    await db.collection('books').createIndex({
+      price: 1
+    }, {
       name: 'books_price_idx',
-      background: true 
+      background: true
     });
-    
+
+    // Soft-delete index for books
+    await db.collection('books').createIndex({
+      deletedAt: 1,
+      status: 1
+    }, {
+      name: 'books_soft_delete_status_idx',
+      sparse: true,
+      background: true
+    });
+
     // Organizations Collection Indexes
     console.log('  🏢 Creating Organizations indexes...');
     await db.collection('organizations').createIndex({ 
@@ -88,13 +98,21 @@ async function setupIndexes() {
     });
     
     // Ensure unique organization names (case-insensitive)
-    await db.collection('organizations').createIndex({ 
-      name: 1 
-    }, { 
+    await db.collection('organizations').createIndex({
+      name: 1
+    }, {
       name: 'organizations_name_unique_idx',
       unique: true,
       collation: { locale: 'en', strength: 2 }, // Case-insensitive
-      background: true 
+      background: true
+    });
+
+    // Representative lookup index
+    await db.collection('organizations').createIndex({
+      'representatives.userId': 1
+    }, {
+      name: 'organizations_representatives_user_idx',
+      background: true
     });
     
     // Users Collection Indexes
@@ -197,15 +215,25 @@ async function setupIndexes() {
     });
     
     // Index for member queries
-    await db.collection('communities').createIndex({ 
+    await db.collection('communities').createIndex({
       "members.userId": 1,
       "members.role": 1,
       memberCount: -1
-    }, { 
+    }, {
       name: 'communities_members_role_count_idx',
-      background: true 
+      background: true
     });
-    
+
+    // Soft-delete index for communities
+    await db.collection('communities').createIndex({
+      deletedAt: 1,
+      status: 1
+    }, {
+      name: 'communities_soft_delete_status_idx',
+      sparse: true,
+      background: true
+    });
+
     // Posts Collection Indexes
     console.log('  📝 Creating Posts indexes...');
     await db.collection('posts').createIndex({ 
@@ -233,11 +261,21 @@ async function setupIndexes() {
       background: true 
     });
 
-    await db.collection('comments').createIndex({ 
-      path: 1 
-    }, { 
+    await db.collection('comments').createIndex({
+      path: 1
+    }, {
       name: 'comments_path_idx',
-      background: true 
+      background: true
+    });
+
+    // Threaded comment fetching
+    await db.collection('comments').createIndex({
+      postId: 1,
+      parentId: 1,
+      createdAt: 1
+    }, {
+      name: 'comments_post_parent_created_idx',
+      background: true
     });
     
     await db.collection('posts').createIndex({ 
@@ -308,23 +346,62 @@ async function setupIndexes() {
     
     // Notifications Collection Indexes
     console.log('  🔔 Creating Notifications indexes...');
-    await db.collection('notifications').createIndex({ 
-      userId: 1, 
-      read: 1, 
-      createdAt: -1 
-    }, { 
+    await db.collection('notifications').createIndex({
+      userId: 1,
+      read: 1,
+      createdAt: -1
+    }, {
       name: 'notifications_user_read_date_idx',
-      background: true 
+      background: true
     });
-    
+
+    // Compound index for filtering notifications by read state and type
+    await db.collection('notifications').createIndex({
+      read: 1,
+      type: 1,
+      createdAt: -1
+    }, {
+      name: 'notifications_read_type_date_idx',
+      background: true
+    });
+
+    // Admin Notifications Collection Indexes
+    console.log('  🔔 Creating Admin Notifications indexes...');
+    await db.collection('adminNotifications').createIndex({
+      userId: 1,
+      read: 1,
+      createdAt: -1
+    }, {
+      name: 'adminNotifications_user_read_date_idx',
+      background: true
+    });
+
+    await db.collection('adminNotifications').createIndex({
+      type: 1,
+      createdAt: -1
+    }, {
+      name: 'adminNotifications_type_date_idx',
+      background: true
+    });
+
+    // TTL index: MongoDB auto-deletes documents once expiresAt is reached
+    await db.collection('adminNotifications').createIndex({
+      expiresAt: 1
+    }, {
+      name: 'adminNotifications_ttl_idx',
+      expireAfterSeconds: 0,
+      background: true
+    });
+
     console.log('✅ All indexes created successfully!');
     console.log('📈 Your database is now optimized for better performance.');
     
     // Display index information
     console.log('\n📊 Index Summary:');
     const collections = [
-      'books', 'organizations', 'users', 'chats', 'communities', 
-      'posts', 'reports', 'exchanges', 'reviews', 'notifications'
+      'books', 'organizations', 'users', 'chats', 'communities',
+      'posts', 'comments', 'reports', 'exchanges', 'reviews',
+      'notifications', 'adminNotifications'
     ];
     
     for (const collectionName of collections) {

@@ -971,6 +971,19 @@ export async function adminDeletePost(
       logActivity(callerId, 'community_post_deleted', 'medium', `Deleted post ${postId} in community ${communityId}`, { communityId, postId, reason }),
     ]);
 
+    try {
+      await db.collection("notifications").insertOne({
+        userId: post.authorId,
+        type: 'system',
+        title: 'Your post was removed',
+        message: 'A moderator has removed one of your posts for violating community guidelines.',
+        link: `/community/${communityId}`,
+        read: false,
+        createdAt: new Date().toISOString(),
+        metadata: { communityId, postId: String(post._id) }
+      });
+    } catch (e) { console.warn('Failed to notify post author:', e); }
+
     revalidatePath(`/community/${communityId}`);
 
     try {

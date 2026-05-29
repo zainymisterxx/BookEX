@@ -10,8 +10,19 @@ import { NotificationProvider } from '@/components/notification-provider';
 import { ErrorBoundary } from '@/components/error-boundary';
 
 export const metadata: Metadata = {
-  title: 'BookEx',
-  description: 'A community for buying, selling, and exchanging books.',
+  title: 'BookEX — Exchange, Buy & Donate Books',
+  description: 'Community-driven platform for buying, selling, exchanging, and donating books.',
+  openGraph: {
+    title: 'BookEX — Exchange, Buy & Donate Books',
+    description: 'Community-driven platform for buying, selling, exchanging, and donating books.',
+    type: 'website',
+    siteName: 'BookEX',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'BookEX — Exchange, Buy & Donate Books',
+    description: 'Community-driven platform for buying, selling, exchanging, and donating books.',
+  },
 };
 
 const fontBody = Nunito_Sans({
