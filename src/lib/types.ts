@@ -26,6 +26,10 @@ export interface Book {
   titleNormalized: string; // Normalized title for duplicate detection
   authorNormalized: string; // Normalized author for duplicate detection
   duplicateHash: string; // Hash for quick duplicate detection
+  // Engagement analytics
+  viewCount?: number;
+  contactCount?: number;
+  reportCount?: number;
 }
 
 export interface WishlistItem {
@@ -58,6 +62,8 @@ export interface User {
   deactivatedAt?: string; // ISO 8601 date string (UTC) - when account was deactivated
   emailVerified?: boolean;
   emailVerifiedAt?: string; // ISO 8601 date string (UTC)
+  lastLoginAt?: string; // ISO 8601 date string (UTC)
+  failedLoginAttempts?: number;
   createdAt?: string; // ISO 8601 date string (UTC) - when account was created
   updatedAt?: string; // ISO 8601 date string (UTC) - Last profile update timestamp
   wishlist?: WishlistItem[];
@@ -75,6 +81,7 @@ export interface Community {
   name: string;
   description: string;
   memberCount: number;
+  postCount?: number;
   imageUrl: string;
   coverImage?: string;
   rules?: string; // Markdown, max 5000 chars
@@ -303,6 +310,9 @@ export interface Chat {
     deletedBy?: string[];              // Users who deleted this chat (soft delete)
     
     lastMessage?: string;
+    lastMessageAt?: string; // ISO 8601 date string
+    lastMessagePreview?: string;
+    unreadCountByParticipant?: Record<string, number>;
     updatedAt: string; // ISO 8601 date string
     messages?: Message[]; // Messages can be embedded
     // For UI display
@@ -320,6 +330,7 @@ export interface Review {
     rating: number;
     comment: string;
     createdAt: string; // ISO 8601 date string
+    transactionId?: string; // ObjectId of the exchange or donation this review is for
 }
 
 export interface Report {
@@ -462,12 +473,21 @@ export interface Exchange {
     proposerConfirmed?: boolean;  // Did proposer confirm completion?
     responderConfirmed?: boolean; // Did responder confirm completion?
     
+    // Dispute tracking
+    disputeReason?: string;
+    disputeOpenedAt?: string;     // ISO 8601 date string
+    disputeResolvedAt?: string;   // ISO 8601 date string
+    disputeResolvedBy?: string;   // Admin userId who resolved
+
+    // Audit trail
+    timeline?: Array<{ event: string; timestamp: string; byUserId: string; note?: string }>;
+
     // Ratings (after completion)
     proposerRating?: number;      // 1-5 rating from proposer
     responderRating?: number;     // 1-5 rating from responder
     proposerReview?: string;      // Optional review from proposer
     responderReview?: string;     // Optional review from responder
-    
+
     // For UI display (populated when fetched)
     proposer?: User;
     responder?: User;

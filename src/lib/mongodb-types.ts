@@ -24,10 +24,18 @@ export interface BookDocument {
   imageUrl: string;
   sellerId: string;
   city: string;
+  cityNormalized?: string;
   type: 'sell' | 'exchange';
   description: string;
   genre: string;
+  status?: string;
+  expiresAt?: string;
+  titleNormalized?: string;
+  authorNormalized?: string;
+  duplicateHash?: string;
   createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface ChatDocument {
@@ -81,6 +89,11 @@ export interface PostDocument {
   createdAt: string;
   editedAt?: string;
   editHistory?: Array<{ content: string; editedAt: string }>;
+  isPinned?: boolean;
+  isLocked?: boolean;
+  status?: 'active' | 'removed' | 'flagged';
+  deletedAt?: string;
+  deletedBy?: string;
 }
 
 export interface CommentDocument {

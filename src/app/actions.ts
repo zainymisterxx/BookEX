@@ -1482,13 +1482,17 @@ export async function blockUser(userIdToBlock: string) {
             throw new ValidationError("User not found");
         }
 
-        // Add to blocked list
-        await db.collection("users").updateOne(
-            { _id: new ObjectId(user.id) },
-            { 
-                $addToSet: { blockedUsers: validatedBlockUserId.toString() }
-            }
-        );
+        // Add to blocked list (both directions so neither can contact the other)
+        await Promise.all([
+            db.collection("users").updateOne(
+                { _id: new ObjectId(user.id) },
+                { $addToSet: { blockedUsers: validatedBlockUserId.toString() } }
+            ),
+            db.collection("users").updateOne(
+                { _id: validatedBlockUserId },
+                { $addToSet: { blockedUsers: user.id } }
+            ),
+        ]);
 
         // Log activity
         await logActivity(
@@ -1517,13 +1521,17 @@ export async function unblockUser(userIdToUnblock: string) {
         
         const validatedUnblockUserId = validateObjectId(userIdToUnblock);
 
-        // Remove from blocked list
-        await db.collection("users").updateOne(
-            { _id: new ObjectId(user.id) },
-            { 
-                $pull: { blockedUsers: validatedUnblockUserId.toString() } as any
-            }
-        );
+        // Remove from both sides so the block is fully cleared
+        await Promise.all([
+            db.collection("users").updateOne(
+                { _id: new ObjectId(user.id) },
+                { $pull: { blockedUsers: validatedUnblockUserId.toString() } as any }
+            ),
+            db.collection("users").updateOne(
+                { _id: validatedUnblockUserId },
+                { $pull: { blockedUsers: user.id } as any }
+            ),
+        ]);
 
         // Log activity
         await logActivity(
@@ -4444,7 +4452,7 @@ export async function addOrganizationByAdmin(orgData: {
  * @returns An object with the result of the operation.
  */
 export async function suspendUser(userId: string, reason?: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
-    return withAuthenticatedAction(async ({ db }) => {
+    return withAuthenticatedAction(async ({ db, user }) => {
         const now = new Date().toISOString();
         await db.collection("users").updateOne(
             { _id: new ObjectId(userId) },
@@ -4457,6 +4465,14 @@ export async function suspendUser(userId: string, reason?: string): Promise<{ su
                 },
             }
         );
+
+        await db.collection("auditLogs").insertOne({
+            action: 'SUSPEND_USER',
+            performedBy: user.id,
+            targetUserId: userId,
+            reason: reason ?? null,
+            timestamp: now,
+        });
 
         revalidatePath('/admin');
         return { success: true };
@@ -5996,10 +6012,23 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
             try {
                 const { createExchangeUpdateNotification } = await import('@/lib/notification-utils');
                 const proposerBook = await db.collection("books").findOne({ _id: new ObjectId(String(exchange.proposerBookId)) });
+                const bookTitle = proposerBook?.title || 'your book';
                 await Promise.all([
-                    createExchangeUpdateNotification(exchange.proposerId, 'completed', proposerBook?.title || 'your book', String(validatedExchangeId)),
-                    createExchangeUpdateNotification(exchange.responderId, 'completed', proposerBook?.title || 'your book', String(validatedExchangeId))
+                    createExchangeUpdateNotification(exchange.proposerId, 'completed', bookTitle, String(validatedExchangeId)),
+                    createExchangeUpdateNotification(exchange.responderId, 'completed', bookTitle, String(validatedExchangeId))
                 ]);
+
+                // Send completion emails
+                const [proposerUser, responderUser] = await Promise.all([
+                    db.collection("users").findOne({ _id: new ObjectId(exchange.proposerId) }, { projection: { name: 1, email: 1 } }),
+                    db.collection("users").findOne({ _id: new ObjectId(exchange.responderId) }, { projection: { name: 1, email: 1 } })
+                ]);
+                if (proposerUser?.email && responderUser?.email) {
+                    await Promise.all([
+                        sendExchangeStatusUpdateEmail(proposerUser.email, proposerUser.name, responderUser.name, bookTitle, 'completed', String(validatedExchangeId)),
+                        sendExchangeStatusUpdateEmail(responderUser.email, responderUser.name, proposerUser.name, bookTitle, 'completed', String(validatedExchangeId))
+                    ]);
+                }
             } catch (notifError) {
                 console.warn('Failed to create completion notifications:', notifError);
             }

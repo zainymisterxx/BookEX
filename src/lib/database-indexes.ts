@@ -402,6 +402,25 @@ async function setupIndexes() {
       { expireAfterSeconds: 0, name: 'email_verification_tokens_ttl_idx', background: true }
     );
 
+    // sessions — active session tracking ("log out all devices")
+    await db.collection('sessions').createIndex({ userId: 1 }, { name: 'sessions_userId_idx', background: true });
+    await db.collection('sessions').createIndex(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: 'sessions_ttl_idx', background: true }
+    );
+
+    // feature_flags — kill-switch and gradual rollout
+    await db.collection('feature_flags').createIndex({ key: 1 }, { unique: true, name: 'feature_flags_key_unique_idx', background: true });
+
+    // search_analytics — query tracking
+    await db.collection('search_analytics').createIndex({ query: 1 }, { name: 'search_analytics_query_idx', background: true });
+    await db.collection('search_analytics').createIndex({ createdAt: 1 }, { name: 'search_analytics_createdAt_idx', background: true });
+
+    // book_views — engagement analytics
+    await db.collection('book_views').createIndex({ bookId: 1 }, { name: 'book_views_bookId_idx', background: true });
+    await db.collection('book_views').createIndex({ userId: 1, bookId: 1 }, { name: 'book_views_userId_bookId_idx', background: true });
+    await db.collection('book_views').createIndex({ createdAt: 1 }, { name: 'book_views_createdAt_idx', background: true });
+
     console.log('✅ All indexes created successfully!');
     console.log('📈 Your database is now optimized for better performance.');
     
