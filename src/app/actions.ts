@@ -4422,6 +4422,70 @@ export async function suspendUser(userId: string): Promise<{ success: true; data
     }, 'admin');
 }
 
+
+/**
+ * Deactivates a user account (self-deactivation or admin).
+ * Cancels active/pending exchanges and restores on_hold/reserved books to active.
+ */
+export async function deactivateUser(targetUserId: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (user.id !== targetUserId && user.role !== 'admin') {
+            throw new Error('You are not authorised to deactivate this account.');
+        }
+
+        if (!ObjectId.isValid(targetUserId)) {
+            throw new Error('Invalid user ID.');
+        }
+
+        const targetOid = new ObjectId(targetUserId);
+        const now = new Date().toISOString();
+
+        const targetUser = await db.collection('users').findOne({ _id: targetOid });
+        if (!targetUser) {
+            throw new Error('User not found.');
+        }
+        if (targetUser.status === 'deactivated') {
+            throw new Error('Account is already deactivated.');
+        }
+
+        // 1. Soft-deactivate the user
+        await db.collection('users').updateOne(
+            { _id: targetOid },
+            { $set: { status: 'deactivated', deactivatedAt: now, updatedAt: now } }
+        );
+
+        // 2. Cancel active/pending exchanges where this user is proposer or responder
+        const cancelledStatusEntry = {
+            status: 'cancelled' as ExchangeStatus,
+            timestamp: now,
+            updatedBy: user.id,
+            notes: 'Account deactivated by user.',
+        };
+
+        await db.collection('exchanges').updateMany(
+            {
+                $or: [{ proposerId: targetUserId }, { responderId: targetUserId }],
+                status: { $in: ['proposed', 'accepted', 'in_progress'] },
+            },
+            {
+                $set: { status: 'cancelled', updatedAt: now },
+                $push: { statusHistory: cancelledStatusEntry } as any,
+            }
+        );
+
+        // 3. Restore on_hold/reserved books back to active so other users are not stuck
+        await db.collection('books').updateMany(
+            { sellerId: targetUserId, status: { $in: ['on_hold', 'reserved'] } },
+            { $set: { status: 'active', updatedAt: now } }
+        );
+
+        revalidatePath('/profile');
+        revalidatePath('/admin');
+
+        return { message: 'Account has been deactivated successfully.' };
+    });
+}
+
 /**
  * Gets detailed organization information (admin only).
  * @param organizationId The ID of the organization.

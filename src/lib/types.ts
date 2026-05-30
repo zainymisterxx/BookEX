@@ -53,6 +53,9 @@ export interface User {
   averageRating?: number; // Calculated on read: totalRatingPoints / reviews
   role?: 'user' | 'admin';
   status?: 'active' | 'suspended' | 'deactivated'; // User account status
+  deactivatedAt?: string; // ISO 8601 date string (UTC) - when account was deactivated
+  emailVerified?: boolean;
+  emailVerifiedAt?: string; // ISO 8601 date string (UTC)
   createdAt?: string; // ISO 8601 date string (UTC) - when account was created
   updatedAt?: string; // ISO 8601 date string (UTC) - Last profile update timestamp
   wishlist?: WishlistItem[];
@@ -396,6 +399,16 @@ export interface PasswordResetToken {
     expiresAt: string; // ISO 8601 date string
     used: boolean;
     createdAt: string; // ISO 8601 date string
+}
+
+export interface EmailVerificationToken {
+    _id?: ObjectId | string;
+    userId: string;
+    email: string;
+    token: string;       // random hex, 32 bytes
+    expiresAt: string;   // ISO, 24h from creation
+    usedAt?: string;
+    createdAt: string;
 }
 
 // Exchange Status Tracking Types

@@ -117,13 +117,10 @@ async function setupIndexes() {
     
     // Users Collection Indexes
     console.log('  👥 Creating Users indexes...');
-    await db.collection('users').createIndex({ 
-      email: 1 
-    }, { 
-      name: 'users_email_unique_idx',
-      unique: true,
-      background: true 
-    });
+    await db.collection('users').createIndex(
+      { email: 1 },
+      { unique: true, sparse: true, name: 'users_email_unique', background: true }
+    );
     
     await db.collection('users').createIndex({ 
       cityNormalized: 1 
@@ -392,6 +389,18 @@ async function setupIndexes() {
       expireAfterSeconds: 0,
       background: true
     });
+
+    // Email Verification Tokens Collection Indexes
+    console.log('  📧 Creating Email Verification Tokens indexes...');
+    await db.collection('email_verification_tokens').createIndex(
+      { token: 1 },
+      { unique: true, name: 'email_verification_tokens_token_unique_idx', background: true }
+    );
+    // TTL index: MongoDB auto-purges documents once expiresAt is reached
+    await db.collection('email_verification_tokens').createIndex(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: 'email_verification_tokens_ttl_idx', background: true }
+    );
 
     console.log('✅ All indexes created successfully!');
     console.log('📈 Your database is now optimized for better performance.');
