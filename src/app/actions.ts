@@ -295,17 +295,26 @@ export async function resetPassword(token: string, newPassword: string) {
     // Hash the new password
     const hashedPassword = await hash(newPassword, 10);
 
-    // Update user's password
-    await usersCollection.updateOne(
-      { _id: new ObjectId(resetTokenData.userId) },
-      { $set: { password: hashedPassword } }
-    );
+    // Atomically update password and mark token used so a partial failure
+    // cannot leave the token consumed but the password unchanged.
+    const session = client.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await usersCollection.updateOne(
+          { _id: new ObjectId(resetTokenData.userId) },
+          { $set: { password: hashedPassword } },
+          { session }
+        );
 
-    // Mark token as used
-    await tokensCollection.updateOne(
-      { _id: resetTokenData._id },
-      { $set: { used: true } }
-    );
+        await tokensCollection.updateOne(
+          { _id: resetTokenData._id },
+          { $set: { used: true } },
+          { session }
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
 
     // Log successful password reset
     await logActivity(
@@ -3163,23 +3172,35 @@ export async function deleteReview(reviewId: string) {
             throw new Error("Unauthorized");
         }
 
-        // Delete the review
-        const deleteResult = await db.collection("reviews").deleteOne({ _id: new ObjectId(reviewId) });
+        // Atomically delete the review and update rating stats so a partial
+        // failure cannot leave rating counts permanently wrong.
+        const client = await clientPromise;
+        const session = client.startSession();
+        try {
+          await session.withTransaction(async () => {
+            const deleteResult = await db.collection("reviews").deleteOne(
+              { _id: new ObjectId(reviewId) },
+              { session }
+            );
 
-        if (deleteResult.deletedCount === 0) {
-            throw new Error("Failed to delete review");
-        }
-
-        // Update user's rating statistics
-        await db.collection("users").updateOne(
-            { _id: new ObjectId(review.revieweeId) },
-            {
-                $inc: {
-                    reviews: -1,
-                    totalRatingPoints: -review.rating
-                }
+            if (deleteResult.deletedCount === 0) {
+              throw new Error("Failed to delete review");
             }
-        );
+
+            await db.collection("users").updateOne(
+              { _id: new ObjectId(review.revieweeId) },
+              {
+                $inc: {
+                  reviews: -1,
+                  totalRatingPoints: -review.rating
+                }
+              },
+              { session }
+            );
+          });
+        } finally {
+          await session.endSession();
+        }
 
         revalidatePath(`/profile/${review.revieweeId}`);
         return { success: true };
