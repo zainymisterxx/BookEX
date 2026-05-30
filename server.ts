@@ -99,7 +99,10 @@ io.on('connection', (socket) => {
   socket.on('joinUserRoom', async (userId) => {
     try {
       if (userId) {
-        socket.userId = userId;
+        if (userId !== socket.userId) {
+          socket.emit('error', { message: 'Not authorized to join this user room' });
+          return;
+        }
         socket.join(`user_${userId}`);
         console.log(`User ${userId} joined user room ${userId}`);
         
@@ -165,18 +168,35 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('joinChat', (chatId) => {
+  socket.on('joinChat', async (chatId) => {
+    if (!socket.userId) {
+      socket.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+
+    try {
+      const client = await clientPromise;
+      const db = client.db('bookex');
+      const chat = await db.collection('chats').findOne({ _id: new ObjectId(chatId) });
+
+      if (!chat || !chat.participantIds || !chat.participantIds.includes(socket.userId)) {
+        socket.emit('error', { message: 'Not a participant in this chat' });
+        return;
+      }
+    } catch {
+      socket.emit('error', { message: 'Failed to join chat' });
+      return;
+    }
+
     socket.join(chatId);
     socket.activeChatId = chatId;
-    
+
     // Track active chat for notification logic
-    if (socket.userId) {
-      if (!activeChats.has(socket.userId)) {
-        activeChats.set(socket.userId, new Set());
-      }
-      activeChats.get(socket.userId)!.add(chatId);
+    if (!activeChats.has(socket.userId)) {
+      activeChats.set(socket.userId, new Set());
     }
-    
+    activeChats.get(socket.userId)!.add(chatId);
+
     console.log(`User ${socket.id} joined chat ${chatId}`);
   });
 
@@ -201,15 +221,21 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendMessage', async (data) => {
-    const { chatId, senderId, text, attachments } = data;
-    
+    const { chatId, text, attachments } = data;
+    const senderId = socket.userId;
+
+    if (!senderId) {
+        socket.emit('error', { message: 'Not authenticated' });
+        return;
+    }
+
     try {
         const client = await clientPromise;
         const db = client.db("bookex");
 
         // Fetch the chat to get participants
         const chat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
-        
+
         if (!chat) {
             console.error(`Chat ${chatId} not found`);
             socket.emit('error', { message: 'Chat not found' });
@@ -352,6 +378,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinUserRoom', (userId) => {
+    if (userId !== socket.userId) {
+      socket.emit('error', { message: 'Not authorized to join this user room' });
+      return;
+    }
     socket.join(`user_${userId}`);
     console.log(`User ${socket.id} joined user room ${userId}`);
   });
