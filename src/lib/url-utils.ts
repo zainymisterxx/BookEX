@@ -31,24 +31,12 @@ export function getBaseUrl(): string {
  * Get the socket URL for WebSocket connections
  */
 export function getSocketUrl(): string {
-  // Allow explicit override via environment variable
+  // Explicit override wins (set NEXT_PUBLIC_SOCKET_URL=https://socket.farya.pk in Vercel)
   if (process.env.NEXT_PUBLIC_SOCKET_URL) {
     return process.env.NEXT_PUBLIC_SOCKET_URL;
   }
-  
-  // Check if we're in browser environment
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    
-    // If on Vercel or production domain (not localhost)
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      // Use same domain with secure protocol
-      return `${protocol}//${hostname}`;
-    }
-  }
-  
-  // Development/localhost - use dedicated socket port
+
+  // Development fallback
   const socketPort = process.env.SOCKET_PORT || '3001';
   return `http://localhost:${socketPort}`;
 }
@@ -69,13 +57,19 @@ export function getApiUrl(): string {
  * Get CORS origins for server configuration
  */
 export function getCorsOrigins(): string[] {
-  if (process.env.NODE_ENV === 'production') {
-    return [getBaseUrl()];
-  }
-  
-  return [
+  const origins = [
     'http://localhost:3000',
     'http://localhost:9002',
-    'https://localhost:3000'
+    'https://localhost:3000',
   ];
+
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    origins.push(process.env.NEXT_PUBLIC_APP_URL);
+  }
+
+  if (process.env.VERCEL_URL) {
+    origins.push(`https://${process.env.VERCEL_URL}`);
+  }
+
+  return origins;
 }
