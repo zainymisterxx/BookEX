@@ -599,9 +599,25 @@ export async function listBook(bookData: { title: string, author: string, descri
       }
     }
 
+    // Moderate listing content before going live
+    try {
+        const { ContentModerationSystem } = await import('@/lib/content-moderation');
+        const moderationResult = await ContentModerationSystem.analyzeContent(
+            `${validatedBookData.title} ${validatedBookData.description}`,
+            'book',
+            user.id
+        );
+        if (moderationResult.action === 'reject') {
+            throw createAppError(ErrorType.VALIDATION, 'Your listing contains content that violates our guidelines. Please review and resubmit.');
+        }
+    } catch (err: unknown) {
+        if ((err as { code?: string }).code === ErrorType.VALIDATION) throw err;
+        console.warn('Content moderation check failed, proceeding:', err);
+    }
+
     // Note: Bypassing transactions to ensure compatibility with local standalone MongoDB instances
     let insertedId: any;
-    
+
     try {
         const now = getCurrentTimestamp();
 

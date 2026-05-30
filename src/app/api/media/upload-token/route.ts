@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       return handleApiError(createAppError(ErrorType.VALIDATION, `Invalid upload type. Allowed: ${ALLOWED_UPLOAD_TYPES.join(', ')}`));
     }
 
-    if (process.env.NODE_ENV === 'production' && !process.env.MEDIA_API_SECRET) {
+    if (!process.env.MEDIA_API_SECRET) {
       return handleApiError(createAppError(ErrorType.INTERNAL, 'MEDIA_API_SECRET is not configured'));
     }
 
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
         resourceId,
         accessLevel,
       },
-      process.env.MEDIA_API_SECRET || 'dev-media-secret'
+      process.env.MEDIA_API_SECRET
     );
 
     return NextResponse.json({

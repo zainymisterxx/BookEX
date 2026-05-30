@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 108 fixed / 197 total — 89 remaining**
+**Progress: 110 fixed / 197 total — 87 remaining**
 
 ---
 
@@ -51,7 +51,7 @@
 
 ## 4. BOOK LISTING & DISCOVERY
 
-- [ ] `listBook()` has zero content moderation calls — books go live immediately with no toxicity/spam check
+- [x] `listBook()` has zero content moderation calls — fixed: ContentModerationSystem.analyzeContent called before insert
 - [x] `deleteBook()` uses hard `deleteOne()` — fixed: soft delete with `deletedAt` (0c534d6)
 - [ ] `intelligentBookSearch` and `generateBookSummary` AI flows implemented but never called from any UI
 - [ ] `getBooksForSale()` uses `$regex` search; `getBooksForExchange()` uses MongoDB `$text` index — inconsistent strategy
@@ -167,7 +167,7 @@
 - [ ] Auth rate limiting uses in-memory `Map` — resets on server restart, bypassed under load balancing
 - [ ] NextAuth `authorize` handler never calls `recordAuthResult()` on failure — brute-force bypasses account lockout
 - [ ] CSP header uses `'unsafe-eval'` + `'unsafe-inline'` in `script-src`
-- [ ] Hardcoded `'dev-media-secret'` fallback in upload-token route
+- [x] Hardcoded `'dev-media-secret'` fallback in upload-token route — fixed: always requires MEDIA_API_SECRET env var
 - [ ] Content moderation applied only to community posts/comments — missing from book listings, user bios, reviews, org descriptions
 
 ---
