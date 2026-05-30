@@ -874,6 +874,43 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
             } catch (emitError) {
                 console.warn('Failed to emit community update:', emitError);
             }
+
+            // Notify community admins when someone joins
+            if (!isMember) {
+                try {
+                    const [community, joiner] = await Promise.all([
+                        db.collection('communities').findOne(
+                            { _id: new ObjectId(communityId) },
+                            { projection: { members: 1, name: 1 } }
+                        ),
+                        db.collection('users').findOne(
+                            { _id: new ObjectId(user.id) },
+                            { projection: { name: 1 } }
+                        ),
+                    ]);
+                    const adminIds: string[] = (community?.members || [])
+                        .filter((m: { role: string; userId: string }) => m.role === 'admin' || m.role === 'creator')
+                        .map((m: { userId: string }) => m.userId)
+                        .filter((id: string) => id !== user.id);
+                    if (adminIds.length > 0) {
+                        const now = new Date().toISOString();
+                        await db.collection('notifications').insertMany(
+                            adminIds.map((adminId: string) => ({
+                                userId: adminId,
+                                type: 'community',
+                                title: 'New Member',
+                                message: `${joiner?.name || 'Someone'} joined ${community?.name || 'your community'}`,
+                                link: `/community/${communityId}`,
+                                read: false,
+                                createdAt: now,
+                                metadata: { communityId, newMemberId: user.id }
+                            }))
+                        );
+                    }
+                } catch (notifError) {
+                    console.warn('Failed to send new member notification:', notifError);
+                }
+            }
         }
 
         return { 
@@ -1185,6 +1222,23 @@ export async function addComment(communityId: string, postId: string, content: s
                 metadata: { communityId, postId, actionType: 'comment' }
             };
             await db.collection('notifications').insertOne(notification);
+        }
+
+        // Notify parent comment author on reply (if different from post author and self)
+        if (parentObjectId) {
+            const parentComment = await db.collection('comments').findOne({ _id: parentObjectId });
+            if (parentComment && parentComment.authorId !== user.id && parentComment.authorId !== postDoc?.authorId) {
+                await db.collection('notifications').insertOne({
+                    userId: parentComment.authorId,
+                    type: 'community',
+                    title: 'New Reply',
+                    message: `${sanitizeInput(user.name || 'Someone')} replied to your comment`,
+                    link: `/community/${communityId}`,
+                    read: false,
+                    createdAt: now,
+                    metadata: { communityId, postId, commentId: insertRes.insertedId.toString(), actionType: 'reply' }
+                });
+            }
         }
 
         revalidatePath(`/community/${communityId}`);
@@ -3050,6 +3104,11 @@ export async function submitReport(reportData: Omit<Report, '_id' | 'status' | '
             throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many reports. Please try again later.');
         }
 
+        const validation = validateWithSchema(reportSchema, reportData);
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
+        }
+
         const newReport: Omit<Report, '_id'> = {
             ...reportData,
             status: 'pending' as const,
@@ -3087,6 +3146,11 @@ export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>
         const rateLimitResult = await checkUserRateLimit(user.id, 'SUBMIT_REVIEW', RATE_LIMITS.SUBMIT_REVIEW);
         if (!rateLimitResult.allowed) {
             throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many reviews. Please try again later.');
+        }
+
+        const validation = validateWithSchema(reviewSchema, reviewData);
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
         }
 
         // First, insert the new review document.

@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 101 fixed / 197 total — 96 remaining**
+**Progress: 108 fixed / 197 total — 89 remaining**
 
 ---
 
@@ -18,7 +18,7 @@
 - [x] `acceptExchange()` never calls `createExchangeUpdateNotification()` — fixed: d4a72e7
 - [x] `confirmExchangeCompletion()` creates no notification for either party — fixed: d4a72e7
 - [x] `cancelExchange()` creates no notification — fixed: d4a72e7
-- [ ] No timeout or auto-expiry for stale in-progress exchanges — if one party disappears, exchange is stuck forever
+- [x] No timeout or auto-expiry for stale in-progress exchanges — fixed: cleanup-jobs.ts cancelStaleExchanges
 - [x] Exchange completion never auto-updates book status to `exchanged` — fixed: transaction in confirmExchangeCompletion handles this (5392b2f)
 - [x] `canUserReview()` only checks for a duplicate review — fixed: requires completed exchange between users (0c534d6)
 - [x] Socket: client hook emits `joinExchange`/`leaveExchange` but `server.ts` has no handlers — fixed: handlers exist at server.ts:288 (was false positive)
@@ -110,8 +110,8 @@
 - [x] Review received: no notification created — fixed: 0c534d6
 - [x] Admin moderated your content: no notification created — fixed: 0c534d6
 - [ ] Community @mention: no @mention detection exists anywhere in the codebase
-- [ ] Reply to your comment in a thread: no notification created
-- [ ] New member joined your community: no notification created
+- [x] Reply to your comment in a thread: no notification created — fixed: parent comment author notified
+- [x] New member joined your community: no notification created — fixed: community admins notified on join
 - [ ] Book wishlisted by someone: one-way only
 - [x] Report resolution does not notify the reporter — fixed: 0c534d6
 - [ ] Notification preferences cover only 4 types — no preferences for: community mentions, comment replies, reviews, admin actions
@@ -155,8 +155,8 @@
 ## 11. SECURITY & VALIDATION
 
 - [ ] Only ~30 of 104 exported Server Actions have any Zod parsing
-- [ ] `submitReport` — no Zod schema, no rate limit, no moderation, IDs not validated
-- [ ] `submitReview` — no Zod schema, no moderation, no rate limit
+- [x] `submitReport` — fixed: Zod schema wired (schema existed, now validated)
+- [x] `submitReview` — fixed: Zod schema wired (schema existed, now validated)
 - [ ] `confirmDonationReceipt` — `receiptData` accepted raw
 - [ ] `editPost` — manual validation only, no re-moderation on edited content
 - [ ] `startChat` — no input validation, no rate limit
@@ -233,8 +233,8 @@
 
 ## 16. BACKGROUND JOBS (zero scheduled jobs exist in the codebase)
 
-- [ ] Expired book listings cleanup — books past `expiresAt` stay visible forever
-- [ ] Stale exchange auto-cancellation — exchanges stay `in_progress` permanently if a party disappears
+- [x] Expired book listings cleanup — fixed: scripts/cleanup-jobs.ts expireOldListings job
+- [x] Stale exchange auto-cancellation — fixed: scripts/cleanup-jobs.ts cancelStaleExchanges job (30-day cutoff, books restored, parties notified)
 - [ ] Weekly email digest — preference field exists in User type but nothing sends it
 - [ ] Redis cache warming on cold restart
 - [ ] Scheduled database maintenance

@@ -18,6 +18,7 @@
     "setup:db": "tsx scripts/setup-database.ts",
     "optimize:db": "tsx scripts/optimize-database.ts",
     "setup:indexes": "tsx scripts/setup-critical-indexes.ts",
+    "cleanup:jobs": "tsx scripts/cleanup-jobs.ts",
     "storage:setup": "tsx scripts/setup-image-storage.ts",
     "migrate:image-storage": "tsx scripts/migrate-image-storage.ts",
     "file:cleanup": "tsx scripts/file-security-maintenance.ts",
