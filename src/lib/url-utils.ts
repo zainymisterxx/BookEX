@@ -31,24 +31,21 @@ export function getBaseUrl(): string {
  * Get the socket URL for WebSocket connections
  */
 export function getSocketUrl(): string {
-  // Allow explicit override via environment variable
-  if (process.env.NEXT_PUBLIC_SOCKET_URL) {
-    return process.env.NEXT_PUBLIC_SOCKET_URL;
-  }
-  
-  // Check if we're in browser environment
+  // In browser on a real domain (production), always use same-domain proxy.
+  // Vercel proxies /socket.io/* → SOCKET_SERVER_URL (set server-side only).
+  // This avoids CSP violations and mixed-content issues.
   if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    
-    // If on Vercel or production domain (not localhost)
+    const { hostname, protocol } = window.location;
     if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      // Use same domain with secure protocol
       return `${protocol}//${hostname}`;
     }
   }
-  
-  // Development/localhost - use dedicated socket port
+
+  // Development: use explicit override or default localhost port
+  if (process.env.NEXT_PUBLIC_SOCKET_URL) {
+    return process.env.NEXT_PUBLIC_SOCKET_URL;
+  }
+
   const socketPort = process.env.SOCKET_PORT || '3001';
   return `http://localhost:${socketPort}`;
 }
