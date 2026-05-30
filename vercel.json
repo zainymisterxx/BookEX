@@ -1,20 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-
-  "framework": "nextjs",
-
-  "headers": [
-    {
-      "source": "/socket.io/(.*)",
-      "headers": [
-        { "key": "Connection",    "value": "Upgrade" },
-        { "key": "Upgrade",       "value": "websocket" },
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
-      ]
-    }
-  ],
-
-  "env": {
-    "NEXT_PUBLIC_SOCKET_URL": "@next_public_socket_url"
-  }
+  "framework": "nextjs"
 }
