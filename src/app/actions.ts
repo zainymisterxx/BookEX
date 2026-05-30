@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { ObjectId, type UpdateFilter } from 'mongodb';
 import clientPromise from '@/lib/mongodb';
-import type { Book, BookGenre, BookStatus, Post, User, Community, Organization, Report, Review, Chat, Comment, Notification, WishlistItem, PasswordResetToken, Exchange, ExchangeStatus, Donation, DonationStatus, DonationStatusUpdate, OrganizationRepresentative } from '@/lib/types';
+import type { Book, BookGenre, BookStatus, Post, User, Community, Organization, Report, Review, Chat, Comment, Notification, WishlistItem, PasswordResetToken, EmailVerificationToken, Exchange, ExchangeStatus, Donation, DonationStatus, DonationStatusUpdate, OrganizationRepresentative } from '@/lib/types';
 
 /**
  * Validates donation status transitions
@@ -41,7 +41,7 @@ function validateDonationStatusTransition(
 }
 import { hash } from 'bcryptjs';
 import { getSession } from '@/lib/auth';
-import { sendPasswordResetEmail, sendWelcomeEmail, sendExchangeProposalEmail, sendExchangeStatusUpdateEmail, sendBookContactEmail, sendOrgApplicationNotificationEmail, sendDonationChatConfirmationEmail, sendOrganizationApprovalEmail, sendOrganizationRejectionEmail, sendDonationStatusUpdateEmail, sendDonationCompletionEmail } from '@/lib/email';
+import { sendPasswordResetEmail, sendWelcomeEmail, sendEmailVerificationEmail, sendExchangeProposalEmail, sendExchangeStatusUpdateEmail, sendBookContactEmail, sendOrgApplicationNotificationEmail, sendDonationChatConfirmationEmail, sendOrganizationApprovalEmail, sendOrganizationRejectionEmail, sendDonationStatusUpdateEmail, sendDonationCompletionEmail } from '@/lib/email';
 import { validateImageDataUri, sanitizeInput, validateOrganizationData, sanitizeOrganizationName, createSafeExactMatchRegex, normalizeForDeduplication, createBookDuplicateHash, checkBookSimilarity, calculateExpirationDate, createNotificationDeduplicationKey } from '@/lib/utils';
 import { validatePasswordStrength, isPasswordStrong, getPasswordRequirementsMessage } from '@/lib/password-validation';
 import { logActivity, detectSuspiciousActivity } from '@/lib/activity-logging';
@@ -158,7 +158,28 @@ export async function signUpUser(userData: Pick<User, 'name' | 'email' | 'passwo
     try {
       await sendWelcomeEmail(normalizedEmail, userData.name);
     } catch (error) {
-      console.log('Welcome email failed to send, but signup was successful');
+      console.warn('Welcome email failed to send, but signup was successful');
+    }
+
+    // Generate and store email verification token
+    try {
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h from now
+      const tokenData: Omit<EmailVerificationToken, '_id'> = {
+        userId: result.insertedId.toString(),
+        email: normalizedEmail,
+        token: verificationToken,
+        expiresAt: expiresAt.toISOString(),
+        createdAt: now.toISOString(),
+      };
+      const tokensCollection = db.collection<EmailVerificationToken>('email_verification_tokens');
+      await tokensCollection.insertOne(tokenData);
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
+      const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
+      await sendEmailVerificationEmail(normalizedEmail, userData.name, verificationUrl);
+    } catch (error) {
+      console.warn('Email verification setup failed, but signup was successful:', error);
     }
 
     // Create admin notification for new user registration (except for first admin)
@@ -328,6 +349,44 @@ export async function resetPassword(token: string, newPassword: string) {
   } catch (error) {
     console.error("Error in resetPassword:", error);
     return { success: false, message: 'Failed to reset password.' };
+  }
+}
+
+/**
+ * Verifies a user's email address using a one-time token.
+ */
+export async function verifyEmail(token: string): Promise<{ success: boolean; message: string }> {
+  if (!token || typeof token !== 'string') {
+    return { success: false, message: 'Invalid verification link.' };
+  }
+  try {
+    const client = await clientPromise;
+    const db = client.db('bookex');
+    const tokensCollection = db.collection<EmailVerificationToken>('email_verification_tokens');
+
+    const tokenDoc = await tokensCollection.findOne({ token });
+    if (!tokenDoc) {
+      return { success: false, message: 'Invalid or expired verification link.' };
+    }
+    if (tokenDoc.usedAt) {
+      return { success: false, message: 'This verification link has already been used.' };
+    }
+    if (new Date(tokenDoc.expiresAt) < new Date()) {
+      return { success: false, message: 'This verification link has expired.' };
+    }
+
+    const now = new Date().toISOString();
+    const usersCollection = db.collection('users');
+    await usersCollection.updateOne(
+      { _id: new (await import('mongodb')).ObjectId(tokenDoc.userId) },
+      { $set: { emailVerified: true, emailVerifiedAt: now } }
+    );
+    await tokensCollection.updateOne({ token }, { $set: { usedAt: now } });
+
+    return { success: true, message: 'Your email has been verified successfully!' };
+  } catch (error) {
+    console.error('Error in verifyEmail:', error);
+    return { success: false, message: 'Failed to verify email. Please try again.' };
   }
 }
 
@@ -1620,9 +1679,17 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
             }
         }
         
+        // Notify the other participant in real-time that a new chat was created
+        try {
+            const { emitNewChatNotification } = await import('../../server');
+            await emitNewChatNotification(result.insertedId.toString(), user.id, validatedOtherUserId.toString());
+        } catch {
+            // Don't fail chat creation if socket emission fails
+        }
+
         // Log successful chat initiation
         console.log(`Chat initiated: User ${user.id} -> User ${otherUserId}${bookId ? ` for book ${bookId}` : ''}`);
-        
+
         return { chatId: result.insertedId.toString() };
     });
 }

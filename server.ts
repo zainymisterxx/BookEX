@@ -334,6 +334,11 @@ io.on('connection', (socket) => {
     socket.leave(`exchange_${exchangeId}`);
   });
 
+  socket.on('notifyNewChat', ({ chatId, otherUserId }: { chatId: string; otherUserId: string }) => {
+    if (!socket.userId) return;
+    io.to(`user_${otherUserId}`).emit('newChatCreated', { chatId });
+  });
+
   // Channel events with authorization
   socket.on('joinChannel', async (data) => {
     const { channelId, communityId } = data;
@@ -981,3 +986,28 @@ export async function emitCommunityJoinRequestUpdated(
 }
 
 // ─── End Community Admin Real-Time Events ─────────────────────────────────────
+
+/**
+ * Emit to the other chat participant that messages have been read.
+ * Called by the REST read route after marking DB records.
+ */
+export async function emitMessagesRead(chatId: string, readBy: string, otherUserId: string) {
+  try {
+    io.to(`user_${otherUserId}`).emit('messagesRead', { chatId, readBy });
+  } catch (error) {
+    socketLogger.error('Error emitting messagesRead', error as Error, { chatId });
+  }
+}
+
+/**
+ * Emit newChatCreated to the other participant when a new chat is started.
+ * Called from the startChat Server Action.
+ */
+export async function emitNewChatNotification(chatId: string, fromUserId: string, toUserId: string) {
+  try {
+    io.to(`user_${toUserId}`).emit('newChatCreated', { chatId });
+    socketLogger.info('Emitted newChatCreated', { chatId, fromUserId, toUserId });
+  } catch (error) {
+    socketLogger.error('Error emitting newChatCreated', error as Error, { chatId });
+  }
+}
