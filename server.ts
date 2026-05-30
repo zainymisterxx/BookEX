@@ -167,6 +167,12 @@ io.on('connection', (socket) => {
         socket.userId = decoded.sub || decoded.id;
         socket.authToken = token;
         console.log(`User ${socket.userId} authenticated via token`);
+
+        // Admins join the 'admin' room so they receive real-time admin notifications
+        if (decoded.role === 'admin') {
+          socket.join('admin');
+          console.log(`Admin ${socket.userId} joined admin room`);
+        }
         
         // Set user as online in presence system
         await presenceManager.setUserOnline(socket.userId!);
@@ -1064,5 +1070,18 @@ export async function emitNewChatNotification(chatId: string, fromUserId: string
     socketLogger.info('Emitted newChatCreated', { chatId, fromUserId, toUserId });
   } catch (error) {
     socketLogger.error('Error emitting newChatCreated', error as Error, { chatId });
+  }
+}
+
+/**
+ * Emit a newly created admin notification to all sockets in the 'admin' room.
+ * Called from createAdminNotification after DB insert.
+ */
+export async function emitAdminNotification(notification: Record<string, unknown>) {
+  try {
+    io.to('admin').emit('adminNotification', notification);
+    socketLogger.info('Emitted adminNotification', { type: notification.type });
+  } catch (error) {
+    socketLogger.error('Error emitting adminNotification', error as Error);
   }
 }

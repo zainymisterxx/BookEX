@@ -3,6 +3,10 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth-config';
 import { connectToMongoDB } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import { levenshteinDistance } from '@/lib/utils';
+
+const LEVENSHTEIN_THRESHOLD = 2;
+const FUZZY_CANDIDATE_LIMIT = 100;
 
 export async function GET(request: NextRequest) {
   try {
@@ -63,17 +67,44 @@ export async function GET(request: NextRequest) {
       db.collection('users').countDocuments(searchFilter),
     ]);
 
+    // Levenshtein typo-tolerance fallback: when exact $regex returns nothing and
+    // the query is long enough to have meaningful typos, scan up to 100 candidates
+    // and filter client-side by edit distance ≤ 2 on name or username.
+    let finalUsers = users;
+    let finalTotal = total;
+    if (total === 0 && query.length >= 4) {
+      const candidates = await db.collection('users')
+        .find({ _id: { $ne: currentUserId } })
+        .limit(FUZZY_CANDIDATE_LIMIT)
+        .project({ _id: 1, name: 1, username: 1, avatarUrl: 1, image: 1 })
+        .toArray();
+
+      const queryLower = query.toLowerCase();
+      const fuzzyMatches = candidates.filter((u) => {
+        const nameDist = u.name
+          ? levenshteinDistance(queryLower, (u.name as string).toLowerCase())
+          : Infinity;
+        const usernameDist = u.username
+          ? levenshteinDistance(queryLower, (u.username as string).toLowerCase())
+          : Infinity;
+        return Math.min(nameDist, usernameDist) <= LEVENSHTEIN_THRESHOLD;
+      });
+
+      finalUsers = fuzzyMatches.slice(0, 10);
+      finalTotal = finalUsers.length;
+    }
+
     return NextResponse.json({
-      users: users.map(user => ({
+      users: finalUsers.map(user => ({
         _id: user._id,
         name: user.name,
         username: user.username,
         avatarUrl: user.avatarUrl || user.image
       })),
-      total,
+      total: finalTotal,
       page,
       limit,
-      hasMore: skip + users.length < total,
+      hasMore: skip + finalUsers.length < finalTotal,
     });
 
   } catch (error) {

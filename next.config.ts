@@ -128,7 +128,9 @@ const nextConfig: NextConfig = {
             // NOTE: unsafe-eval is allowed only in development (required by Next.js HMR/source maps).
             // unsafe-inline is kept for Next.js inline scripts injected at build time; removing it
             // requires a nonce-based approach which needs middleware-level integration.
-            value: `default-src 'self'; script-src 'self'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:* ${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL} wss://${process.env.VERCEL_URL}` : ''}; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
+            // NOTE: connect-src uses 'self' and *.vercel.app wildcard so the CSP value
+            // is static at build time — no VERCEL_URL baked in per-deployment.
+            value: `default-src 'self'; script-src 'self'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:* https://*.vercel.app wss://*.vercel.app; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
           },
           {
             key: 'Permissions-Policy',

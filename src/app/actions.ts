@@ -651,6 +651,21 @@ export async function listBook(bookData: { title: string, author: string, descri
 
         insertedId = result.insertedId;
 
+        // Fire-and-forget AI summary enrichment — must never block listing
+        (async () => {
+          try {
+            const { generateBookSummary } = await import('@/ai/flows/generate-book-summary');
+            const bookIdentifier = `${validatedBookData.title} by ${validatedBookData.author}`;
+            const { summary } = await generateBookSummary({ bookIdentifier, userId: user.id });
+            await db.collection('books').updateOne(
+              { _id: result.insertedId },
+              { $set: { aiSummary: summary } }
+            );
+          } catch (aiErr) {
+            console.warn('AI summary generation failed (non-blocking):', aiErr);
+          }
+        })();
+
         // Check for wishlist matches with optimized query and deduplication
         const usersWithBookOnWishlist = await OptimizedQueries.findWishlistMatches(
           String(result.insertedId)
@@ -1066,6 +1081,34 @@ export async function createPost(communityId: string, postData: { authorId: stri
             console.warn('Failed to emit notifications for new post:', notificationError);
         }
 
+        // Notify @mentioned users in post content
+        try {
+            const mentions = [...validatedData.content.matchAll(/@(\w+)/g)].map(m => m[1]);
+            if (mentions.length > 0) {
+                const mentionedUsers = await db.collection('users').find(
+                    { username: { $in: mentions } },
+                    { projection: { _id: 1 } }
+                ).toArray();
+                const now = new Date().toISOString();
+                for (const mentioned of mentionedUsers) {
+                    const mentionedId = mentioned._id.toString();
+                    if (mentionedId === user.id) continue;
+                    await db.collection('notifications').insertOne({
+                        userId: mentionedId,
+                        type: 'community' as const,
+                        title: 'You were mentioned',
+                        message: `${sanitizeInput(authorInfo?.name || 'Someone')} mentioned you in a post`,
+                        link: `/community/${communityId}`,
+                        read: false,
+                        createdAt: now,
+                        metadata: { communityId, postId: postInsert.insertedId.toString(), actionType: 'mention' }
+                    });
+                }
+            }
+        } catch (mentionError) {
+            console.warn('Failed to create mention notifications for post:', mentionError);
+        }
+
         return { success: true, data: { newPost: JSON.parse(JSON.stringify(newPost)) } };
     });
 }
@@ -1263,6 +1306,33 @@ export async function addComment(communityId: string, postId: string, content: s
                     metadata: { communityId, postId, commentId: insertRes.insertedId.toString(), actionType: 'reply' }
                 });
             }
+        }
+
+        // Notify @mentioned users in comment content
+        try {
+            const mentions = [...sanitizeInput(validatedData.content).matchAll(/@(\w+)/g)].map(m => m[1]);
+            if (mentions.length > 0) {
+                const mentionedUsers = await db.collection('users').find(
+                    { username: { $in: mentions } },
+                    { projection: { _id: 1 } }
+                ).toArray();
+                for (const mentioned of mentionedUsers) {
+                    const mentionedId = mentioned._id.toString();
+                    if (mentionedId === user.id) continue;
+                    await db.collection('notifications').insertOne({
+                        userId: mentionedId,
+                        type: 'community' as const,
+                        title: 'You were mentioned',
+                        message: `${sanitizeInput(user.name || 'Someone')} mentioned you in a comment`,
+                        link: `/community/${communityId}`,
+                        read: false,
+                        createdAt: now,
+                        metadata: { communityId, postId, commentId: insertRes.insertedId.toString(), actionType: 'mention' }
+                    });
+                }
+            }
+        } catch (mentionError) {
+            console.warn('Failed to create mention notifications for comment:', mentionError);
         }
 
         revalidatePath(`/community/${communityId}`);
@@ -2028,6 +2098,24 @@ export async function toggleWishlist(bookId: string, isWishlisted: boolean) {
 
         if (result.modifiedCount === 0) {
             throw createAppError(ErrorType.DATABASE, "Failed to update wishlist");
+        }
+
+        // Notify book owner when their book is wishlisted (not when removed)
+        if (!isWishlisted && book.sellerId && book.sellerId !== user.id) {
+            try {
+                await db.collection('notifications').insertOne({
+                    userId: book.sellerId,
+                    type: 'wishlist_match' as const,
+                    title: 'Book Wishlisted',
+                    message: 'Someone added your book to their wishlist',
+                    link: `/books/${bookId}`,
+                    read: false,
+                    createdAt: new Date().toISOString(),
+                    metadata: { bookId, bookTitle: book.title }
+                });
+            } catch (notifyError) {
+                console.warn('Failed to notify book owner of wishlist add:', notifyError);
+            }
         }
 
         revalidatePath('/profile/me');
@@ -4727,6 +4815,45 @@ export async function deactivateUser(targetUserId: string): Promise<{ success: t
         revalidatePath('/admin');
 
         return { message: 'Account deactivated. Active exchanges cancelled and book listings restored.' };
+    });
+}
+
+/**
+ * Reactivates the calling user's own deactivated account.
+ * The user must be able to authenticate and their current status must be
+ * 'deactivated'. Books that expired while the account was deactivated are
+ * restored to 'active' so the user has listings again.
+ */
+export async function reactivateAccount(): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(user.id)) {
+            throw new Error('Invalid user ID.');
+        }
+
+        const targetOid = new ObjectId(user.id);
+        const targetUser = await db.collection('users').findOne({ _id: targetOid });
+        if (!targetUser) {
+            throw new Error('User not found.');
+        }
+        if (targetUser.status !== 'deactivated') {
+            throw new Error('Account is not deactivated.');
+        }
+
+        const now = new Date().toISOString();
+
+        await db.collection('users').updateOne(
+            { _id: targetOid },
+            { $set: { status: 'active', updatedAt: now }, $unset: { deactivatedAt: '' } }
+        );
+
+        // Restore expired book listings so the user has active inventory again
+        await db.collection('books').updateMany(
+            { sellerId: user.id, status: 'expired' },
+            { $set: { status: 'active', updatedAt: now } }
+        );
+
+        revalidatePath('/profile');
+        return { message: 'Account reactivated. Your book listings have been restored.' };
     });
 }
 

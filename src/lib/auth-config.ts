@@ -53,6 +53,15 @@ export const authOptions: NextAuthOptions = {
             return null;
           }
 
+          // Check if user account is deactivated — throw a specific error so the
+          // frontend can offer a "Reactivate your account" option instead of a
+          // generic failure message.
+          if (user.status === 'deactivated') {
+            console.log('User account is deactivated');
+            recordAuthResult('LOGIN', false, normalizedEmail);
+            throw new Error('ACCOUNT_DEACTIVATED');
+          }
+
           console.log('Checking password...');
           const isValid = await compare(credentials.password, user.password || '');
           console.log('Password valid:', isValid);

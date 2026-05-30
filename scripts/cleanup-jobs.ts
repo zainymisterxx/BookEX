@@ -7,7 +7,7 @@
  *   3. warnInactiveUsers    — email active users who haven't logged in for 60+ days
  *   4. sendDonationReminders — remind org reps of pending donations older than 3 days
  *
- * Usage: tsx scripts/cleanup-jobs.ts [--job=expire|stale|all|weekly-digest|inactive-warning|donation-reminders]
+ * Usage: tsx scripts/cleanup-jobs.ts [--job=expire|stale|all|weekly-digest|inactive-warning|donation-reminders|warm-cache]
  */
 
 import { MongoClient, ObjectId } from 'mongodb';
@@ -271,6 +271,44 @@ async function sendDonationReminders(db: ReturnType<MongoClient['db']>): Promise
   return sentCount;
 }
 
+const CACHE_WARM_BOOKS_TTL = 60 * 60;        // 1 hour
+const CACHE_WARM_ORGS_TTL  = 60 * 60;        // 1 hour
+const CACHE_WARM_BOOKS_KEY = 'cache:warm:recent-books';
+const CACHE_WARM_ORGS_KEY  = 'cache:warm:approved-orgs';
+
+async function warmCache(db: ReturnType<MongoClient['db']>): Promise<{ books: number; orgs: number }> {
+  const { createClient } = await import('redis');
+
+  const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  const client = createClient({ url: redisUrl });
+  await client.connect();
+
+  try {
+    // Top 20 most recently active books
+    const recentBooks = await db.collection('books')
+      .find({ status: 'active', deletedAt: { $exists: false } })
+      .sort({ updatedAt: -1 })
+      .limit(20)
+      .project({ _id: 1, title: 1, author: 1, condition: 1, city: 1, imageUrl: 1, type: 1, updatedAt: 1 })
+      .toArray();
+
+    await client.setEx(CACHE_WARM_BOOKS_KEY, CACHE_WARM_BOOKS_TTL, JSON.stringify(recentBooks));
+
+    // Approved organizations list
+    const approvedOrgs = await db.collection('organizations')
+      .find({ status: 'approved', isActive: { $ne: false }, deletedAt: { $exists: false } })
+      .sort({ name: 1 })
+      .project({ _id: 1, name: 1, description: 1, imageUrl: 1, location: 1 })
+      .toArray();
+
+    await client.setEx(CACHE_WARM_ORGS_KEY, CACHE_WARM_ORGS_TTL, JSON.stringify(approvedOrgs));
+
+    return { books: recentBooks.length, orgs: approvedOrgs.length };
+  } finally {
+    await client.disconnect();
+  }
+}
+
 async function main() {
   const jobArg = process.argv.find(a => a.startsWith('--job='))?.split('=')[1] ?? 'all';
   const client = new MongoClient(MONGODB_URI!);
@@ -303,6 +341,11 @@ async function main() {
     if (jobArg === 'donation-reminders') {
       const reminded = await sendDonationReminders(db);
       console.log(`[cleanup-jobs] sendDonationReminders: ${reminded} reminder emails sent`);
+    }
+
+    if (jobArg === 'warm-cache') {
+      const { books, orgs } = await warmCache(db);
+      console.log(`[cleanup-jobs] warmCache: ${books} books, ${orgs} orgs cached`);
     }
 
     console.log('[cleanup-jobs] done');

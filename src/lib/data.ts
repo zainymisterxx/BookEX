@@ -345,12 +345,48 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<{ b
       db.collection("books").countDocuments(query),
     ]);
 
+    // AI fallback search: when $text returns 0 results, ask the AI assistant for
+    // rephrased/expanded keywords and re-query with those suggestions.
+    let finalBooks = books;
+    let finalTotalCount = totalCount;
+    if (filters.searchQuery && totalCount === 0) {
+      try {
+        const { aiAssistantFlow } = await import('@/ai/flows/intelligent-book-search');
+        // NOTE: userId is not available in data.ts; use a sentinel for rate-limit bucketing
+        const aiResult = await aiAssistantFlow({ query: filters.searchQuery, userId: 'system-search' });
+        // Extract suggested search terms from AI response text
+        const suggestionMatch = aiResult.response.match(/search(?:ing)? (?:for )?["""]?([^""".\n]{3,80})["""]?/i);
+        if (suggestionMatch) {
+          const aiQuery = suggestionMatch[1].trim();
+          const fallbackQuery = { ...query };
+          delete fallbackQuery.$text;
+          fallbackQuery.$text = { $search: aiQuery };
+          const [fbBooks, fbCount] = await Promise.all([
+            db.collection('books')
+              .find(fallbackQuery, { projection: { score: { $meta: 'textScore' } } })
+              .sort({ score: { $meta: 'textScore' } })
+              .skip(skip)
+              .limit(limit)
+              .toArray(),
+            db.collection('books').countDocuments(fallbackQuery),
+          ]);
+          if (fbCount > 0) {
+            finalBooks = fbBooks;
+            finalTotalCount = fbCount;
+          }
+        }
+      } catch (aiErr) {
+        // AI fallback must never surface errors to the caller
+        console.warn('AI search fallback failed:', aiErr);
+      }
+    }
+
     // Fire-and-forget search analytics — failures must not break the search response
     if (filters.searchQuery) {
       db.collection('search_analytics').insertOne({
         query: filters.searchQuery,
         type: 'books_sale',
-        resultsCount: totalCount,
+        resultsCount: finalTotalCount,
         createdAt: new Date().toISOString(),
       }).catch((err) => {
         console.error('search_analytics insert failed (books_sale):', err);
@@ -358,9 +394,9 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<{ b
     }
 
     return {
-      books: serialize(books),
-      totalCount,
-      hasMore: skip + books.length < totalCount,
+      books: serialize(finalBooks),
+      totalCount: finalTotalCount,
+      hasMore: skip + finalBooks.length < finalTotalCount,
     };
   } catch (error) {
     console.error("Error fetching books for sale:", error);

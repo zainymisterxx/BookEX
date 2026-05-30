@@ -400,9 +400,19 @@ export interface Notification {
         chatId?: string;
         exchangeId?: string;
         communityId?: string;
-        donationId?: string;     // NEW: For donation notifications
-        organizationId?: string; // NEW: For organization-related notifications
-        [key: string]: any;
+        donationId?: string;
+        organizationId?: string;
+        postId?: string;
+        commentId?: string;
+        reviewerId?: string;
+        rating?: number;
+        newMemberId?: string;
+        actionType?: string;
+        senderId?: string;
+        senderName?: string;
+        bookTitle?: string;
+        proposerName?: string;
+        status?: string;
     };
 }
 
@@ -603,13 +613,18 @@ export interface AdminNotification {
     
     // Metadata for different notification types
     metadata?: {
-        userId?: string;                 // Related user
-        bookId?: string;                 // Related book
-        organizationId?: string;         // Related organization
-        reportId?: string;               // Related report
-        errorCode?: string;              // Error identifier
-        count?: number;                  // Count for aggregated notifications
-        [key: string]: any;              // Flexible metadata
+        userId?: string;
+        bookId?: string;
+        organizationId?: string;
+        reportId?: string;
+        errorCode?: string;
+        count?: number;
+        actionType?: string;
+        exchangeId?: string;
+        donationId?: string;
+        chatId?: string;
+        postId?: string;
+        commentId?: string;
     };
     
     // Timestamps
