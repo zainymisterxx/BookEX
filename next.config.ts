@@ -179,6 +179,14 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
       {
+        // picsum.photos redirects here — Next.js image optimizer follows the redirect
+        // and the final domain must be explicitly allowlisted
+        protocol: 'https',
+        hostname: 'fastly.picsum.photos',
+        port: '',
+        pathname: '/**',
+      },
+      {
         protocol: 'https',
         hostname: 'media.farya.pk',
         port: '',
