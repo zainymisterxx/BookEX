@@ -27,13 +27,13 @@
 
 ## 2. DONATION FLOW
 
-- [ ] `orgConfirmed` field initialized to `false` on creation but no function, API, or UI ever sets it to `true`
-- [ ] `confirmDonationReceipt()` never updates any Book documents — books stay `active` after donation completes
-- [ ] Donation creation (`initiateDonation`) and book selection (`updateDonationBooks`) are two separate non-atomic calls
+- [x] `orgConfirmed` field never set to `true` — fixed: `confirmDonationOffer` action added (d0f4611)
+- [x] `confirmDonationReceipt()` never updates Book documents — fixed: books set to `donated` (d0f4611)
+- [x] `initiateDonation` non-atomic — fixed: core writes wrapped in MongoDB transaction (d0f4611)
 - [ ] `DonationBook.bookId` is optional and typically unpopulated — no reliable link back to Book documents
-- [ ] `updateDonationBooks()` accepts any books with no existence or ownership validation
+- [x] `updateDonationBooks()` no existence or ownership validation — fixed: validates each book (d0f4611)
 - [x] No donation history page — fixed: `/donate/history` added in 0c534d6
-- [ ] No public organization profile page (`/organizations/[id]`)
+- [x] No public organization profile page — fixed: `/organizations/[id]` added (cd4883c)
 
 ---
 
@@ -242,7 +242,7 @@
 
 - [x] Donation history page — fixed: `/donate/history` added in 0c534d6
 - [x] Global search results page (`/search`) — fixed: 0c534d6
-- [ ] Exchange detail standalone page (`/exchange/[id]`)
+- [x] Exchange detail standalone page — fixed: `/exchange/[id]` added (cd4883c)
 - [ ] Book management page for sellers (My Listings with inline edit/delete)
 - [ ] Public organization profile page (`/organizations/[id]`)
 - [ ] `loading.tsx` missing on: `/books`, `/books/[id]`, `/exchange`, `/community`, `/admin`, `/admin/organizations/[id]`
@@ -301,13 +301,16 @@
 
 ---
 
-**Total: 137 verified items | 39 fixed [x] | 98 remaining [ ]**
+**Total: 137 verified items | 47 fixed [x] | 90 remaining [ ]**
 
 ### Fixed summary by commit:
 - **5392b2f** — exchange/donation core fixes (book status on completion, donation flow)
 - **28fb49b** — 6 review findings (atomic book reservation, race conditions)
 - **0c534d6** — parallel batch: 8 indexes, 2 pages, notifications, soft delete, middleware, infra
 - **d4a72e7** — exchange state machines: on_hold/reserved, rejectExchange, all exchange notifications
+- **d0f4611** — donation flow: book status on completion, org confirm action, atomic inserts, book validation
+- **cd4883c** — new pages: /exchange/[id] detail + /organizations/[id] profile
+- **bac8317** — email: migrate nodemailer → Resend SDK (16 functions, API key wired)
 
 ### Removed from original list (verified as already implemented):
 - ~~No mark all as read~~ — exists in `notification-provider.tsx:96`
