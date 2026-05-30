@@ -39,12 +39,12 @@
 
 ## 3. AUTHENTICATION & ONBOARDING
 
-- [ ] Email verification completely unimplemented — no `emailVerified` field on User type, no verification token collection, no verify-email route
-- [ ] `deactivateUser()` Server Action does not exist — `deactivated` status exists in the type but nothing sets it
+- [x] Email verification unimplemented — fixed: token collection, verify-email page, signUpUser sends link (f6b2719)
+- [x] `deactivateUser()` does not exist — fixed: cancels exchanges, restores books, sets deactivatedAt (f6b2719)
 - [ ] No account recovery flow for deactivated accounts
 - [ ] `suspendUser()` stores no `suspendedAt` timestamp or `suspensionReason` on the User document
-- [ ] No email change verification — updating email in profile settings requires no re-verification
-- [ ] `signUpUser()` email uniqueness is app-level only — no DB unique index; race condition can create duplicate email accounts
+- [ ] No email change verification
+- [x] `signUpUser()` no DB unique index on email — fixed: sparse unique index added (f6b2719)
 - [ ] Profile completion modal can be permanently dismissed via localStorage — incomplete profile is not blocked
 
 ---
@@ -68,8 +68,8 @@
 - [ ] Socket `sendMessage` writes message to DB first, then emits — if emit fails, message is persisted but client never gets confirmation
 - [ ] Unread count calculated two different ways in legacy vs new chat route handlers — no single source of truth
 - [ ] Blocking is one-directional — only blocker's `blockedUsers` array updated
-- [ ] `messagesRead` event is listened on client but never emitted by `server.ts`
-- [ ] `newChatCreated` event is listened on client but never emitted by `server.ts`
+- [x] `messagesRead` never emitted by `server.ts` — fixed: f4c6a89
+- [x] `newChatCreated` never emitted by `server.ts` — fixed: f4c6a89
 - [ ] Two competing Socket.IO implementations: `server.ts` (room `user_${id}`) vs `src/lib/socket-server.ts` (room `user:${id}`)
 
 **Partially fixed (5fce5ca):**
@@ -306,7 +306,7 @@
 
 ---
 
-**Total: 137 verified items | 57 fixed [x] | 80 remaining [ ]**
+**Total: 137 verified items | 65 fixed [x] | 72 remaining [ ]**
 
 ### Fixed summary by commit:
 - **5392b2f** — exchange/donation core fixes (book status on completion, donation flow)
