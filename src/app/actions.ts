@@ -7657,3 +7657,131 @@ export async function confirmEmailChange(
         return { success: false, message };
     }
 }
+// ─── Admin bulk operations ────────────────────────────────────────────────────
+
+export async function bulkSuspendUsers(userIds: string[], reason?: string): Promise<{ success: true; data: { count: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        const now = new Date().toISOString();
+        const oids = userIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id));
+        const result = await db.collection('users').updateMany(
+            { _id: { $in: oids }, status: { $ne: 'suspended' } },
+            { $set: { status: 'suspended', suspendedAt: now, suspensionReason: reason ?? null, updatedAt: now } }
+        );
+        await db.collection('auditLogs').insertOne({ action: 'BULK_SUSPEND', performedBy: user.id, targetUserIds: userIds, reason: reason ?? null, timestamp: now });
+        revalidatePath('/admin');
+        return { count: result.modifiedCount };
+    }, 'admin');
+}
+
+export async function bulkActivateUsers(userIds: string[]): Promise<{ success: true; data: { count: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        const now = new Date().toISOString();
+        const oids = userIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id));
+        const result = await db.collection('users').updateMany(
+            { _id: { $in: oids } },
+            { $set: { status: 'active', updatedAt: now }, $unset: { suspendedAt: '', deactivatedAt: '', suspensionReason: '' } }
+        );
+        await db.collection('auditLogs').insertOne({ action: 'BULK_ACTIVATE', performedBy: user.id, targetUserIds: userIds, timestamp: now });
+        revalidatePath('/admin');
+        return { count: result.modifiedCount };
+    }, 'admin');
+}
+
+export async function bulkDeleteBooks(bookIds: string[]): Promise<{ success: true; data: { count: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        const now = new Date().toISOString();
+        const oids = bookIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id));
+        const result = await db.collection('books').updateMany(
+            { _id: { $in: oids }, deletedAt: { $exists: false } },
+            { $set: { deletedAt: now, updatedAt: now } }
+        );
+        await db.collection('auditLogs').insertOne({ action: 'BULK_DELETE_BOOKS', performedBy: user.id, targetBookIds: bookIds, timestamp: now });
+        revalidatePath('/admin'); revalidatePath('/books');
+        return { count: result.modifiedCount };
+    }, 'admin');
+}
+
+export async function broadcastAnnouncement(title: string, message: string, link?: string): Promise<{ success: true; data: { notified: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        const schema = z.object({ title: z.string().min(1).max(100), message: z.string().min(1).max(500) });
+        const v = schema.safeParse({ title, message });
+        if (!v.success) throw createAppError(ErrorType.VALIDATION, v.error.errors[0].message);
+        const now = new Date().toISOString();
+        const allUsers = await db.collection('users').find({ status: 'active' }, { projection: { _id: 1 } }).toArray();
+        if (allUsers.length > 0) {
+            await db.collection('notifications').insertMany(allUsers.map(u => ({
+                userId: String(u._id), type: 'system' as const, title, message,
+                link: link ?? '/notifications', read: false, createdAt: now,
+                metadata: { announcementBy: user.id }
+            })));
+        }
+        try { const { emitAnnouncement } = await import('../../server'); await emitAnnouncement({ title, message }); } catch { /* non-fatal */ }
+        await db.collection('auditLogs').insertOne({ action: 'BROADCAST_ANNOUNCEMENT', performedBy: user.id, title, timestamp: now });
+        revalidatePath('/notifications');
+        return { notified: allUsers.length };
+    }, 'admin');
+}
+
+export async function getAdminBooks(page = 1, limit = 20, status?: string, search?: string): Promise<{ success: true; data: { books: any[]; total: number; page: number; limit: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db }) => {
+        const filter: Record<string, unknown> = { deletedAt: { $exists: false } };
+        if (status) filter.status = status;
+        if (search) filter.$text = { $search: search };
+        const skip = (Math.max(1, page) - 1) * limit;
+        const [books, total] = await Promise.all([
+            db.collection('books').find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).toArray(),
+            db.collection('books').countDocuments(filter),
+        ]);
+        return { books: JSON.parse(JSON.stringify(books)), total, page, limit };
+    }, 'admin');
+}
+
+export async function getAdminExchanges(page = 1, limit = 20, status?: string): Promise<{ success: true; data: { exchanges: any[]; total: number; page: number; limit: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db }) => {
+        const filter: Record<string, unknown> = {};
+        if (status) filter.status = status;
+        const skip = (Math.max(1, page) - 1) * limit;
+        const [exchanges, total] = await Promise.all([
+            db.collection('exchanges').find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).toArray(),
+            db.collection('exchanges').countDocuments(filter),
+        ]);
+        return { exchanges: JSON.parse(JSON.stringify(exchanges)), total, page, limit };
+    }, 'admin');
+}
+
+export async function adminResolveDispute(exchangeId: string, resolution: 'complete' | 'cancel', notes: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        const { validateObjectId, ValidationError } = await import('@/lib/validation');
+        const eid = validateObjectId(exchangeId);
+        const exchange = await db.collection('exchanges').findOne({ _id: eid });
+        if (!exchange) throw new ValidationError('Exchange not found');
+        const now = new Date().toISOString();
+        const newStatus = resolution === 'complete' ? 'completed' : 'cancelled';
+        await db.collection('exchanges').updateOne(
+            { _id: eid },
+            {
+                $set: { status: newStatus, updatedAt: now, adminNotes: notes, adminResolvedBy: user.id, adminResolvedAt: now },
+                $push: { statusHistory: { status: newStatus, timestamp: now, updatedBy: user.id, notes: `Admin: ${notes}` } as any }
+            }
+        );
+        await db.collection('auditLogs').insertOne({ action: 'ADMIN_RESOLVE_DISPUTE', performedBy: user.id, exchangeId, resolution, notes, timestamp: now });
+        revalidatePath('/admin');
+        return { message: `Exchange ${newStatus} by admin` };
+    }, 'admin');
+}
+
+export async function lockComment(communityId: string, commentId: string, locked: boolean): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId) || !ObjectId.isValid(commentId)) throw new Error('Invalid ID');
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) });
+        if (!community) throw new Error('Community not found');
+        const member = community.members?.find((m: { userId: string; role: string }) => m.userId === user.id);
+        if (!member || !['creator', 'admin', 'moderator'].includes(member.role)) throw new Error('Not authorised');
+        await db.collection('comments').updateOne(
+            { _id: new ObjectId(commentId) },
+            { $set: { isLocked: locked, updatedAt: new Date().toISOString() } }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { message: locked ? 'Comment locked' : 'Comment unlocked' };
+    });
+}

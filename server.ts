@@ -1094,3 +1094,8 @@ export async function emitAdminNotification(notification: Record<string, unknown
     socketLogger.error('Error emitting adminNotification', error as Error);
   }
 }
+
+export async function emitAnnouncement(data: { title: string; message: string }): Promise<void> {
+  if (!io) return;
+  io.emit('announcement', data);
+}
