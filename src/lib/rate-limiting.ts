@@ -78,6 +78,12 @@ export const RATE_LIMITS = {
   // API validation operations
   API_VALIDATION: { windowMs: 60 * 1000, maxRequests: 20 }, // 20 per minute
   
+  // User interaction operations
+  SUBMIT_REPORT: { windowMs: 60 * 60 * 1000, maxRequests: 5 },  // 5 per hour
+  SUBMIT_REVIEW: { windowMs: 24 * 60 * 60 * 1000, maxRequests: 10 }, // 10 per day
+  START_CHAT: { windowMs: 60 * 60 * 1000, maxRequests: 20 },    // 20 per hour
+  BLOCK_USER: { windowMs: 60 * 60 * 1000, maxRequests: 10 },    // 10 per hour
+
   // Default fallback
   DEFAULT: { windowMs: 60 * 1000, maxRequests: 30 } // 30 per minute
 } as const;

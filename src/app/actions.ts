@@ -1459,6 +1459,11 @@ export async function createCommunity(communityData: { name: string, description
  */
 export async function blockUser(userIdToBlock: string) {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
+        const rateLimitResult = await checkUserRateLimit(user.id, 'BLOCK_USER', RATE_LIMITS.BLOCK_USER);
+        if (!rateLimitResult.allowed) {
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many block requests. Please try again later.');
+        }
+
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
         
         const validatedBlockUserId = validateObjectId(userIdToBlock);
@@ -1601,11 +1606,16 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
-        
+
+        const rateLimitResult = await checkUserRateLimit(user.id, 'START_CHAT', RATE_LIMITS.START_CHAT);
+        if (!rateLimitResult.allowed) {
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many chat requests. Please try again later.');
+        }
+
         // Validate input parameters
         const validatedOtherUserId = validateObjectId(otherUserId);
         const validatedBookId = bookId ? validateObjectId(bookId) : undefined;
-        
+
         // Prevent self-chat
         if (validatedOtherUserId.toString() === user.id) {
             throw new ValidationError("Cannot start a conversation with yourself.");
@@ -3021,7 +3031,12 @@ export async function confirmDonationOffer(donationId: string) {
 export async function submitReport(reportData: Omit<Report, '_id' | 'status' | 'createdAt'>) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== reportData.reporterId) throw new Error("Unauthorized");
-        
+
+        const rateLimitResult = await checkUserRateLimit(user.id, 'SUBMIT_REPORT', RATE_LIMITS.SUBMIT_REPORT);
+        if (!rateLimitResult.allowed) {
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many reports. Please try again later.');
+        }
+
         const newReport: Omit<Report, '_id'> = {
             ...reportData,
             status: 'pending' as const,
@@ -3055,6 +3070,11 @@ export async function submitReport(reportData: Omit<Report, '_id' | 'status' | '
 export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== reviewData.reviewerId) throw new Error("Unauthorized");
+
+        const rateLimitResult = await checkUserRateLimit(user.id, 'SUBMIT_REVIEW', RATE_LIMITS.SUBMIT_REVIEW);
+        if (!rateLimitResult.allowed) {
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many reviews. Please try again later.');
+        }
 
         // First, insert the new review document.
         const newReview: Omit<Review, '_id'> = {
