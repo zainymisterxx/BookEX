@@ -320,11 +320,14 @@ export function isValidStatusTransition(
 ): { isValid: boolean; error?: string } {
   // Define valid transitions
   const validTransitions: Record<BookStatus, BookStatus[]> = {
-    'active': ['sold', 'exchanged', 'inactive', 'expired'],
-    'sold': ['active'], // Can reactivate if sale fell through
-    'exchanged': ['active'], // Can reactivate if exchange fell through
+    'active': ['on_hold', 'sold', 'exchanged', 'inactive', 'expired', 'reserved'],
+    'on_hold': ['active', 'reserved'],     // pending proposal: restore on reject/cancel, advance on accept
+    'sold': ['active'],
+    'exchanged': ['active'],
     'inactive': ['active', 'expired'],
-    'expired': ['active'] // Can renew expired listings
+    'expired': ['active'],
+    'reserved': ['active', 'exchanged'],   // restored on cancel, finalised on completion
+    'donated': [],                          // terminal — cannot transition out
   };
 
   if (!validTransitions[currentStatus]?.includes(newStatus)) {
@@ -490,7 +493,7 @@ function calculateSimilarity(str1: string, str2: string): number {
  * @param str2 Second string
  * @returns Edit distance
  */
-function levenshteinDistance(str1: string, str2: string): number {
+export function levenshteinDistance(str1: string, str2: string): number {
   const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null));
 
   for (let i = 0; i <= str1.length; i++) matrix[0][i] = i;

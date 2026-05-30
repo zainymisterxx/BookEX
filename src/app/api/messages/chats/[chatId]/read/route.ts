@@ -58,7 +58,7 @@ export async function POST(
         },
         {
           arrayFilters: [
-            { 
+            {
               'elem.senderId': { $ne: session.user.id },
               'elem.read': { $ne: true }
             }
@@ -66,8 +66,21 @@ export async function POST(
         }
       );
 
-      return NextResponse.json({ 
-        success: true, 
+      // Notify the other participant that their messages were read
+      if (result.modifiedCount > 0) {
+        const otherUserId = chat.participantIds.find((id: string) => id !== session.user.id);
+        if (otherUserId) {
+          try {
+            const { emitMessagesRead } = await import('../../../../../../../server');
+            await emitMessagesRead(chatId, session.user.id, otherUserId);
+          } catch {
+            // Don't fail the request if socket emission fails
+          }
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
         messagesMarkedRead: result.modifiedCount > 0 ? 'updated' : 'no_unread'
       });
     } else {

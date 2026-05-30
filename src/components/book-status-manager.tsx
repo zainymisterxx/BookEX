@@ -71,6 +71,24 @@ const statusConfig = {
     color: 'bg-orange-500',
     icon: Clock,
     description: 'Listing has expired'
+  },
+  on_hold: {
+    label: 'On Hold',
+    color: 'bg-yellow-500',
+    icon: Clock,
+    description: 'Pending exchange proposal'
+  },
+  reserved: {
+    label: 'Reserved',
+    color: 'bg-indigo-500',
+    icon: CheckCircle,
+    description: 'Reserved for an accepted exchange'
+  },
+  donated: {
+    label: 'Donated',
+    color: 'bg-teal-500',
+    icon: CheckCircle,
+    description: 'Book has been donated'
   }
 };
 
@@ -94,7 +112,10 @@ const getAvailableTransitions = (currentStatus: BookStatus, bookType: 'sell' | '
     ],
     expired: [
       { status: 'active', label: 'Renew Listing', description: 'Reactivate with new expiration date' }
-    ]
+    ],
+    on_hold: [],    // managed automatically by exchange flow
+    reserved: [],   // managed automatically by exchange flow
+    donated: []     // terminal state
   };
 
   return transitions[currentStatus] || [];

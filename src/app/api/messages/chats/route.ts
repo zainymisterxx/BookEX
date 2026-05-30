@@ -87,10 +87,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Get unread count
-      const unreadCount = chat.messages?.filter((msg: any) => 
-        msg.senderId !== session.user.id && !msg.read
-      ).length || 0;
+      // Prefer the per-participant counter kept by the socket server; fall back to
+      // scanning inline messages for legacy chats that embed messages directly.
+      const unreadCount: number =
+        chat.unreadCountByParticipant?.[session.user.id] ??
+        (chat.messages?.filter((msg: any) => msg.senderId !== session.user.id && !msg.read).length || 0);
 
       return {
         _id: chat._id.toString(),

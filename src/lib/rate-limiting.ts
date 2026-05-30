@@ -9,6 +9,30 @@ interface RateLimitEntry {
   resetTime: number;
 }
 
+// NOTE: In-process fallback store used only when Redis is unavailable.
+// Resets on server restart but still enforces limits within a single instance.
+const fallbackStore = new Map<string, { count: number; resetAt: number }>();
+let redisFallbackWarned = false;
+
+function checkFallback(key: string, limit: { windowMs: number; maxRequests: number }): RateLimitResult {
+  const now = Date.now();
+  const entry = fallbackStore.get(key);
+
+  if (!entry || entry.resetAt < now) {
+    fallbackStore.set(key, { count: 1, resetAt: now + limit.windowMs });
+    return { allowed: true, remaining: limit.maxRequests - 1, resetTime: now + limit.windowMs };
+  }
+
+  entry.count++;
+  const remaining = Math.max(0, limit.maxRequests - entry.count);
+  return {
+    allowed: entry.count <= limit.maxRequests,
+    remaining,
+    resetTime: entry.resetAt,
+    ...(entry.count > limit.maxRequests && { error: 'Rate limit exceeded. Please try again later.', severity: 'error' as const }),
+  };
+}
+
 export interface RateLimitConfig {
   windowMs: number; // Time window in milliseconds
   maxRequests: number; // Maximum requests per window
@@ -78,9 +102,29 @@ export const RATE_LIMITS = {
   // API validation operations
   API_VALIDATION: { windowMs: 60 * 1000, maxRequests: 20 }, // 20 per minute
   
+  // User interaction operations
+  SUBMIT_REPORT: { windowMs: 60 * 60 * 1000, maxRequests: 5 },  // 5 per hour
+  SUBMIT_REVIEW: { windowMs: 24 * 60 * 60 * 1000, maxRequests: 10 }, // 10 per day
+  START_CHAT: { windowMs: 60 * 60 * 1000, maxRequests: 20 },    // 20 per hour
+  BLOCK_USER: { windowMs: 60 * 60 * 1000, maxRequests: 10 },    // 10 per hour
+
+  // Exchange operations
+  PROPOSE_EXCHANGE: { windowMs: 60 * 60 * 1000, maxRequests: 10 }, // 10 per hour
+
+  // Reporting
+  REPORT_COMMUNITY_CONTENT: { windowMs: 60 * 60 * 1000, maxRequests: 5 }, // 5 per hour
+
   // Default fallback
   DEFAULT: { windowMs: 60 * 1000, maxRequests: 30 } // 30 per minute
 } as const;
+
+// Purge expired entries from the fallback store every minute to prevent unbounded growth.
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of fallbackStore) {
+    if (v.resetAt < now) fallbackStore.delete(k);
+  }
+}, 60_000).unref();
 
 /**
  * Generate a rate limit key
@@ -105,8 +149,8 @@ export async function checkRateLimit(
 
   try {
     // Get current rate limit data from Redis
-    const entryData = await redisCache.get<RateLimitEntry>(key);
-    const entry: RateLimitEntry | null = entryData;
+    const entryCacheResult = await redisCache.get<RateLimitEntry>(key);
+    const entry: RateLimitEntry | null = entryCacheResult.hit ? entryCacheResult.value : null;
 
     if (!entry || now >= entry.resetTime) {
       // First request or window has reset
@@ -171,13 +215,11 @@ export async function checkRateLimit(
     };
 
   } catch (error) {
-    console.error('Rate limit check error:', error);
-    // Fallback to allow request if Redis fails
-    return {
-      allowed: true,
-      remaining: config.maxRequests - 1,
-      resetTime: now + config.windowMs
-    };
+    if (!redisFallbackWarned) {
+      console.warn('Rate limiter: Redis unavailable, falling back to in-process store. Limits reset on restart.', error);
+      redisFallbackWarned = true;
+    }
+    return checkFallback(key, config);
   }
 }
 
@@ -210,14 +252,15 @@ export async function getRateLimitStatus(identifier: string, action: string): Pr
 }> {
   try {
     const key = generateKey(identifier, action);
-    const data = await redisCache.get<RateLimitEntry>(key);
-    
-    if (!data) {
+    const dataCacheResult = await redisCache.get<RateLimitEntry>(key);
+
+    if (!dataCacheResult.hit) {
       return { exists: false };
     }
 
+    const data = dataCacheResult.value;
     const now = Date.now();
-    
+
     return {
       exists: true,
       count: data.count,

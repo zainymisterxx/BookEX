@@ -1,0 +1,54 @@
+# Dependencies — reinstalled in each stage
+node_modules
+
+# Next.js build output — produced inside the container
+.next
+
+# Local environment files — NEVER bake secrets into images
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+# Git history and metadata
+.git
+.gitignore
+
+# Editor / IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test artifacts
+coverage
+*.test.ts
+*.spec.ts
+__tests__
+
+# TypeScript incremental cache
+tsconfig.tsbuildinfo
+
+# Local Claude / AI tooling
+.claude
+
+# Documentation and scripts not needed at runtime
+README.md
+CLAUDE.md
+MISSING.md
+AI_rules
+scripts
+generate_feature_inventory.py
+BookEx_Feature_Inventory.xlsx

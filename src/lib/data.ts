@@ -1,6 +1,6 @@
 
 import clientPromise from './mongodb';
-import { Book, Community, User } from './types';
+import { Book, Community, Exchange, Organization, User } from './types';
 import { ObjectId } from 'mongodb';
 import { OptimizedQueries } from './database-optimization';
 import redisCache from './redis-cache';
@@ -10,13 +10,11 @@ import redisCache from './redis-cache';
 const serialize = (data: any) => JSON.parse(JSON.stringify(data));
 
 // Helper to calculate and format average rating
-const calculateAverageRating = (user: User | null) => {
+const calculateAverageRating = (user: User | null): User | null => {
     if (!user) return user;
     const { totalRatingPoints = 0, reviews = 0 } = user;
     const averageRating = reviews > 0 ? totalRatingPoints / reviews : 0;
-    // Round to one decimal place and convert to number
-    user.averageRating = parseFloat(averageRating.toFixed(1));
-    return user;
+    return { ...user, averageRating: parseFloat(averageRating.toFixed(1)) };
 }
 
 
@@ -140,11 +138,11 @@ export async function getBookAndSellerDetails(id: string): Promise<{ book: Book;
     if (book.sellerId && ObjectId.isValid(book.sellerId)) {
       // Try to get seller from cache first
       const sellerCacheKey = `user:${book.sellerId}`;
-      const cachedSeller = await redisCache.get<User>(sellerCacheKey);
+      const sellerCacheResult = await redisCache.get<User>(sellerCacheKey);
 
-      if (cachedSeller) {
+      if (sellerCacheResult.hit) {
         console.log(`✅ Cache hit for seller: ${book.sellerId}`);
-        seller = cachedSeller;
+        seller = sellerCacheResult.value;
       } else {
         console.log(`❌ Cache miss for seller: ${book.sellerId}, fetching from database`);
         seller = await db.collection<User>("users").findOne({ _id: new ObjectId(book.sellerId) });
@@ -190,11 +188,11 @@ export async function getUserProfileData(userId: string): Promise<{ profileUser:
 
     // Try to get from cache first
     const cacheKey = `user_profile:${userId}`;
-    const cachedData = await redisCache.get<{ profileUser: User; userListings: Book[] }>(cacheKey);
+    const profileCacheResult = await redisCache.get<{ profileUser: User; userListings: Book[] }>(cacheKey);
 
-    if (cachedData) {
+    if (profileCacheResult.hit) {
       console.log(`✅ Cache hit for user profile: ${userId}`);
-      return cachedData;
+      return profileCacheResult.value;
     }
 
     console.log(`❌ Cache miss for user profile: ${userId}, fetching from database`);
@@ -214,7 +212,8 @@ export async function getUserProfileData(userId: string): Promise<{ profileUser:
     }
 
     const userListings = await db.collection("books")
-        .find({ sellerId: userId })
+        .find({ sellerId: userId, deletedAt: { $exists: false } })
+        .limit(200)
         .toArray();
 
     // Normalize/attach city names for profile and books
@@ -253,6 +252,8 @@ export interface EnhancedBookFilters {
   minPrice?: number;
   maxPrice?: number;
   sortBy?: 'relevance' | 'price-low' | 'price-high' | 'newest' | 'oldest' | 'title-asc' | 'title-desc';
+  page?: number;
+  limit?: number;
 }
 
 /**
@@ -260,14 +261,17 @@ export interface EnhancedBookFilters {
  * @param filters The filters to apply.
  * @returns A promise resolving to an array of books.
  */
-export async function getBooksForSale(filters: EnhancedBookFilters): Promise<Book[]> {
+export async function getBooksForSale(filters: EnhancedBookFilters): Promise<{ books: Book[]; totalCount: number; hasMore: boolean }> {
   try {
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(100, Math.max(1, filters.limit ?? 20));
+
     const client = await clientPromise;
     const db = client.db("bookex");
-    
+
     // Base query - only show active, available books
     const now = new Date().toISOString();
-    const query: any = { 
+    const query: any = {
       type: "sell",
       status: 'active',
       $or: [
@@ -276,22 +280,17 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<Boo
       ]
     };
 
-    // Text search
+    // Use $text index (books_text_search_idx covers title, author, description).
+    // NOTE: Fall back to $regex only if the text index is dropped — $text is preferred
+    // for production as it uses the index and supports relevance scoring.
     if (filters.searchQuery) {
-        query.$and = query.$and || [];
-        query.$and.push({
-          $or: [
-            { title: { $regex: filters.searchQuery, $options: 'i' } },
-            { author: { $regex: filters.searchQuery, $options: 'i' } },
-            { description: { $regex: filters.searchQuery, $options: 'i' } }
-          ]
-        });
+      query.$text = { $search: filters.searchQuery };
     }
-    
+
     // Category filters
     if (filters.genre) query.genre = filters.genre;
     if (filters.condition) query.condition = filters.condition;
-    
+
     // Price range filter
     if (filters.minPrice !== undefined && filters.minPrice > 0) {
         query.price = { ...query.price, $gte: filters.minPrice };
@@ -323,21 +322,84 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<Boo
             break;
         case 'relevance':
         default:
-            // For relevance, use text score if there's a search query, otherwise newest
-            if (filters.searchQuery) {
-                query.$text = { $search: filters.searchQuery };
-                sort = { score: { $meta: "textScore" } };
-            } else {
-                sort = { createdAt: -1 };
-            }
+            // Sort by text relevance score when searching, otherwise newest-first
+            sort = filters.searchQuery
+              ? { score: { $meta: "textScore" } }
+              : { createdAt: -1 };
             break;
     }
 
-    const books = await db.collection("books").find(query).sort(sort).toArray();
-    return serialize(books);
+    const projection = filters.searchQuery
+      ? { score: { $meta: 'textScore' } }
+      : undefined;
+
+    const skip = (page - 1) * limit;
+    const [books, totalCount] = await Promise.all([
+      db.collection("books")
+        .find(query, projection ? { projection } : undefined)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      db.collection("books").countDocuments(query),
+    ]);
+
+    // AI fallback search: when $text returns 0 results, ask the AI assistant for
+    // rephrased/expanded keywords and re-query with those suggestions.
+    let finalBooks = books;
+    let finalTotalCount = totalCount;
+    if (filters.searchQuery && totalCount === 0) {
+      try {
+        const { aiAssistantFlow } = await import('@/ai/flows/intelligent-book-search');
+        // NOTE: userId is not available in data.ts; use a sentinel for rate-limit bucketing
+        const aiResult = await aiAssistantFlow({ query: filters.searchQuery, userId: 'system-search' });
+        // Extract suggested search terms from AI response text
+        const suggestionMatch = aiResult.response.match(/search(?:ing)? (?:for )?["""]?([^""".\n]{3,80})["""]?/i);
+        if (suggestionMatch) {
+          const aiQuery = suggestionMatch[1].trim();
+          const fallbackQuery = { ...query };
+          delete fallbackQuery.$text;
+          fallbackQuery.$text = { $search: aiQuery };
+          const [fbBooks, fbCount] = await Promise.all([
+            db.collection('books')
+              .find(fallbackQuery, { projection: { score: { $meta: 'textScore' } } })
+              .sort({ score: { $meta: 'textScore' } })
+              .skip(skip)
+              .limit(limit)
+              .toArray(),
+            db.collection('books').countDocuments(fallbackQuery),
+          ]);
+          if (fbCount > 0) {
+            finalBooks = fbBooks;
+            finalTotalCount = fbCount;
+          }
+        }
+      } catch (aiErr) {
+        // AI fallback must never surface errors to the caller
+        console.warn('AI search fallback failed:', aiErr);
+      }
+    }
+
+    // Fire-and-forget search analytics — failures must not break the search response
+    if (filters.searchQuery) {
+      db.collection('search_analytics').insertOne({
+        query: filters.searchQuery,
+        type: 'books_sale',
+        resultsCount: finalTotalCount,
+        createdAt: new Date().toISOString(),
+      }).catch((err) => {
+        console.error('search_analytics insert failed (books_sale):', err);
+      });
+    }
+
+    return {
+      books: serialize(finalBooks),
+      totalCount: finalTotalCount,
+      hasMore: skip + finalBooks.length < finalTotalCount,
+    };
   } catch (error) {
     console.error("Error fetching books for sale:", error);
-    return [];
+    return { books: [], totalCount: 0, hasMore: false };
   }
 }
 
@@ -451,6 +513,18 @@ export async function getBooksForExchange(filters: EnhancedBookFilters & { page?
       console.log(`Exchange query: ${books.length}/${totalCount} books, page ${validatedFilters.page}`);
     }
 
+    // Fire-and-forget search analytics — failures must not break the search response
+    if (validatedFilters.searchQuery) {
+      db.collection('search_analytics').insertOne({
+        query: validatedFilters.searchQuery,
+        type: 'books_exchange',
+        resultsCount: totalCount,
+        createdAt: new Date().toISOString(),
+      }).catch((err) => {
+        console.error('search_analytics insert failed (books_exchange):', err);
+      });
+    }
+
     return {
       books: serialize(books),
       totalCount,
@@ -487,7 +561,7 @@ export async function getAvailableBookFilters(type: 'sell' | 'exchange') {
         const client = await clientPromise;
         const db = client.db("bookex");
         const pipeline = [
-            { $match: { type: type } },
+            { $match: { type: type, status: 'active', deletedAt: { $exists: false } } },
           { $group: {
             _id: null,
             genres: { $addToSet: "$genre" },
@@ -526,6 +600,7 @@ export async function getCommunities(): Promise<Community[]> {
         const communities = await db.collection("communities")
             .find({})
             .sort({ memberCount: -1 })
+            .limit(100)
             .toArray();
         return serialize(communities);
     } catch (error) {
@@ -636,7 +711,7 @@ export async function getThreadedComments(postId: string, parentId?: string | nu
 export async function getCommunityDetailsLegacy(communityId: string) {
     const result = await getCommunityDetails(communityId, 1, 1000); // Large limit to get all posts
     if (!result) return null;
-    
+
     return {
         community: {
             ...result.community,
@@ -644,4 +719,167 @@ export async function getCommunityDetailsLegacy(communityId: string) {
         },
         posts: result.posts
     };
+}
+
+export interface ExchangeDetail extends Exchange {
+    proposer: User;
+    responder: User;
+    proposerBook: Book;
+    responderBook: Book;
+}
+
+/**
+ * Fetches a single exchange by ID, verifying the requesting user is a participant.
+ * Populates proposer, responder, proposerBook, and responderBook via $lookup.
+ */
+export async function getExchangeById(
+    exchangeId: string,
+    userId: string,
+): Promise<ExchangeDetail | null> {
+    try {
+        if (!ObjectId.isValid(exchangeId)) return null;
+
+        const client = await clientPromise;
+        const db = client.db('bookex');
+
+        const pipeline = [
+            { $match: { _id: new ObjectId(exchangeId) } },
+            {
+                $lookup: {
+                    from: 'users',
+                    let: { pid: { $toObjectId: '$proposerId' } },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$_id', '$$pid'] } } },
+                        { $project: { name: 1, avatarUrl: 1, city: 1, cityNormalized: 1 } },
+                    ],
+                    as: 'proposerArr',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    let: { rid: { $toObjectId: '$responderId' } },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$_id', '$$rid'] } } },
+                        { $project: { name: 1, avatarUrl: 1, city: 1, cityNormalized: 1 } },
+                    ],
+                    as: 'responderArr',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'books',
+                    localField: 'proposerBookId',
+                    foreignField: '_id',
+                    as: 'proposerBookArr',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'books',
+                    localField: 'responderBookId',
+                    foreignField: '_id',
+                    as: 'responderBookArr',
+                },
+            },
+            {
+                $addFields: {
+                    proposer: { $arrayElemAt: ['$proposerArr', 0] },
+                    responder: { $arrayElemAt: ['$responderArr', 0] },
+                    proposerBook: { $arrayElemAt: ['$proposerBookArr', 0] },
+                    responderBook: { $arrayElemAt: ['$responderBookArr', 0] },
+                },
+            },
+            {
+                $project: {
+                    proposerArr: 0,
+                    responderArr: 0,
+                    proposerBookArr: 0,
+                    responderBookArr: 0,
+                },
+            },
+        ];
+
+        const [exchange] = await db.collection('exchanges').aggregate(pipeline).toArray();
+
+        if (!exchange) return null;
+
+        // NOTE: Only participants may view this exchange.
+        const isParticipant =
+            exchange.proposerId === userId || exchange.responderId === userId;
+        if (!isParticipant) return null;
+
+        return serialize(exchange) as ExchangeDetail;
+    } catch (error) {
+        console.error('Error fetching exchange by id:', error);
+        return null;
+    }
+}
+
+/**
+ * Fetches a single approved organization by ID, along with active donation books
+ * listed for that organization.
+ */
+/**
+ * Fetches all books listed by a specific seller.
+ * @param userId The seller's user ID.
+ * @returns Array of books sorted by createdAt descending.
+ */
+export async function getMyBooks(userId: string): Promise<Book[]> {
+    try {
+        if (!userId) return [];
+
+        const client = await clientPromise;
+        const db = client.db('bookex');
+
+        const books = await db
+            .collection('books')
+            .find({ sellerId: userId, deletedAt: { $exists: false } })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        const { findCanonicalCity } = await import('./location/location-utils');
+        const mapped = await Promise.all(books.map(async (b: any) => {
+            const canon = await findCanonicalCity(b.cityNormalized || '');
+            return { ...b, cityNormalized: canon?.normalized || b.cityNormalized || null, cityName: canon?.name || null };
+        }));
+
+        return serialize(mapped) as Book[];
+    } catch (error) {
+        console.error('Error fetching user books:', error);
+        return [];
+    }
+}
+
+export async function getOrganizationById(orgId: string): Promise<{
+    organization: Organization;
+    donationBooks: Book[];
+} | null> {
+    try {
+        if (!ObjectId.isValid(orgId)) return null;
+
+        const client = await clientPromise;
+        const db = client.db('bookex');
+
+        const organization = await db
+            .collection<Organization>('organizations')
+            .findOne({ _id: new ObjectId(orgId), status: 'approved' });
+
+        if (!organization) return null;
+
+        // Active donation books linked to this org
+        const donationBooks = await db
+            .collection('books')
+            .find({ type: 'donation', status: 'active', organizationId: orgId })
+            .limit(50)
+            .toArray();
+
+        return serialize({ organization, donationBooks }) as {
+            organization: Organization;
+            donationBooks: Book[];
+        };
+    } catch (error) {
+        console.error('Error fetching organization by id:', error);
+        return null;
+    }
 }

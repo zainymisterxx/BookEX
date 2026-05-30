@@ -41,14 +41,21 @@ export function CreateCommunityModal({ children }: { children: React.ReactNode }
       toast({ variant: 'destructive', title: 'You must be logged in to create a community.' });
       return;
     }
-    if (!name || !description || !coverImage) {
-      toast({ variant: 'destructive', title: 'Missing fields', description: 'Please fill in all fields.' });
+    if (!name || !description) {
+      toast({ variant: 'destructive', title: 'Missing fields', description: 'Please fill in name and description.' });
       return;
     }
-    
+
     setIsSubmitting(true);
     try {
-      const imageUrl = (await uploadImageFile(coverImage, 'communityImage', 'community', user.id)).url;
+      let imageUrl = '';
+      if (coverImage) {
+        try {
+          imageUrl = (await uploadImageFile(coverImage, 'communityImage', 'community', user.id)).url;
+        } catch {
+          toast({ variant: 'destructive', title: 'Image upload failed', description: 'Could not upload cover image. Creating community without one.' });
+        }
+      }
       
       const result = await createCommunity({
         name,

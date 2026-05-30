@@ -16,6 +16,7 @@ const envSchema = z.object({
   // Authentication
   NEXTAUTH_SECRET: z.string().min(32, 'NEXTAUTH_SECRET must be at least 32 characters'),
   NEXTAUTH_URL: z.string().url('NEXTAUTH_URL must be a valid URL'),
+  MEDIA_API_SECRET: z.string().min(1, 'MEDIA_API_SECRET is required'),
   
   // Google OAuth (optional in development, required in production)
   GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required').optional(),
@@ -40,7 +41,10 @@ const envSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_URL: z.string().optional(),
   
-  // Email (optional for now)
+  // Email — Resend SDK (warn if missing, don't hard fail)
+  RESEND_API_KEY: z.string().optional(),
+
+  // Legacy email fields (kept for reference)
   EMAIL_FROM: z.string().email('EMAIL_FROM must be a valid email').optional(),
   EMAIL_SERVER_HOST: z.string().optional(),
   EMAIL_SERVER_PORT: z.string().regex(/^\d+$/, 'EMAIL_SERVER_PORT must be a valid port number').optional(),
@@ -83,11 +87,18 @@ export function validateEnv(): Env {
   }
 }
 
+let _cachedEnv: Env | null = null;
+
 /**
- * Gets a validated environment variable
- * Use this helper to ensure type safety when accessing env vars
+ * Gets a validated environment variable.
+ * Result is cached after first parse to avoid re-running Zod on every call.
  */
 export function getEnv<K extends keyof Env>(key: K): Env[K] {
-  const env = validateEnv();
-  return env[key];
+  if (!_cachedEnv) {
+    _cachedEnv = validateEnv();
+    if (process.env.NODE_ENV === 'production' && !_cachedEnv.RESEND_API_KEY) {
+      console.warn('[env] RESEND_API_KEY is not set — email delivery will fail silently in production');
+    }
+  }
+  return _cachedEnv[key];
 }

@@ -1,24 +1,34 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X } from "lucide-react";
+import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X, Search, ClipboardList } from "lucide-react";
 import type { Organization, Report, User } from '@/lib/types';
+import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { AdminReportActions } from '@/components/admin/admin-report-actions';
 import { AdminOrgActions } from '@/components/admin/admin-org-actions';
 import { AdminUserActions } from '@/components/admin/admin-user-actions';
-import { getAdminDashboardData } from '@/app/actions';
+import { getAdminDashboardData, getAdminReports, resolveReport, removeContentAndResolveReport, getAuditLogs, updateUserRole, updateSystemSetting, suspendOrganization, reactivateOrganization } from '@/app/actions';
 import { AddOrganizationModal } from '@/components/admin/add-organization-modal';
 import { DatabaseManagement } from '@/components/admin/database-management';
 import SecurityAdminDashboard from '@/components/admin/security-admin-dashboard';
 import ContentModerationDashboard from '@/components/admin/content-moderation-dashboard';
 import SimpleComprehensiveDashboard from '@/components/admin/simple-comprehensive-dashboard';
 import { ResponsiveTable, OrganizationMobileCard, UserMobileCard } from '@/components/admin/responsive-table';
+
+type ReportStatus = 'pending' | 'resolved' | 'dismissed';
+
+interface ReportWithUsers extends Report {
+    reporter?: { _id: string; name: string };
+    reportedUser?: { _id: string; name: string };
+}
 
 interface AdminData {
     userCount: number;
@@ -37,6 +47,37 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
     const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('overview');
     const [sidebarOpen, setSidebarOpen] = useState(false);
+
+    // Reports tab state
+    const [reports, setReports] = useState<ReportWithUsers[]>([]);
+    const [reportsStatus, setReportsStatus] = useState<ReportStatus>('pending');
+    const [reportsPagination, setReportsPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, hasNext: false, hasPrev: false });
+    const [reportsLoading, setReportsLoading] = useState(false);
+    const [reportActionPending, startReportAction] = useTransition();
+    const [, startAdminAction] = useTransition();
+    const { toast } = useToast();
+
+    // System settings state
+    const [emailNotifications, setEmailNotifications] = useState(true);
+    const [maintenanceMode, setMaintenanceMode] = useState(false);
+
+    // Users tab state
+    const [userSearch, setUserSearch] = useState('');
+
+    // Global admin search state
+    type AdminSearchResult = { type: string; title: string; subtitle?: string; href: string };
+    const [globalSearch, setGlobalSearch] = useState('');
+    const [globalSearchResults, setGlobalSearchResults] = useState<AdminSearchResult[]>([]);
+    const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+    const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+    const globalSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const globalSearchRef = useRef<HTMLDivElement>(null);
+
+    // Audit log tab state
+    type AuditLog = { _id: string; action: string; performedBy: string; targetUserId?: string; reason?: string; timestamp: string };
+    const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+    const [auditPagination, setAuditPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, hasNext: false, hasPrev: false });
+    const [auditLoading, setAuditLoading] = useState(false);
 
     const fetchAdminData = async () => {
         setIsLoading(true);
@@ -92,14 +133,171 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
     const handleUserDeleted = (userId: string) => {
         setData(prevData => {
             if (!prevData) return prevData;
-            const updatedUsers = prevData.users.filter(user => 
+            const updatedUsers = prevData.users.filter(user =>
                 String(user._id) !== userId
             );
             return { ...prevData, users: updatedUsers };
         });
     }
 
-    const { userCount, listingCount, organizations, reports, users } = data;
+    const fetchReports = async (status: ReportStatus, page = 1) => {
+        setReportsLoading(true);
+        const result = await getAdminReports(status, undefined, page, 20);
+        setReports(result.reports as ReportWithUsers[]);
+        setReportsPagination(result.pagination);
+        setReportsLoading(false);
+    };
+
+    const fetchAuditLogs = async (page = 1) => {
+        setAuditLoading(true);
+        const result = await getAuditLogs(page, 50);
+        if (result.success) {
+            setAuditLogs(result.data.logs);
+            setAuditPagination(result.data.pagination);
+        }
+        setAuditLoading(false);
+    };
+
+    useEffect(() => {
+        if (activeTab === 'reports') {
+            fetchReports(reportsStatus, 1);
+        }
+    // NOTE: only re-run when tab or status changes, not fetchReports identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, reportsStatus]);
+
+    useEffect(() => {
+        if (activeTab === 'audit-log') {
+            fetchAuditLogs(1);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
+
+    useEffect(() => {
+        if (globalSearchDebounceRef.current) {
+            clearTimeout(globalSearchDebounceRef.current);
+        }
+        if (globalSearch.length < 2) {
+            setGlobalSearchResults([]);
+            setGlobalSearchOpen(false);
+            return;
+        }
+        globalSearchDebounceRef.current = setTimeout(async () => {
+            setGlobalSearchLoading(true);
+            try {
+                const res = await fetch(`/api/admin/search?q=${encodeURIComponent(globalSearch)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setGlobalSearchResults(Array.isArray(data) ? data : []);
+                    setGlobalSearchOpen(true);
+                }
+            } catch {
+                // NOTE: silent — search is best-effort, no need to surface fetch errors in the UI
+            } finally {
+                setGlobalSearchLoading(false);
+            }
+        }, 300);
+        return () => {
+            if (globalSearchDebounceRef.current) clearTimeout(globalSearchDebounceRef.current);
+        };
+    }, [globalSearch]);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (globalSearchRef.current && !globalSearchRef.current.contains(e.target as Node)) {
+                setGlobalSearchOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleResolveReport = (reportId: string) => {
+        startReportAction(async () => {
+            await resolveReport(reportId);
+            await fetchReports(reportsStatus, reportsPagination.currentPage);
+        });
+    };
+
+    const handleRemoveAndResolve = (reportId: string, contentId: string, contentType: Report['reportedContentType']) => {
+        startReportAction(async () => {
+            await removeContentAndResolveReport(reportId, contentId, contentType);
+            await fetchReports(reportsStatus, reportsPagination.currentPage);
+        });
+    };
+
+    const handleUpdateUserRole = (userId: string, newRole: 'user' | 'admin') => {
+        startAdminAction(async () => {
+            const result = await updateUserRole(userId, newRole);
+            if (result.success) {
+                toast({ title: result.data.message });
+                fetchAdminData();
+            } else {
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleToggleEmailNotifications = (enabled: boolean) => {
+        setEmailNotifications(enabled);
+        startAdminAction(async () => {
+            const result = await updateSystemSetting('emailNotifications', enabled);
+            if (result.success) {
+                toast({ title: result.data.message });
+            } else {
+                setEmailNotifications(!enabled);
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleToggleMaintenanceMode = (enabled: boolean) => {
+        setMaintenanceMode(enabled);
+        startAdminAction(async () => {
+            const result = await updateSystemSetting('maintenance_mode', enabled);
+            if (result.success) {
+                toast({ title: result.data.message });
+            } else {
+                setMaintenanceMode(!enabled);
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleSuspendOrg = (orgId: string, orgName: string) => {
+        const reason = window.prompt(`Reason for suspending "${orgName}":`);
+        if (!reason?.trim()) return;
+        startAdminAction(async () => {
+            const result = await suspendOrganization(orgId, reason.trim());
+            if (result.success) {
+                toast({ title: result.data.message });
+                handleOrgActionCompleted(orgId, 'rejected');
+            } else {
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleReactivateOrg = (orgId: string) => {
+        startAdminAction(async () => {
+            const result = await reactivateOrganization(orgId);
+            if (result.success) {
+                toast({ title: result.data.message });
+                handleOrgActionCompleted(orgId, 'approved');
+            } else {
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const { userCount, listingCount, organizations, reports: dashboardReports, users } = data;
+
+    const filteredUsers = userSearch.trim().length === 0
+        ? users
+        : users?.filter(u => {
+            const q = userSearch.toLowerCase();
+            return u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q);
+        });
 
     const sidebarItems = [
         { id: 'comprehensive', label: 'Dashboard', icon: Shield },
@@ -119,6 +317,14 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
         },
         { id: 'database', label: 'Database', icon: Database },
         { id: 'users', label: 'Users', icon: UserCheck },
+        {
+            id: 'reports',
+            label: 'Reports',
+            icon: AlertTriangle,
+            badge: dashboardReports?.filter(r => r.status === 'pending').length || 0
+        },
+        { id: 'audit-log', label: 'Audit Log', icon: ClipboardList },
+        { id: 'settings', label: 'Settings', icon: Shield },
     ];
 
     return (
@@ -151,6 +357,57 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                     <p className="text-sm text-muted-foreground mt-1">
                         Platform Management
                     </p>
+                    {/* Global admin search */}
+                    <div ref={globalSearchRef} className="relative mt-4">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <Input
+                            type="search"
+                            placeholder="Search users, orgs, reports…"
+                            value={globalSearch}
+                            onChange={e => setGlobalSearch(e.target.value)}
+                            onFocus={() => globalSearchResults.length > 0 && setGlobalSearchOpen(true)}
+                            className="pl-9 text-sm"
+                            aria-label="Global admin search"
+                            aria-expanded={globalSearchOpen}
+                            aria-autocomplete="list"
+                        />
+                        {globalSearchLoading && (
+                            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                        {globalSearchOpen && globalSearchResults.length > 0 && (
+                            <Card className="absolute left-0 right-0 top-full mt-1 z-50 shadow-lg max-h-72 overflow-y-auto">
+                                <CardContent className="p-1">
+                                    {globalSearchResults.map((result, i) => (
+                                        <a
+                                            key={i}
+                                            href={result.href}
+                                            className="flex flex-col px-3 py-2 rounded hover:bg-accent transition-colors"
+                                            onClick={() => setGlobalSearchOpen(false)}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="secondary" className="text-xs shrink-0 capitalize">
+                                                    {result.type}
+                                                </Badge>
+                                                <span className="text-sm font-medium truncate">{result.title}</span>
+                                            </div>
+                                            {result.subtitle && (
+                                                <span className="text-xs text-muted-foreground mt-0.5 truncate pl-1">
+                                                    {result.subtitle}
+                                                </span>
+                                            )}
+                                        </a>
+                                    ))}
+                                </CardContent>
+                            </Card>
+                        )}
+                        {globalSearchOpen && globalSearchResults.length === 0 && !globalSearchLoading && globalSearch.length >= 2 && (
+                            <Card className="absolute left-0 right-0 top-full mt-1 z-50 shadow-lg">
+                                <CardContent className="p-3 text-sm text-muted-foreground text-center">
+                                    No results found.
+                                </CardContent>
+                            </Card>
+                        )}
+                    </div>
                 </div>
                 <nav className="p-4 space-y-1">
                     {sidebarItems.map((item) => {
@@ -215,8 +472,8 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                         <p className="text-3xl font-bold">{organizations?.length || 0}</p>
                                     </div>
                                     <div className="p-6 bg-background rounded-lg border">
-                                        <h3 className="text-sm font-medium text-muted-foreground">Pending Organizations</h3>
-                                        <p className="text-3xl font-bold text-yellow-600">{organizations?.filter(org => org.status === 'pending').length || 0}</p>
+                                        <h3 className="text-sm font-medium text-muted-foreground">Pending Reports</h3>
+                                        <p className="text-3xl font-bold text-yellow-600">{dashboardReports?.filter(r => r.status === 'pending').length || 0}</p>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -274,16 +531,33 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                                 {org.status}
                                                             </Badge>
                                                         </TableCell>
-                                                        <TableCell className="flex gap-2">
+                                                        <TableCell className="flex gap-2 flex-wrap">
                                                             <Link href={`/admin/organizations/${String(org._id)}`}>
                                                                 <Button variant="outline" size="sm">
                                                                     View Details
                                                                 </Button>
                                                             </Link>
-                                                            <AdminOrgActions 
-                                                                organization={org} 
+                                                            <AdminOrgActions
+                                                                organization={org}
                                                                 onActionCompleted={handleOrgActionCompleted}
                                                             />
+                                                            {org.status !== 'rejected' ? (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="destructive"
+                                                                    onClick={() => handleSuspendOrg(String(org._id), org.name)}
+                                                                >
+                                                                    Suspend
+                                                                </Button>
+                                                            ) : (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    onClick={() => handleReactivateOrg(String(org._id))}
+                                                                >
+                                                                    Reactivate
+                                                                </Button>
+                                                            )}
                                                         </TableCell>
                                                     </TableRow>
                                                 ))}
@@ -295,16 +569,33 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <div className="md:hidden space-y-4">
                                         {organizations?.map((org) => (
                                             <OrganizationMobileCard key={String(org._id)} organization={org}>
-                                                <div className="flex gap-2">
+                                                <div className="flex gap-2 flex-wrap">
                                                     <Link href={`/admin/organizations/${String(org._id)}`} className="flex-1">
                                                         <Button variant="outline" size="sm" className="w-full">
                                                             View Details
                                                         </Button>
                                                     </Link>
-                                                    <AdminOrgActions 
-                                                        organization={org} 
+                                                    <AdminOrgActions
+                                                        organization={org}
                                                         onActionCompleted={handleOrgActionCompleted}
                                                     />
+                                                    {org.status !== 'rejected' ? (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="destructive"
+                                                            onClick={() => handleSuspendOrg(String(org._id), org.name)}
+                                                        >
+                                                            Suspend
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => handleReactivateOrg(String(org._id))}
+                                                        >
+                                                            Reactivate
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </OrganizationMobileCard>
                                         ))}
@@ -328,6 +619,16 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <CardDescription>Manage platform users and their accounts.</CardDescription>
                                 </CardHeader>
                                 <CardContent>
+                                    <div className="relative mb-4">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            type="search"
+                                            placeholder="Search by name or email…"
+                                            value={userSearch}
+                                            onChange={e => setUserSearch(e.target.value)}
+                                            className="pl-9"
+                                        />
+                                    </div>
                                     {/* Desktop table */}
                                     <div className="hidden md:block">
                                         <Table>
@@ -342,7 +643,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
-                                                {users?.map((user) => (
+                                                {filteredUsers?.map((user) => (
                                                     <TableRow key={String(user._id)}>
                                                         <TableCell className="font-medium">{user.name}</TableCell>
                                                         <TableCell>{user.email}</TableCell>
@@ -360,29 +661,421 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                             {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}
                                                         </TableCell>
                                                         <TableCell>
-                                                            <AdminUserActions 
-                                                                user={user} 
-                                                                onUserStatusChanged={handleUserStatusChanged}
-                                                                onUserDeleted={handleUserDeleted}
-                                                            />
+                                                            <div className="flex items-center gap-2">
+                                                                <AdminUserActions
+                                                                    user={user}
+                                                                    onUserStatusChanged={handleUserStatusChanged}
+                                                                    onUserDeleted={handleUserDeleted}
+                                                                />
+                                                                {user.role !== 'admin' ? (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        onClick={() => handleUpdateUserRole(String(user._id), 'admin')}
+                                                                    >
+                                                                        Make Admin
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="secondary"
+                                                                        onClick={() => handleUpdateUserRole(String(user._id), 'user')}
+                                                                    >
+                                                                        Remove Admin
+                                                                    </Button>
+                                                                )}
+                                                            </div>
                                                         </TableCell>
                                                     </TableRow>
                                                 ))}
+                                                {filteredUsers?.length === 0 && (
+                                                    <TableRow>
+                                                        <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                                                            No users match your search.
+                                                        </TableCell>
+                                                    </TableRow>
+                                                )}
                                             </TableBody>
                                         </Table>
                                     </div>
-                                    
+
                                     {/* Mobile cards */}
                                     <div className="md:hidden space-y-4">
-                                        {users?.map((user) => (
+                                        {filteredUsers?.map((user) => (
                                             <UserMobileCard key={String(user._id)} user={user}>
-                                                <AdminUserActions 
-                                                    user={user} 
-                                                    onUserStatusChanged={handleUserStatusChanged}
-                                                    onUserDeleted={handleUserDeleted}
-                                                />
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <AdminUserActions
+                                                        user={user}
+                                                        onUserStatusChanged={handleUserStatusChanged}
+                                                        onUserDeleted={handleUserDeleted}
+                                                    />
+                                                    {user.role !== 'admin' ? (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => handleUpdateUserRole(String(user._id), 'admin')}
+                                                        >
+                                                            Make Admin
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="secondary"
+                                                            onClick={() => handleUpdateUserRole(String(user._id), 'user')}
+                                                        >
+                                                            Remove Admin
+                                                        </Button>
+                                                    )}
+                                                </div>
                                             </UserMobileCard>
                                         ))}
+                                        {filteredUsers?.length === 0 && (
+                                            <p className="text-center text-muted-foreground py-6">No users match your search.</p>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+
+                    {activeTab === 'reports' && (
+                        <div className="space-y-6 h-full">
+                            <Card>
+                                <CardHeader>
+                                    <div className="flex items-center justify-between flex-wrap gap-4">
+                                        <div>
+                                            <CardTitle className="font-headline text-2xl">Report Management</CardTitle>
+                                            <CardDescription>
+                                                {reportsPagination.totalCount} report{reportsPagination.totalCount !== 1 ? 's' : ''} total
+                                            </CardDescription>
+                                        </div>
+                                        <Select
+                                            value={reportsStatus}
+                                            onValueChange={(v) => setReportsStatus(v as ReportStatus)}
+                                        >
+                                            <SelectTrigger className="w-40">
+                                                <SelectValue placeholder="Filter status" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="pending">Pending</SelectItem>
+                                                <SelectItem value="resolved">Resolved</SelectItem>
+                                                <SelectItem value="dismissed">Dismissed</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </CardHeader>
+                                <CardContent>
+                                    {reportsLoading ? (
+                                        <div className="flex justify-center py-12">
+                                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="hidden md:block">
+                                                <Table>
+                                                    <TableHeader>
+                                                        <TableRow>
+                                                            <TableHead>Reporter</TableHead>
+                                                            <TableHead>Content Type</TableHead>
+                                                            <TableHead>Reason</TableHead>
+                                                            <TableHead>Status</TableHead>
+                                                            <TableHead>Date</TableHead>
+                                                            <TableHead>Actions</TableHead>
+                                                        </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {reports.map((report) => (
+                                                            <TableRow key={String(report._id)}>
+                                                                <TableCell className="font-medium">
+                                                                    {report.reporter?.name ?? report.reporterId ?? '—'}
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <Badge variant="secondary">
+                                                                        {report.reportedContentType}
+                                                                    </Badge>
+                                                                </TableCell>
+                                                                <TableCell className="max-w-xs truncate" title={report.details}>
+                                                                    {report.reason}
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <Badge variant={
+                                                                        report.status === 'pending' ? 'secondary' :
+                                                                        report.status === 'resolved' ? 'default' : 'outline'
+                                                                    }>
+                                                                        {report.status}
+                                                                    </Badge>
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    {new Date(report.createdAt).toLocaleDateString()}
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    {report.status === 'pending' && (
+                                                                        <div className="flex gap-2">
+                                                                            <Button
+                                                                                size="sm"
+                                                                                variant="outline"
+                                                                                disabled={reportActionPending}
+                                                                                onClick={() => handleResolveReport(String(report._id))}
+                                                                            >
+                                                                                Resolve
+                                                                            </Button>
+                                                                            <Button
+                                                                                size="sm"
+                                                                                variant="destructive"
+                                                                                disabled={reportActionPending}
+                                                                                onClick={() => handleRemoveAndResolve(
+                                                                                    String(report._id),
+                                                                                    report.reportedContentId,
+                                                                                    report.reportedContentType
+                                                                                )}
+                                                                            >
+                                                                                Remove Content
+                                                                            </Button>
+                                                                        </div>
+                                                                    )}
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                        {reports.length === 0 && (
+                                                            <TableRow>
+                                                                <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                                                                    No {reportsStatus} reports.
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )}
+                                                    </TableBody>
+                                                </Table>
+                                            </div>
+
+                                            {/* Mobile cards */}
+                                            <div className="md:hidden space-y-4">
+                                                {reports.map((report) => (
+                                                    <Card key={String(report._id)} className="border">
+                                                        <CardContent className="pt-4 space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-medium text-sm">
+                                                                    {report.reporter?.name ?? report.reporterId ?? '—'}
+                                                                </span>
+                                                                <Badge variant={
+                                                                    report.status === 'pending' ? 'secondary' :
+                                                                    report.status === 'resolved' ? 'default' : 'outline'
+                                                                }>
+                                                                    {report.status}
+                                                                </Badge>
+                                                            </div>
+                                                            <div className="flex gap-2 flex-wrap">
+                                                                <Badge variant="secondary">{report.reportedContentType}</Badge>
+                                                                <span className="text-sm text-muted-foreground">{report.reason}</span>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground">
+                                                                {new Date(report.createdAt).toLocaleDateString()}
+                                                            </p>
+                                                            {report.status === 'pending' && (
+                                                                <div className="flex gap-2 pt-1">
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        disabled={reportActionPending}
+                                                                        onClick={() => handleResolveReport(String(report._id))}
+                                                                    >
+                                                                        Resolve
+                                                                    </Button>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="destructive"
+                                                                        disabled={reportActionPending}
+                                                                        onClick={() => handleRemoveAndResolve(
+                                                                            String(report._id),
+                                                                            report.reportedContentId,
+                                                                            report.reportedContentType
+                                                                        )}
+                                                                    >
+                                                                        Remove Content
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </CardContent>
+                                                    </Card>
+                                                ))}
+                                                {reports.length === 0 && (
+                                                    <p className="text-center text-muted-foreground py-6">No {reportsStatus} reports.</p>
+                                                )}
+                                            </div>
+
+                                            {/* Pagination */}
+                                            {reportsPagination.totalPages > 1 && (
+                                                <div className="flex items-center justify-between pt-4">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={!reportsPagination.hasPrev || reportsLoading}
+                                                        onClick={() => fetchReports(reportsStatus, reportsPagination.currentPage - 1)}
+                                                    >
+                                                        Previous
+                                                    </Button>
+                                                    <span className="text-sm text-muted-foreground">
+                                                        Page {reportsPagination.currentPage} of {reportsPagination.totalPages}
+                                                    </span>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={!reportsPagination.hasNext || reportsLoading}
+                                                        onClick={() => fetchReports(reportsStatus, reportsPagination.currentPage + 1)}
+                                                    >
+                                                        Next
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+                    {activeTab === 'audit-log' && (
+                        <div className="space-y-6 h-full">
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="font-headline text-2xl">Audit Log</CardTitle>
+                                    <CardDescription>
+                                        {auditPagination.totalCount} admin action{auditPagination.totalCount !== 1 ? 's' : ''} recorded
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    {auditLoading ? (
+                                        <div className="flex justify-center py-12">
+                                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="hidden md:block">
+                                                <Table>
+                                                    <TableHeader>
+                                                        <TableRow>
+                                                            <TableHead>Action</TableHead>
+                                                            <TableHead>Performed By</TableHead>
+                                                            <TableHead>Target User</TableHead>
+                                                            <TableHead>Reason</TableHead>
+                                                            <TableHead>Timestamp</TableHead>
+                                                        </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {auditLogs.map((log) => (
+                                                            <TableRow key={log._id}>
+                                                                <TableCell>
+                                                                    <Badge variant="secondary" className="font-mono text-xs">
+                                                                        {log.action}
+                                                                    </Badge>
+                                                                </TableCell>
+                                                                <TableCell className="font-mono text-xs">{log.performedBy}</TableCell>
+                                                                <TableCell className="font-mono text-xs">{log.targetUserId ?? '—'}</TableCell>
+                                                                <TableCell className="max-w-xs truncate text-sm" title={log.reason ?? undefined}>
+                                                                    {log.reason ?? '—'}
+                                                                </TableCell>
+                                                                <TableCell className="text-sm">
+                                                                    {new Date(log.timestamp).toLocaleString()}
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                        {auditLogs.length === 0 && (
+                                                            <TableRow>
+                                                                <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                                                                    No audit log entries found.
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )}
+                                                    </TableBody>
+                                                </Table>
+                                            </div>
+
+                                            {/* Mobile cards */}
+                                            <div className="md:hidden space-y-3">
+                                                {auditLogs.map((log) => (
+                                                    <Card key={log._id} className="border">
+                                                        <CardContent className="pt-4 space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <Badge variant="secondary" className="font-mono text-xs">{log.action}</Badge>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    {new Date(log.timestamp).toLocaleDateString()}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground">By: {log.performedBy}</p>
+                                                            {log.targetUserId && (
+                                                                <p className="text-xs text-muted-foreground">Target: {log.targetUserId}</p>
+                                                            )}
+                                                            {log.reason && (
+                                                                <p className="text-sm">{log.reason}</p>
+                                                            )}
+                                                        </CardContent>
+                                                    </Card>
+                                                ))}
+                                                {auditLogs.length === 0 && (
+                                                    <p className="text-center text-muted-foreground py-6">No audit log entries found.</p>
+                                                )}
+                                            </div>
+
+                                            {auditPagination.totalPages > 1 && (
+                                                <div className="flex items-center justify-between pt-4">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={!auditPagination.hasPrev || auditLoading}
+                                                        onClick={() => fetchAuditLogs(auditPagination.currentPage - 1)}
+                                                    >
+                                                        Previous
+                                                    </Button>
+                                                    <span className="text-sm text-muted-foreground">
+                                                        Page {auditPagination.currentPage} of {auditPagination.totalPages}
+                                                    </span>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={!auditPagination.hasNext || auditLoading}
+                                                        onClick={() => fetchAuditLogs(auditPagination.currentPage + 1)}
+                                                    >
+                                                        Next
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+                    {activeTab === 'settings' && (
+                        <div className="space-y-6 h-full">
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="font-headline text-2xl">System Settings</CardTitle>
+                                    <CardDescription>Configure platform-wide settings.</CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-6">
+                                    <div className="flex items-center justify-between p-4 border rounded-lg">
+                                        <div>
+                                            <p className="font-medium">Email Notifications</p>
+                                            <p className="text-sm text-muted-foreground">Send system emails to users</p>
+                                        </div>
+                                        <Button
+                                            variant={emailNotifications ? 'default' : 'outline'}
+                                            size="sm"
+                                            onClick={() => handleToggleEmailNotifications(!emailNotifications)}
+                                        >
+                                            {emailNotifications ? 'Enabled' : 'Disabled'}
+                                        </Button>
+                                    </div>
+                                    <div className="flex items-center justify-between p-4 border rounded-lg">
+                                        <div>
+                                            <p className="font-medium">Maintenance Mode</p>
+                                            <p className="text-sm text-muted-foreground">Take the platform offline for maintenance</p>
+                                        </div>
+                                        <Button
+                                            variant={maintenanceMode ? 'destructive' : 'outline'}
+                                            size="sm"
+                                            onClick={() => handleToggleMaintenanceMode(!maintenanceMode)}
+                                        >
+                                            {maintenanceMode ? 'ON' : 'OFF'}
+                                        </Button>
                                     </div>
                                 </CardContent>
                             </Card>

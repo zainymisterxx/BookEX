@@ -21,11 +21,32 @@ import { logger } from './src/lib/logger';
 // Create a child logger for socket server
 const socketLogger = logger.child({ service: 'socket-server' });
 
-// Extend Socket type to include userId and active chat
+/**
+ * Decode a JWT without verifying the signature and check whether the `exp`
+ * claim is in the past.  Full signature re-verification on every message is
+ * too expensive; a cheap exp-only check is enough to catch expired sessions.
+ */
+function isTokenExpired(token: string): boolean {
+  try {
+    // jwt.decode returns null or the payload without any signature check
+    const decoded = jwt.decode(token) as { exp?: number } | null;
+    if (!decoded || typeof decoded.exp !== 'number') {
+      // No exp claim — treat as non-expiring (e.g. NextAuth session tokens)
+      return false;
+    }
+    return Date.now() >= decoded.exp * 1000;
+  } catch {
+    // Malformed token
+    return true;
+  }
+}
+
+// Extend Socket type to include userId, active chat, and the raw auth token
 declare module 'socket.io' {
   interface Socket {
     userId: string | null;
     activeChatId: string | null;
+    authToken: string | null;
   }
 }
 
@@ -38,6 +59,15 @@ redisCache.connect().catch(() => {
 const activeChats = new Map<string, Set<string>>();
 
 const httpServer = createServer();
+// NOTE: For multi-server deployments, initialize the Redis adapter:
+// import { createAdapter } from '@socket.io/redis-adapter';
+// import { createClient } from 'redis';
+// if (process.env.REDIS_URL) {
+//   const pubClient = createClient({ url: process.env.REDIS_URL });
+//   const subClient = pubClient.duplicate();
+//   await Promise.all([pubClient.connect(), subClient.connect()]);
+//   io.adapter(createAdapter(pubClient, subClient));
+// }
 const io = new Server(httpServer, {
   cors: {
     origin: getCorsOrigins(),
@@ -91,15 +121,19 @@ export async function emitExchangeStatusUpdate(exchangeId: string, exchangeData:
 io.on('connection', (socket) => {
   socketLogger.info('User connected', { socketId: socket.id, transport: socket.conn.transport.name });
   
-  // Store user ID and active chat in socket for authorization
+  // Store user ID, active chat, and raw token in socket for authorization
   socket.userId = null;
   socket.activeChatId = null;
+  socket.authToken = null;
 
   // Handle user room joining (simpler authentication)
   socket.on('joinUserRoom', async (userId) => {
     try {
       if (userId) {
-        socket.userId = userId;
+        if (userId !== socket.userId) {
+          socket.emit('error', { message: 'Not authorized to join this user room' });
+          return;
+        }
         socket.join(`user_${userId}`);
         console.log(`User ${userId} joined user room ${userId}`);
         
@@ -140,7 +174,14 @@ io.on('connection', (socket) => {
       if (token && process.env.NEXTAUTH_SECRET) {
         const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET) as any;
         socket.userId = decoded.sub || decoded.id;
+        socket.authToken = token;
         console.log(`User ${socket.userId} authenticated via token`);
+
+        // Admins join the 'admin' room so they receive real-time admin notifications
+        if (decoded.role === 'admin') {
+          socket.join('admin');
+          console.log(`Admin ${socket.userId} joined admin room`);
+        }
         
         // Set user as online in presence system
         await presenceManager.setUserOnline(socket.userId!);
@@ -165,18 +206,36 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('joinChat', (chatId) => {
+  socket.on('joinChat', async (chatId) => {
+    if (!socket.userId) {
+      socket.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+
+    try {
+      const client = await clientPromise;
+      const db = client.db('bookex');
+      const chat = await db.collection('chats').findOne({ _id: new ObjectId(chatId) });
+
+      const chatParticipants = (chat?.participantIds || []).map((id: unknown) => String(id));
+      if (!chat || !chatParticipants.includes(socket.userId!)) {
+        socket.emit('error', { message: 'Not a participant in this chat' });
+        return;
+      }
+    } catch {
+      socket.emit('error', { message: 'Failed to join chat' });
+      return;
+    }
+
     socket.join(chatId);
     socket.activeChatId = chatId;
-    
+
     // Track active chat for notification logic
-    if (socket.userId) {
-      if (!activeChats.has(socket.userId)) {
-        activeChats.set(socket.userId, new Set());
-      }
-      activeChats.get(socket.userId)!.add(chatId);
+    if (!activeChats.has(socket.userId)) {
+      activeChats.set(socket.userId, new Set());
     }
-    
+    activeChats.get(socket.userId)!.add(chatId);
+
     console.log(`User ${socket.id} joined chat ${chatId}`);
   });
 
@@ -201,15 +260,27 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendMessage', async (data) => {
-    const { chatId, senderId, text, attachments } = data;
-    
+    const { chatId, text, attachments } = data;
+    const senderId = socket.userId;
+
+    if (!senderId) {
+        socket.emit('error', { message: 'Not authenticated' });
+        return;
+    }
+
+    if (socket.authToken && isTokenExpired(socket.authToken)) {
+        socket.emit('session_expired', { event: 'session_expired' });
+        socket.disconnect(true);
+        return;
+    }
+
     try {
         const client = await clientPromise;
         const db = client.db("bookex");
 
         // Fetch the chat to get participants
         const chat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
-        
+
         if (!chat) {
             console.error(`Chat ${chatId} not found`);
             socket.emit('error', { message: 'Chat not found' });
@@ -217,7 +288,7 @@ io.on('connection', (socket) => {
         }
 
         // Verify sender is a participant
-        if (!chat.participantIds || !chat.participantIds.includes(senderId)) {
+        if (!chat.participantIds || !chat.participantIds.map((id: unknown) => String(id)).includes(senderId)) {
             console.error(`User ${senderId} is not a participant in chat ${chatId}`);
             socket.emit('error', { message: 'Not authorized to send messages in this chat' });
             return;
@@ -285,6 +356,34 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left community ${communityId}`);
   });
 
+  socket.on('joinExchange', async (exchangeId) => {
+    if (!socket.userId) {
+      socket.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+    try {
+      const client = await clientPromise;
+      const db = client.db('bookex');
+      const exchange = await db.collection('exchanges').findOne({ _id: new ObjectId(exchangeId) });
+      if (!exchange || (exchange.proposerId !== socket.userId && exchange.responderId !== socket.userId)) {
+        socket.emit('error', { message: 'Not a participant in this exchange' });
+        return;
+      }
+      socket.join(`exchange_${exchangeId}`);
+    } catch {
+      socket.emit('error', { message: 'Failed to join exchange room' });
+    }
+  });
+
+  socket.on('leaveExchange', (exchangeId) => {
+    socket.leave(`exchange_${exchangeId}`);
+  });
+
+  socket.on('notifyNewChat', ({ chatId, otherUserId }: { chatId: string; otherUserId: string }) => {
+    if (!socket.userId) return;
+    io.to(`user_${otherUserId}`).emit('newChatCreated', { chatId });
+  });
+
   // Channel events with authorization
   socket.on('joinChannel', async (data) => {
     const { channelId, communityId } = data;
@@ -328,10 +427,7 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left channel ${channelId}`);
   });
 
-  socket.on('joinUserRoom', (userId) => {
-    socket.join(`user_${userId}`);
-    console.log(`User ${socket.id} joined user room ${userId}`);
-  });
+  // joinUserRoom is handled by the async handler above — duplicate removed
 
   // Handle presence check requests
   socket.on('checkPresence', async (data: { userIds: string[] }) => {
@@ -437,10 +533,16 @@ io.on('connection', (socket) => {
   // Personal messaging events
   socket.on('personalMessage', async (data) => {
     const { receiverId, content, attachments } = data; // Added attachments support
-    
+
     try {
       if (!socket.userId) {
         socket.emit('error', { message: 'Not authenticated' });
+        return;
+      }
+
+      if (socket.authToken && isTokenExpired(socket.authToken)) {
+        socket.emit('session_expired', { event: 'session_expired' });
+        socket.disconnect(true);
         return;
       }
 
@@ -928,3 +1030,72 @@ export async function emitCommunityJoinRequestUpdated(
 }
 
 // ─── End Community Admin Real-Time Events ─────────────────────────────────────
+
+/**
+ * Emit to the other chat participant that messages have been read.
+ * Called by the REST read route after marking DB records.
+ */
+export async function emitMessagesRead(chatId: string, readBy: string, otherUserId: string) {
+  try {
+    io.to(`user_${otherUserId}`).emit('messagesRead', { chatId, readBy });
+  } catch (error) {
+    socketLogger.error('Error emitting messagesRead', error as Error, { chatId });
+  }
+}
+
+/**
+ * Emit newBookListed to all connected clients when a book is successfully listed.
+ * Called from the listBook Server Action.
+ */
+export async function emitNewBook(bookId: string, sellerId: string, bookData: { title: string; type: string }) {
+  try {
+    io.emit('newBookListed', { bookId, sellerId, title: bookData.title, type: bookData.type, timestamp: new Date().toISOString() });
+    socketLogger.info('Emitted newBookListed', { bookId, sellerId });
+  } catch (error) {
+    socketLogger.error('Error emitting newBookListed', error as Error, { bookId });
+  }
+}
+
+/**
+ * Emit newReviewSubmitted to the reviewee's personal room.
+ * Called from the submitReview Server Action.
+ */
+export async function emitNewReview(revieweeId: string, reviewData: { reviewerId: string; rating: number }) {
+  try {
+    io.to(`user_${revieweeId}`).emit('newReviewSubmitted', { revieweeId, ...reviewData, timestamp: new Date().toISOString() });
+    socketLogger.info('Emitted newReviewSubmitted', { revieweeId });
+  } catch (error) {
+    socketLogger.error('Error emitting newReviewSubmitted', error as Error, { revieweeId });
+  }
+}
+
+/**
+ * Emit newChatCreated to the other participant when a new chat is started.
+ * Called from the startChat Server Action.
+ */
+export async function emitNewChatNotification(chatId: string, fromUserId: string, toUserId: string) {
+  try {
+    io.to(`user_${toUserId}`).emit('newChatCreated', { chatId });
+    socketLogger.info('Emitted newChatCreated', { chatId, fromUserId, toUserId });
+  } catch (error) {
+    socketLogger.error('Error emitting newChatCreated', error as Error, { chatId });
+  }
+}
+
+/**
+ * Emit a newly created admin notification to all sockets in the 'admin' room.
+ * Called from createAdminNotification after DB insert.
+ */
+export async function emitAdminNotification(notification: Record<string, unknown>) {
+  try {
+    io.to('admin').emit('adminNotification', notification);
+    socketLogger.info('Emitted adminNotification', { type: notification.type });
+  } catch (error) {
+    socketLogger.error('Error emitting adminNotification', error as Error);
+  }
+}
+
+export async function emitAnnouncement(data: { title: string; message: string }): Promise<void> {
+  if (!io) return;
+  io.emit('announcement', data);
+}

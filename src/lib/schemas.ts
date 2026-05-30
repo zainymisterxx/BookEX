@@ -64,7 +64,11 @@ export const bookSchema = z.object({
     .min(1, 'City is required')
     .max(100, 'City name must be 100 characters or less')
     .trim(),
-  status: BookStatusSchema.optional().default('active')
+  status: BookStatusSchema.optional().default('active'),
+  // Server-side deduplication fields — optional so schema can validate full documents
+  titleNormalized: z.string().optional(),
+  authorNormalized: z.string().optional(),
+  duplicateHash: z.string().optional(),
 }).refine((data) => {
   // If type is 'sell', price must be provided and positive
   if (data.type === 'sell' && (!data.price || data.price <= 0)) {

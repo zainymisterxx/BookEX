@@ -5,13 +5,13 @@
 
 import { ObjectId } from 'mongodb';
 import clientPromise from './mongodb';
-import type { User, Book, Community, Chat, Report, Organization } from './types';
+import type { User, Book, Community, Chat, Report, Organization, UserRole, UserStatus } from './types';
 import { createAppError, ErrorType } from './error-handling';
 
 export interface AuthorizedUser {
   id: string;
-  role: 'user' | 'admin';
-  status: 'active' | 'suspended' | 'deactivated';
+  role: UserRole;
+  status: UserStatus;
 }
 
 /**

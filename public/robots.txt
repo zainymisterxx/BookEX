@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /profile/settings
+Disallow: /api/
+
+Sitemap: https://bookex.vercel.app/sitemap.xml

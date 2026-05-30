@@ -1,9 +1,15 @@
 
 import type { ObjectId } from 'mongodb';
 
+export const USER_ROLES = ['visitor', 'user', 'admin', 'organization'] as const;
+export type UserRole = typeof USER_ROLES[number];
+
+export const USER_STATUSES = ['active', 'suspended', 'deactivated'] as const;
+export type UserStatus = typeof USER_STATUSES[number];
+
 export type BookGenre = "fantasy" | "sci-fi" | "mystery" | "romance" | "self-help" | "historical-fiction" | "other";
 
-export type BookStatus = 'active' | 'sold' | 'exchanged' | 'inactive' | 'expired';
+export type BookStatus = 'active' | 'on_hold' | 'sold' | 'exchanged' | 'inactive' | 'expired' | 'reserved' | 'donated';
 
 export interface Book {
   _id: ObjectId | string;
@@ -26,6 +32,10 @@ export interface Book {
   titleNormalized: string; // Normalized title for duplicate detection
   authorNormalized: string; // Normalized author for duplicate detection
   duplicateHash: string; // Hash for quick duplicate detection
+  // Engagement analytics
+  viewCount?: number;
+  contactCount?: number;
+  reportCount?: number;
 }
 
 export interface WishlistItem {
@@ -51,8 +61,15 @@ export interface User {
   reviews?: number; // Total number of reviews
   totalRatingPoints?: number; // Sum of all ratings
   averageRating?: number; // Calculated on read: totalRatingPoints / reviews
-  role?: 'user' | 'admin';
-  status?: 'active' | 'suspended' | 'deactivated'; // User account status
+  role?: UserRole;
+  status?: UserStatus; // User account status
+  suspendedAt?: string; // ISO 8601 date string (UTC) - when account was suspended
+  suspensionReason?: string | null; // Reason provided at suspension time
+  deactivatedAt?: string; // ISO 8601 date string (UTC) - when account was deactivated
+  emailVerified?: boolean;
+  emailVerifiedAt?: string; // ISO 8601 date string (UTC)
+  lastLoginAt?: string; // ISO 8601 date string (UTC)
+  failedLoginAttempts?: number;
   createdAt?: string; // ISO 8601 date string (UTC) - when account was created
   updatedAt?: string; // ISO 8601 date string (UTC) - Last profile update timestamp
   wishlist?: WishlistItem[];
@@ -62,6 +79,10 @@ export interface User {
     exchangeUpdates: boolean;        // Email when exchange status changes
     contactNotifications: boolean;   // Email when someone contacts about your book
     weeklyDigest: boolean;          // Weekly summary of new books in your area
+    communityMentions?: boolean;     // Email when mentioned in a community post
+    commentReplies?: boolean;        // Email when someone replies to your comment
+    reviewReceived?: boolean;        // Email when you receive a review
+    adminActions?: boolean;          // Email for admin actions affecting your account
   };
 }
 
@@ -70,6 +91,7 @@ export interface Community {
   name: string;
   description: string;
   memberCount: number;
+  postCount?: number;
   imageUrl: string;
   coverImage?: string;
   rules?: string; // Markdown, max 5000 chars
@@ -298,6 +320,9 @@ export interface Chat {
     deletedBy?: string[];              // Users who deleted this chat (soft delete)
     
     lastMessage?: string;
+    lastMessageAt?: string; // ISO 8601 date string
+    lastMessagePreview?: string;
+    unreadCountByParticipant?: Record<string, number>;
     updatedAt: string; // ISO 8601 date string
     messages?: Message[]; // Messages can be embedded
     // For UI display
@@ -315,6 +340,7 @@ export interface Review {
     rating: number;
     comment: string;
     createdAt: string; // ISO 8601 date string
+    transactionId?: string; // ObjectId of the exchange or donation this review is for
 }
 
 export interface Report {
@@ -374,9 +400,19 @@ export interface Notification {
         chatId?: string;
         exchangeId?: string;
         communityId?: string;
-        donationId?: string;     // NEW: For donation notifications
-        organizationId?: string; // NEW: For organization-related notifications
-        [key: string]: any;
+        donationId?: string;
+        organizationId?: string;
+        postId?: string;
+        commentId?: string;
+        reviewerId?: string;
+        rating?: number;
+        newMemberId?: string;
+        actionType?: string;
+        senderId?: string;
+        senderName?: string;
+        bookTitle?: string;
+        proposerName?: string;
+        status?: string;
     };
 }
 
@@ -396,6 +432,16 @@ export interface PasswordResetToken {
     expiresAt: string; // ISO 8601 date string
     used: boolean;
     createdAt: string; // ISO 8601 date string
+}
+
+export interface EmailVerificationToken {
+    _id?: ObjectId | string;
+    userId: string;
+    email: string;
+    token: string;       // random hex, 32 bytes
+    expiresAt: string;   // ISO, 24h from creation
+    usedAt?: string;
+    createdAt: string;
 }
 
 // Exchange Status Tracking Types
@@ -447,12 +493,21 @@ export interface Exchange {
     proposerConfirmed?: boolean;  // Did proposer confirm completion?
     responderConfirmed?: boolean; // Did responder confirm completion?
     
+    // Dispute tracking
+    disputeReason?: string;
+    disputeOpenedAt?: string;     // ISO 8601 date string
+    disputeResolvedAt?: string;   // ISO 8601 date string
+    disputeResolvedBy?: string;   // Admin userId who resolved
+
+    // Audit trail
+    timeline?: Array<{ event: string; timestamp: string; byUserId: string; note?: string }>;
+
     // Ratings (after completion)
     proposerRating?: number;      // 1-5 rating from proposer
     responderRating?: number;     // 1-5 rating from responder
     proposerReview?: string;      // Optional review from proposer
     responderReview?: string;     // Optional review from responder
-    
+
     // For UI display (populated when fetched)
     proposer?: User;
     responder?: User;
@@ -558,13 +613,18 @@ export interface AdminNotification {
     
     // Metadata for different notification types
     metadata?: {
-        userId?: string;                 // Related user
-        bookId?: string;                 // Related book
-        organizationId?: string;         // Related organization
-        reportId?: string;               // Related report
-        errorCode?: string;              // Error identifier
-        count?: number;                  // Count for aggregated notifications
-        [key: string]: any;              // Flexible metadata
+        userId?: string;
+        bookId?: string;
+        organizationId?: string;
+        reportId?: string;
+        errorCode?: string;
+        count?: number;
+        actionType?: string;
+        exchangeId?: string;
+        donationId?: string;
+        chatId?: string;
+        postId?: string;
+        commentId?: string;
     };
     
     // Timestamps

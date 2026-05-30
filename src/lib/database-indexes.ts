@@ -55,13 +55,23 @@ async function setupIndexes() {
       background: true 
     });
     
-    await db.collection('books').createIndex({ 
-      price: 1 
-    }, { 
+    await db.collection('books').createIndex({
+      price: 1
+    }, {
       name: 'books_price_idx',
-      background: true 
+      background: true
     });
-    
+
+    // Soft-delete index for books
+    await db.collection('books').createIndex({
+      deletedAt: 1,
+      status: 1
+    }, {
+      name: 'books_soft_delete_status_idx',
+      sparse: true,
+      background: true
+    });
+
     // Organizations Collection Indexes
     console.log('  🏢 Creating Organizations indexes...');
     await db.collection('organizations').createIndex({ 
@@ -88,24 +98,29 @@ async function setupIndexes() {
     });
     
     // Ensure unique organization names (case-insensitive)
-    await db.collection('organizations').createIndex({ 
-      name: 1 
-    }, { 
+    await db.collection('organizations').createIndex({
+      name: 1
+    }, {
       name: 'organizations_name_unique_idx',
       unique: true,
       collation: { locale: 'en', strength: 2 }, // Case-insensitive
-      background: true 
+      background: true
+    });
+
+    // Representative lookup index
+    await db.collection('organizations').createIndex({
+      'representatives.userId': 1
+    }, {
+      name: 'organizations_representatives_user_idx',
+      background: true
     });
     
     // Users Collection Indexes
     console.log('  👥 Creating Users indexes...');
-    await db.collection('users').createIndex({ 
-      email: 1 
-    }, { 
-      name: 'users_email_unique_idx',
-      unique: true,
-      background: true 
-    });
+    await db.collection('users').createIndex(
+      { email: 1 },
+      { unique: true, sparse: true, name: 'users_email_unique', background: true }
+    );
     
     await db.collection('users').createIndex({ 
       cityNormalized: 1 
@@ -197,15 +212,25 @@ async function setupIndexes() {
     });
     
     // Index for member queries
-    await db.collection('communities').createIndex({ 
+    await db.collection('communities').createIndex({
       "members.userId": 1,
       "members.role": 1,
       memberCount: -1
-    }, { 
+    }, {
       name: 'communities_members_role_count_idx',
-      background: true 
+      background: true
     });
-    
+
+    // Soft-delete index for communities
+    await db.collection('communities').createIndex({
+      deletedAt: 1,
+      status: 1
+    }, {
+      name: 'communities_soft_delete_status_idx',
+      sparse: true,
+      background: true
+    });
+
     // Posts Collection Indexes
     console.log('  📝 Creating Posts indexes...');
     await db.collection('posts').createIndex({ 
@@ -233,11 +258,21 @@ async function setupIndexes() {
       background: true 
     });
 
-    await db.collection('comments').createIndex({ 
-      path: 1 
-    }, { 
+    await db.collection('comments').createIndex({
+      path: 1
+    }, {
       name: 'comments_path_idx',
-      background: true 
+      background: true
+    });
+
+    // Threaded comment fetching
+    await db.collection('comments').createIndex({
+      postId: 1,
+      parentId: 1,
+      createdAt: 1
+    }, {
+      name: 'comments_post_parent_created_idx',
+      background: true
     });
     
     await db.collection('posts').createIndex({ 
@@ -275,12 +310,12 @@ async function setupIndexes() {
       background: true 
     });
     
-    await db.collection('exchanges').createIndex({ 
-      receiverId: 1, 
-      status: 1 
-    }, { 
-      name: 'exchanges_receiver_status_idx',
-      background: true 
+    await db.collection('exchanges').createIndex({
+      responderId: 1,
+      status: 1
+    }, {
+      name: 'exchanges_responder_status_idx',
+      background: true
     });
     
     await db.collection('exchanges').createIndex({ 
@@ -308,23 +343,93 @@ async function setupIndexes() {
     
     // Notifications Collection Indexes
     console.log('  🔔 Creating Notifications indexes...');
-    await db.collection('notifications').createIndex({ 
-      userId: 1, 
-      read: 1, 
-      createdAt: -1 
-    }, { 
+    await db.collection('notifications').createIndex({
+      userId: 1,
+      read: 1,
+      createdAt: -1
+    }, {
       name: 'notifications_user_read_date_idx',
-      background: true 
+      background: true
     });
-    
+
+    // Compound index for filtering notifications by read state and type
+    await db.collection('notifications').createIndex({
+      read: 1,
+      type: 1,
+      createdAt: -1
+    }, {
+      name: 'notifications_read_type_date_idx',
+      background: true
+    });
+
+    // Admin Notifications Collection Indexes
+    console.log('  🔔 Creating Admin Notifications indexes...');
+    await db.collection('adminNotifications').createIndex({
+      userId: 1,
+      read: 1,
+      createdAt: -1
+    }, {
+      name: 'adminNotifications_user_read_date_idx',
+      background: true
+    });
+
+    await db.collection('adminNotifications').createIndex({
+      type: 1,
+      createdAt: -1
+    }, {
+      name: 'adminNotifications_type_date_idx',
+      background: true
+    });
+
+    // TTL index: MongoDB auto-deletes documents once expiresAt is reached
+    await db.collection('adminNotifications').createIndex({
+      expiresAt: 1
+    }, {
+      name: 'adminNotifications_ttl_idx',
+      expireAfterSeconds: 0,
+      background: true
+    });
+
+    // Email Verification Tokens Collection Indexes
+    console.log('  📧 Creating Email Verification Tokens indexes...');
+    await db.collection('email_verification_tokens').createIndex(
+      { token: 1 },
+      { unique: true, name: 'email_verification_tokens_token_unique_idx', background: true }
+    );
+    // TTL index: MongoDB auto-purges documents once expiresAt is reached
+    await db.collection('email_verification_tokens').createIndex(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: 'email_verification_tokens_ttl_idx', background: true }
+    );
+
+    // sessions — active session tracking ("log out all devices")
+    await db.collection('sessions').createIndex({ userId: 1 }, { name: 'sessions_userId_idx', background: true });
+    await db.collection('sessions').createIndex(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: 'sessions_ttl_idx', background: true }
+    );
+
+    // feature_flags — kill-switch and gradual rollout
+    await db.collection('feature_flags').createIndex({ key: 1 }, { unique: true, name: 'feature_flags_key_unique_idx', background: true });
+
+    // search_analytics — query tracking
+    await db.collection('search_analytics').createIndex({ query: 1 }, { name: 'search_analytics_query_idx', background: true });
+    await db.collection('search_analytics').createIndex({ createdAt: 1 }, { name: 'search_analytics_createdAt_idx', background: true });
+
+    // book_views — engagement analytics
+    await db.collection('book_views').createIndex({ bookId: 1 }, { name: 'book_views_bookId_idx', background: true });
+    await db.collection('book_views').createIndex({ userId: 1, bookId: 1 }, { name: 'book_views_userId_bookId_idx', background: true });
+    await db.collection('book_views').createIndex({ createdAt: 1 }, { name: 'book_views_createdAt_idx', background: true });
+
     console.log('✅ All indexes created successfully!');
     console.log('📈 Your database is now optimized for better performance.');
     
     // Display index information
     console.log('\n📊 Index Summary:');
     const collections = [
-      'books', 'organizations', 'users', 'chats', 'communities', 
-      'posts', 'reports', 'exchanges', 'reviews', 'notifications'
+      'books', 'organizations', 'users', 'chats', 'communities',
+      'posts', 'comments', 'reports', 'exchanges', 'reviews',
+      'notifications', 'adminNotifications'
     ];
     
     for (const collectionName of collections) {

@@ -62,20 +62,29 @@ export async function createAdminNotification(params: CreateAdminNotificationPar
       actionUrl: params.actionUrl,
       read: false,
       resolved: false,
+      // NOTE: params.metadata carries notification-type-specific fields (alertType,
+      // errorType, metric, etc.) that are stored in MongoDB but not covered by the
+      // typed AdminNotification.metadata union. The cast is intentional.
       metadata: {
         ...params.metadata,
         deduplicationKey
-      },
+      } as AdminNotification['metadata'],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       expiresAt: params.expiresAt
     };
     
     const result = await collection.insertOne(notification);
-    
-    // TODO: Emit real-time notification
-    console.log(`Admin notification created: ${params.type} - ${params.title}`);
-    
+
+    // Emit real-time notification to all admin sockets in the 'admin' room
+    try {
+      const { emitAdminNotification } = await import('../../server');
+      await emitAdminNotification({ ...notification, _id: result.insertedId.toString() });
+    } catch (emitError) {
+      // NOTE: Non-fatal — real-time delivery is best-effort; the record is already persisted
+      console.warn(`Failed to emit admin notification in real-time: ${params.type}`, emitError);
+    }
+
     return result.insertedId.toString();
     
   } catch (error) {

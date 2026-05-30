@@ -1,5 +1,7 @@
 import { createClient, RedisClientType } from 'redis';
 
+export type CacheResult<T> = { hit: true; value: T } | { hit: false };
+
 class RedisCache {
   private client: RedisClientType | null = null;
   private isConnected: boolean = false;
@@ -58,17 +60,18 @@ class RedisCache {
     }
   }
 
-  async get<T>(key: string): Promise<T | null> {
+  async get<T>(key: string): Promise<CacheResult<T>> {
     try {
       if (!this.client || !this.isConnected) {
-        return null;
+        return { hit: false };
       }
 
       const data = await this.client.get(key);
-      return data ? JSON.parse(data) : null;
+      if (data === null) return { hit: false };
+      return { hit: true, value: JSON.parse(data) as T };
     } catch (error) {
-      console.error('Redis GET error:', error);
-      return null;
+      console.error('[REDIS_GET_ERROR]', key, (error as Error).message || error);
+      return { hit: false };
     }
   }
 
@@ -176,7 +179,8 @@ class RedisCache {
 
   async getCachedUserData(userId: string): Promise<any | null> {
     const key = this.getUserCacheKey(userId);
-    return await this.get(key);
+    const result = await this.get(key);
+    return result.hit ? result.value : null;
   }
 
   async invalidateUserCache(userId: string): Promise<void> {
@@ -195,7 +199,8 @@ class RedisCache {
 
   async getCachedUserSession(userId: string, sessionId: string): Promise<any | null> {
     const key = this.getUserSessionCacheKey(userId, sessionId);
-    return await this.get(key);
+    const result = await this.get(key);
+    return result.hit ? result.value : null;
   }
 
   async invalidateUserSession(userId: string, sessionId: string): Promise<void> {

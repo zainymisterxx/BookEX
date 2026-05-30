@@ -5,17 +5,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Users, Trash2, Eye, Search, Shield, AlertTriangle, MessageSquare, UserMinus, Ban } from 'lucide-react';
+import { Users, Trash2, Eye, Shield, AlertTriangle, CheckCircle, UserMinus, BarChart2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { Community, Post, User } from '@/lib/types';
 import { apiFetch } from '@/lib/api-client';
+import {
+  getCommunityModerationQueue,
+  approveFlaggedContent,
+  removeContentAndResolveReport,
+  getCommunityAnalytics,
+} from '@/app/actions';
+import type { ModerationQueueResult, CommunityAnalytics } from '@/app/actions';
 
 interface CommunityStats {
   totalCommunities: number;
@@ -46,6 +52,12 @@ export default function CommunityAdminDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'moderator' | 'member' | 'banned'>('all');
+  const [modQueue, setModQueue] = useState<ModerationQueueResult | null>(null);
+  const [modQueueCommunityId, setModQueueCommunityId] = useState<string>('');
+  const [modQueueLoading, setModQueueLoading] = useState(false);
+  const [analytics, setAnalytics] = useState<CommunityAnalytics | null>(null);
+  const [analyticsCommunityId, setAnalyticsCommunityId] = useState<string>('');
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -157,6 +169,61 @@ export default function CommunityAdminDashboard() {
     } catch (error) {
       console.error('Failed to delete post:', error);
       toast({ variant: 'destructive', title: 'Failed to delete post' });
+    }
+  };
+
+  const loadModerationQueue = async (communityId: string) => {
+    setModQueueCommunityId(communityId);
+    setModQueueLoading(true);
+    try {
+      const result = await getCommunityModerationQueue(communityId);
+      if (result.success) {
+        setModQueue(result.data);
+      } else {
+        toast({ variant: 'destructive', title: result.message });
+      }
+    } catch {
+      toast({ variant: 'destructive', title: 'Failed to load moderation queue' });
+    } finally {
+      setModQueueLoading(false);
+    }
+  };
+
+  const handleApproveContent = async (communityId: string, contentId: string, contentType: 'post' | 'comment') => {
+    const result = await approveFlaggedContent(communityId, contentId, contentType);
+    if (result.success) {
+      toast({ title: result.data.message });
+      loadModerationQueue(communityId);
+    } else {
+      toast({ variant: 'destructive', title: result.message });
+    }
+  };
+
+  const handleRemoveContent = async (communityId: string, contentId: string, contentType: 'post' | 'comment') => {
+    // NOTE: removeContentAndResolveReport requires a reportId; for direct mod removal we pass a dummy sentinel
+    const result = await removeContentAndResolveReport('000000000000000000000000', contentId, contentType);
+    if (result.success) {
+      toast({ title: 'Content removed' });
+      loadModerationQueue(communityId);
+    } else {
+      toast({ variant: 'destructive', title: result.message });
+    }
+  };
+
+  const loadAnalytics = async (communityId: string) => {
+    setAnalyticsCommunityId(communityId);
+    setAnalyticsLoading(true);
+    try {
+      const result = await getCommunityAnalytics(communityId);
+      if (result.success) {
+        setAnalytics(result.data);
+      } else {
+        toast({ variant: 'destructive', title: result.message });
+      }
+    } catch {
+      toast({ variant: 'destructive', title: 'Failed to load analytics' });
+    } finally {
+      setAnalyticsLoading(false);
     }
   };
 
@@ -441,23 +508,237 @@ export default function CommunityAdminDashboard() {
         </TabsContent>
 
         <TabsContent value="moderation" className="space-y-4">
-          <Alert>
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>
-              Moderation queue functionality will be implemented here. This will show reported posts,
-              comments, and communities that need admin review.
-            </AlertDescription>
-          </Alert>
+          <Card>
+            <CardHeader>
+              <CardTitle>Moderation Queue</CardTitle>
+              <CardDescription>Review flagged posts, comments, and pending join requests</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-end gap-4">
+                <div className="flex-1">
+                  <Label>Select Community</Label>
+                  <Select value={modQueueCommunityId} onValueChange={setModQueueCommunityId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a community" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {communities.map((c) => (
+                        <SelectItem key={String(c._id)} value={String(c._id)}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={() => modQueueCommunityId && loadModerationQueue(modQueueCommunityId)} disabled={!modQueueCommunityId || modQueueLoading}>
+                  {modQueueLoading ? 'Loading…' : 'Load Queue'}
+                </Button>
+              </div>
+
+              {modQueue && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="font-semibold mb-2 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                      Flagged Posts ({modQueue.flaggedPosts.length})
+                    </h3>
+                    {modQueue.flaggedPosts.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No flagged posts.</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Content</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {modQueue.flaggedPosts.map((post) => (
+                            <TableRow key={post._id}>
+                              <TableCell><div className="max-w-xs truncate">{post.content}</div></TableCell>
+                              <TableCell><Badge variant="outline">{post.status}</Badge></TableCell>
+                              <TableCell>
+                                <div className="flex gap-2">
+                                  <Button size="sm" variant="outline" onClick={() => handleApproveContent(modQueueCommunityId, post._id, 'post')}>
+                                    <CheckCircle className="h-4 w-4 mr-1" />Approve
+                                  </Button>
+                                  <Button size="sm" variant="destructive" onClick={() => handleRemoveContent(modQueueCommunityId, post._id, 'post')}>
+                                    <Trash2 className="h-4 w-4 mr-1" />Remove
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold mb-2 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                      Flagged Comments ({modQueue.flaggedComments.length})
+                    </h3>
+                    {modQueue.flaggedComments.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No flagged comments.</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Content</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {modQueue.flaggedComments.map((comment) => (
+                            <TableRow key={comment._id}>
+                              <TableCell><div className="max-w-xs truncate">{comment.content}</div></TableCell>
+                              <TableCell>
+                                <div className="flex gap-2">
+                                  <Button size="sm" variant="outline" onClick={() => handleApproveContent(modQueueCommunityId, comment._id, 'comment')}>
+                                    <CheckCircle className="h-4 w-4 mr-1" />Approve
+                                  </Button>
+                                  <Button size="sm" variant="destructive" onClick={() => handleRemoveContent(modQueueCommunityId, comment._id, 'comment')}>
+                                    <Trash2 className="h-4 w-4 mr-1" />Remove
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold mb-2 flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Pending Join Requests ({modQueue.pendingJoinRequests.length})
+                    </h3>
+                    {modQueue.pendingJoinRequests.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No pending join requests.</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>User</TableHead>
+                            <TableHead>Message</TableHead>
+                            <TableHead>Requested</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {modQueue.pendingJoinRequests.map((req) => (
+                            <TableRow key={req._id}>
+                              <TableCell>{req.userName}</TableCell>
+                              <TableCell><div className="max-w-xs truncate">{req.message ?? '—'}</div></TableCell>
+                              <TableCell>{new Date(req.requestedAt).toLocaleDateString()}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="analytics" className="space-y-4">
-          <Alert>
-            <Shield className="h-4 w-4" />
-            <AlertDescription>
-              Community analytics and insights will be displayed here, including growth metrics,
-              engagement rates, and content performance statistics.
-            </AlertDescription>
-          </Alert>
+          <Card>
+            <CardHeader>
+              <CardTitle>Community Analytics</CardTitle>
+              <CardDescription>Growth metrics and content performance for the last 30 days</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-end gap-4">
+                <div className="flex-1">
+                  <Label>Select Community</Label>
+                  <Select value={analyticsCommunityId} onValueChange={setAnalyticsCommunityId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a community" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {communities.map((c) => (
+                        <SelectItem key={String(c._id)} value={String(c._id)}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={() => analyticsCommunityId && loadAnalytics(analyticsCommunityId)} disabled={!analyticsCommunityId || analyticsLoading}>
+                  {analyticsLoading ? 'Loading…' : 'Load Analytics'}
+                </Button>
+              </div>
+
+              {analytics && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Posts (30d)</CardTitle>
+                        <BarChart2 className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{analytics.postsLastNDays}</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">New Members (30d)</CardTitle>
+                        <Users className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{analytics.newMembersLastNDays}</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Total Posts</CardTitle>
+                        <Shield className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{analytics.totalPosts}</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Total Members</CardTitle>
+                        <Users className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{analytics.totalMembers}</div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold mb-2">Top 5 Most-Liked Posts</h3>
+                    {analytics.topPosts.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No posts yet.</p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Content</TableHead>
+                            <TableHead>Likes</TableHead>
+                            <TableHead>Created</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {analytics.topPosts.map((post) => (
+                            <TableRow key={post._id}>
+                              <TableCell><div className="max-w-sm truncate">{post.content}</div></TableCell>
+                              <TableCell><Badge variant="secondary">{post.likes}</Badge></TableCell>
+                              <TableCell>{new Date(post.createdAt).toLocaleDateString()}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

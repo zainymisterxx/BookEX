@@ -1,15 +1,21 @@
 import { DefaultSession } from "next-auth"
+import type { UserRole, UserStatus } from "@/lib/types"
 
 declare module "next-auth" {
-  /**
-   * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
-   */
   interface Session {
     user: {
       id: string;
       username?: string;
-      role: 'user' | 'admin';
-      status?: 'active' | 'suspended' | 'deactivated';
+      role: UserRole;
+      status?: UserStatus;
     } & DefaultSession["user"]
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    role?: UserRole;
+    status?: UserStatus;
+    username?: string;
   }
 }
