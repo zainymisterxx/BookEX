@@ -26,17 +26,20 @@ export const authOptions: NextAuthOptions = {
           const client = await clientPromise;
           const users = client.db('bookex').collection('users');
           
-          const user = await users.findOne({ email: credentials.email.toLowerCase() }) as User | null;
+          const normalizedEmail = credentials.email.toLowerCase();
+          const user = await users.findOne({ email: normalizedEmail }) as User | null;
           console.log('User found:', user ? 'Yes' : 'No');
 
           if (!user) {
             console.log('User not found in database');
+            recordAuthResult('LOGIN', false, normalizedEmail);
             return null;
           }
 
           // Check if user account is suspended
           if (user.status === 'suspended') {
             console.log('User account is suspended');
+            recordAuthResult('LOGIN', false, normalizedEmail);
             return null;
           }
 
@@ -46,10 +49,12 @@ export const authOptions: NextAuthOptions = {
 
           if (!isValid) {
             console.log('Invalid password');
+            recordAuthResult('LOGIN', false, normalizedEmail);
             return null;
           }
 
           console.log('Authentication successful, returning user object');
+          recordAuthResult('LOGIN', true, normalizedEmail);
           // Return user object (password will be omitted automatically)
           return {
             id: user._id.toString(),

@@ -75,7 +75,7 @@ export function setupSocketServer(httpServer: HTTPServer) {
   await presenceManager.setUserOnline(socket.userId!);
 
     // Join user to their personal room for direct messages and presence
-    socket.join(`user:${socket.userId}`);
+    socket.join(`user_${socket.userId}`);
     
     // Broadcast to all connected sockets that this user is online
     console.log(`Broadcasting presenceUpdate: User ${socket.userId} is online`);

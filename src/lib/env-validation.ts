@@ -16,6 +16,7 @@ const envSchema = z.object({
   // Authentication
   NEXTAUTH_SECRET: z.string().min(32, 'NEXTAUTH_SECRET must be at least 32 characters'),
   NEXTAUTH_URL: z.string().url('NEXTAUTH_URL must be a valid URL'),
+  MEDIA_API_SECRET: z.string().min(1, 'MEDIA_API_SECRET is required'),
   
   // Google OAuth (optional in development, required in production)
   GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required').optional(),

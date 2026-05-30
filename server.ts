@@ -994,6 +994,32 @@ export async function emitMessagesRead(chatId: string, readBy: string, otherUser
 }
 
 /**
+ * Emit newBookListed to all connected clients when a book is successfully listed.
+ * Called from the listBook Server Action.
+ */
+export async function emitNewBook(bookId: string, sellerId: string, bookData: { title: string; type: string }) {
+  try {
+    io.emit('newBookListed', { bookId, sellerId, title: bookData.title, type: bookData.type, timestamp: new Date().toISOString() });
+    socketLogger.info('Emitted newBookListed', { bookId, sellerId });
+  } catch (error) {
+    socketLogger.error('Error emitting newBookListed', error as Error, { bookId });
+  }
+}
+
+/**
+ * Emit newReviewSubmitted to the reviewee's personal room.
+ * Called from the submitReview Server Action.
+ */
+export async function emitNewReview(revieweeId: string, reviewData: { reviewerId: string; rating: number }) {
+  try {
+    io.to(`user_${revieweeId}`).emit('newReviewSubmitted', { revieweeId, ...reviewData, timestamp: new Date().toISOString() });
+    socketLogger.info('Emitted newReviewSubmitted', { revieweeId });
+  } catch (error) {
+    socketLogger.error('Error emitting newReviewSubmitted', error as Error, { revieweeId });
+  }
+}
+
+/**
  * Emit newChatCreated to the other participant when a new chat is started.
  * Called from the startChat Server Action.
  */

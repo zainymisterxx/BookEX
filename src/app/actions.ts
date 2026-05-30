@@ -740,6 +740,13 @@ export async function listBook(bookData: { title: string, author: string, descri
       revalidatePath('/exchange');
     }
 
+    try {
+      const { emitNewBook } = await import('../../server');
+      await emitNewBook(insertedId.toString(), user.id, { title: validatedBookData.title, type: validatedBookData.type });
+    } catch (emitError) {
+      console.warn('Failed to emit newBookListed socket event:', emitError);
+    }
+
     return { bookId: insertedId?.toString() };
   });
 }
@@ -3200,6 +3207,13 @@ export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>
                 metadata: { reviewerId: reviewData.reviewerId, rating: reviewData.rating }
             });
         } catch (e) { console.warn('Failed to create review notification:', e); }
+
+        try {
+            const { emitNewReview } = await import('../../server');
+            await emitNewReview(reviewData.revieweeId, { reviewerId: reviewData.reviewerId, rating: reviewData.rating });
+        } catch (emitError) {
+            console.warn('Failed to emit newReviewSubmitted socket event:', emitError);
+        }
 
         revalidatePath(`/profile/${reviewData.revieweeId}`);
         return { success: true };

@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 110 fixed / 197 total — 87 remaining**
+**Progress: 118 fixed / 197 total — 79 remaining**
 
 ---
 
@@ -70,7 +70,7 @@
 - [x] Blocking is one-directional — only blocker's `blockedUsers` array updated — fixed: blockUser/unblockUser now update both parties
 - [x] `messagesRead` never emitted by `server.ts` — fixed: f4c6a89
 - [x] `newChatCreated` never emitted by `server.ts` — fixed: f4c6a89
-- [ ] Two competing Socket.IO implementations: `server.ts` (room `user_${id}`) vs `src/lib/socket-server.ts` (room `user:${id}`)
+- [x] Two competing Socket.IO implementations — fixed: socket-server.ts updated to use `user_${id}` to match server.ts
 
 **Partially fixed (5fce5ca):**
 - [x] `sendMessage` trusts client-provided `senderId` — fixed: uses `socket.userId`
@@ -124,10 +124,10 @@
 - [ ] No book/listing management section — cannot view, search, remove, or feature any listing from admin
 - [ ] No exchange/transaction oversight section — cannot view exchanges or intervene in disputes
 - [ ] Audit log viewer missing — activity logs are written to DB but no admin UI reads them
-- [ ] Report management UI missing — `getAdminReports()` Server Action exists but no admin tab surfaces it
+- [x] Report management UI missing — fixed: reports tab added to admin dashboard with status filter and resolve/remove actions
 - [ ] System settings are view-only — all "Configure" buttons have no `onClick` handlers
 - [ ] No announcement/broadcast system
-- [ ] No user search or filter in admin
+- [x] No user search or filter in admin — fixed: search input added, filters users by name/email client-side
 - [ ] No bulk operations — no bulk suspend, bulk activate, bulk export
 - [ ] No staff/admin management
 - [ ] No analytics date range filter — charts have no date picker
@@ -146,8 +146,8 @@
 - [x] `joinUserRoom` (server.ts:99) accepts client-provided `userId` with zero JWT verification — fixed: 5fce5ca
 - [x] `joinChat` (server.ts:168) allows unauthenticated sockets to join any chat room — fixed: 5fce5ca
 - [x] `sendMessage` (server.ts:204) trusts client-provided `senderId` — fixed: 5fce5ca
-- [ ] No socket event emitted when a new book is listed
-- [ ] No socket event emitted when a review is submitted
+- [x] No socket event emitted when a new book is listed — fixed: emitNewBook added to server.ts, called from listBook
+- [x] No socket event emitted when a review is submitted — fixed: emitNewReview added to server.ts, called from submitReview
 - [ ] Admin notification creation has explicit TODO comment — real-time emit not implemented
 
 ---
@@ -165,7 +165,7 @@
 - [x] `resetPassword` has no rate limit — fixed: 0c534d6
 - [x] 4 critical actions missing rate limits — fixed: submitReport, submitReview, startChat, blockUser (ac3bfa8)
 - [ ] Auth rate limiting uses in-memory `Map` — resets on server restart, bypassed under load balancing
-- [ ] NextAuth `authorize` handler never calls `recordAuthResult()` on failure — brute-force bypasses account lockout
+- [x] NextAuth `authorize` handler never calls `recordAuthResult()` — fixed: called on all success/failure paths
 - [ ] CSP header uses `'unsafe-eval'` + `'unsafe-inline'` in `script-src`
 - [x] Hardcoded `'dev-media-secret'` fallback in upload-token route — fixed: always requires MEDIA_API_SECRET env var
 - [ ] Content moderation applied only to community posts/comments — missing from book listings, user bios, reviews, org descriptions
@@ -264,7 +264,7 @@
 - [ ] `src/app/api/messages/.../read/route.ts:96` and `notification-utils.ts:156` — `'http://localhost:3001'` fallback
 - [ ] `next.config.ts:128` — `process.env.VERCEL_URL` baked into CSP at build time
 - [x] `.env.example` missing media API + admin env vars — fixed: 0c534d6
-- [ ] `env-validation.ts` does not validate `MEDIA_API_SECRET`
+- [x] `env-validation.ts` does not validate `MEDIA_API_SECRET` — fixed: required field added
 - [ ] No `Dockerfile` or `docker-compose.yml`
 - [ ] No `.github/workflows/` CI/CD pipeline
 - [ ] No `vercel.json` — Socket.IO incompatible with Vercel serverless
@@ -281,7 +281,7 @@
 ## 19. ERROR HANDLING — SILENT FAILURES
 
 - [ ] Redis failure returns `allowed: true` for rate limit — limits silently disabled when Redis is down
-- [ ] `initiateDonation` — 4-step operation with no MongoDB transaction
+- [x] `initiateDonation` — false positive: already wrapped in withTransaction (confirmed)
 - [x] `resetPassword` — two separate `updateOne` calls, no transaction — fixed: 1a22983
 - [x] `deleteReview` — delete + stats update not atomic — fixed: 1a22983
 - [ ] Socket `sendMessage` broadcasts even when the DB `updateOne` fails
