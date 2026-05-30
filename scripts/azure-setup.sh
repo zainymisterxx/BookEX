@@ -2,6 +2,12 @@
 # BookEX Azure VM Setup Script
 set -e
 
+# Suppress ALL interactive prompts from apt and needrestart
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+sudo sed -i "s/#\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/" /etc/needrestart/needrestart.conf 2>/dev/null || true
+
 echo "=== Step 1: Remove old Node.js ==="
 sudo apt-get remove -y libnode-dev libnode72 nodejs 2>/dev/null || true
 
