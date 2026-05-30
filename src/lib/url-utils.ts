@@ -66,13 +66,19 @@ export function getApiUrl(): string {
  * Get CORS origins for server configuration
  */
 export function getCorsOrigins(): string[] {
-  if (process.env.NODE_ENV === 'production') {
-    return [getBaseUrl()];
-  }
-  
-  return [
+  const origins = [
     'http://localhost:3000',
     'http://localhost:9002',
-    'https://localhost:3000'
+    'https://localhost:3000',
   ];
+
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    origins.push(process.env.NEXT_PUBLIC_APP_URL);
+  }
+
+  if (process.env.VERCEL_URL) {
+    origins.push(`https://${process.env.VERCEL_URL}`);
+  }
+
+  return origins;
 }
