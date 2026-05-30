@@ -1,6 +1,12 @@
 
 import type { ObjectId } from 'mongodb';
 
+export const USER_ROLES = ['visitor', 'user', 'admin', 'organization'] as const;
+export type UserRole = typeof USER_ROLES[number];
+
+export const USER_STATUSES = ['active', 'suspended', 'deactivated'] as const;
+export type UserStatus = typeof USER_STATUSES[number];
+
 export type BookGenre = "fantasy" | "sci-fi" | "mystery" | "romance" | "self-help" | "historical-fiction" | "other";
 
 export type BookStatus = 'active' | 'on_hold' | 'sold' | 'exchanged' | 'inactive' | 'expired' | 'reserved' | 'donated';
@@ -55,8 +61,8 @@ export interface User {
   reviews?: number; // Total number of reviews
   totalRatingPoints?: number; // Sum of all ratings
   averageRating?: number; // Calculated on read: totalRatingPoints / reviews
-  role?: 'user' | 'admin';
-  status?: 'active' | 'suspended' | 'deactivated'; // User account status
+  role?: UserRole;
+  status?: UserStatus; // User account status
   suspendedAt?: string; // ISO 8601 date string (UTC) - when account was suspended
   suspensionReason?: string | null; // Reason provided at suspension time
   deactivatedAt?: string; // ISO 8601 date string (UTC) - when account was deactivated

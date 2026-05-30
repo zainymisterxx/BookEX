@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 118 fixed / 197 total — 79 remaining**
+**Progress: 126 fixed / 197 total — 71 remaining**
 
 ---
 
@@ -265,9 +265,9 @@
 - [ ] `next.config.ts:128` — `process.env.VERCEL_URL` baked into CSP at build time
 - [x] `.env.example` missing media API + admin env vars — fixed: 0c534d6
 - [x] `env-validation.ts` does not validate `MEDIA_API_SECRET` — fixed: required field added
-- [ ] No `Dockerfile` or `docker-compose.yml`
-- [ ] No `.github/workflows/` CI/CD pipeline
-- [ ] No `vercel.json` — Socket.IO incompatible with Vercel serverless
+- [x] No Dockerfile — fixed: multi-stage Dockerfile + .dockerignore added
+- [x] No CI/CD pipeline — fixed: .github/workflows/ci.yml added (lint + typecheck + build)
+- [x] No vercel.json — fixed: added with Socket.IO rewrite to external server + constraint documented
 - [x] No `public/robots.txt` — fixed: 0c534d6
 - [x] No sitemap generation — fixed: `src/app/sitemap.ts` added in 0c534d6
 - [x] No `public/manifest.json` (PWA support) — fixed: 0c534d6
@@ -286,8 +286,8 @@
 - [x] `deleteReview` — delete + stats update not atomic — fixed: 1a22983
 - [ ] Socket `sendMessage` broadcasts even when the DB `updateOne` fails
 - [ ] Email failures after chat/exchange creation are only `console.warn`
-- [ ] 10+ MongoDB `insertOne`/`updateOne` results not checked after the call
-- [ ] 15+ missing null guards after `findOne`
+- [x] 10+ MongoDB write results not checked — fixed: 7 critical paths now check result and throw on failure
+- [x] 15+ missing null guards — confirmed: all critical exchange/admin findOne paths already guarded
 - [ ] `redis-cache.ts` `get()` returns `null` on Redis error — callers cannot distinguish cache miss from Redis failure
 
 ---
@@ -298,9 +298,9 @@
 - [ ] 150+ `as any` type assertions on MongoDB documents across `actions.ts` and `community-admin-actions.ts`
 - [ ] 8 MongoDB update helper functions return `any` instead of `UpdateFilter<T>` (`mongodb-types.ts:119–195`)
 - [ ] `Notification.metadata` and `AdminNotification.metadata` use `[key: string]: any` escape hatch
-- [ ] Zod `bookSchema` does not include `titleNormalized`, `authorNormalized`, `duplicateHash`
-- [ ] `UserRole` and `UserStatus` defined as inline string literals in 3+ places
-- [ ] NextAuth `auth-config.ts` uses `(user as any).role` / `(user as any).status`
+- [x] Zod `bookSchema` missing deduplication fields — fixed: added as optional fields
+- [x] `UserRole` and `UserStatus` defined as inline string literals — fixed: USER_ROLES/USER_STATUSES const arrays + named types in types.ts
+- [x] NextAuth `auth-config.ts` uses `(user as any)` casts — fixed: next-auth.d.ts augmentation + AuthUser interface
 - [x] `mongodb-types.ts` `PostDocument` — fixed: isPinned, isLocked, deletedAt, deletedBy, status added
 - [x] `mongodb-types.ts` `BookDocument` — fixed: all 6 fields added
 

@@ -3181,19 +3181,26 @@ export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>
             ...reviewData,
             createdAt: new Date().toISOString(),
         };
-        await db.collection("reviews").insertOne(newReview);
-        
+        const reviewInsertResult = await db.collection("reviews").insertOne(newReview);
+        if (!reviewInsertResult.insertedId) {
+            throw new Error('submitReview: insert failed');
+        }
+
         // Then, perform a single, atomic update on the user document.
         // This is far more efficient and safer than the previous aggregation method.
-        await db.collection("users").updateOne(
+        const revieweeUpdateResult = await db.collection("users").updateOne(
             { _id: new ObjectId(reviewData.revieweeId) },
-            { 
-                $inc: { 
-                    reviews: 1, 
-                    totalRatingPoints: reviewData.rating 
-                } 
+            {
+                $inc: {
+                    reviews: 1,
+                    totalRatingPoints: reviewData.rating
+                }
             }
         );
+
+        if (revieweeUpdateResult.matchedCount === 0) {
+            throw new Error('Reviewee not found');
+        }
 
         try {
             await db.collection("notifications").insertOne({
@@ -4548,7 +4555,7 @@ export async function addOrganizationByAdmin(orgData: {
 export async function suspendUser(userId: string, reason?: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user }) => {
         const now = new Date().toISOString();
-        await db.collection("users").updateOne(
+        const suspendResult = await db.collection("users").updateOne(
             { _id: new ObjectId(userId) },
             {
                 $set: {
@@ -4559,6 +4566,10 @@ export async function suspendUser(userId: string, reason?: string): Promise<{ su
                 },
             }
         );
+
+        if (suspendResult.matchedCount === 0) {
+            throw new Error('User not found');
+        }
 
         await db.collection("auditLogs").insertOne({
             action: 'SUSPEND_USER',
@@ -4600,10 +4611,14 @@ export async function deactivateUser(targetUserId: string): Promise<{ success: t
         }
 
         // 1. Soft-deactivate the user
-        await db.collection('users').updateOne(
+        const deactivateResult = await db.collection('users').updateOne(
             { _id: targetOid },
             { $set: { status: 'deactivated', deactivatedAt: now, updatedAt: now } }
         );
+
+        if (deactivateResult.matchedCount === 0) {
+            throw new Error('User not found or already modified.');
+        }
 
         // 2. Cancel active/pending exchanges where this user is proposer or responder
         const cancelledStatusEntry = {
@@ -5631,7 +5646,10 @@ export async function proposeExchange(
         };
         
         const exchangeResult = await db.collection("exchanges").insertOne(newExchange);
-        
+        if (!exchangeResult.insertedId) {
+            throw new Error('proposeExchange: exchange insert failed');
+        }
+
         // Update chat to link to exchange
         await db.collection("chats").updateOne(
             { _id: new ObjectId(chat._id) },
@@ -6033,7 +6051,7 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
             notes: isProposer ? 'Proposer confirmed completion' : 'Responder confirmed completion'
         };
         
-        await db.collection("exchanges").updateOne(
+        const confirmResult = await db.collection("exchanges").updateOne(
             { _id: validatedExchangeId },
             {
                 $set: updateFields,
@@ -6042,6 +6060,10 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                 } as any
             }
         );
+
+        if (confirmResult.matchedCount === 0) {
+            throw new Error('Exchange not found or already modified');
+        }
 
         if (bothConfirmed) {
             // Perform ownership transfer and record history in a transaction
@@ -6217,7 +6239,7 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
             notes: reason
         };
         
-        await db.collection("exchanges").updateOne(
+        const cancelResult = await db.collection("exchanges").updateOne(
             { _id: validatedExchangeId },
             {
                 $set: {
@@ -6229,7 +6251,11 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
                 } as any
             }
         );
-        
+
+        if (cancelResult.matchedCount === 0) {
+            throw new Error('Exchange not found or already modified');
+        }
+
         // Restore both books to active so they can enter new exchanges
         await db.collection("books").updateMany(
             { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },

@@ -2,9 +2,19 @@ import { type NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import clientPromise from '@/lib/mongodb';
 import { compare } from 'bcryptjs';
-import type { User } from '@/lib/types';
+import type { User, UserRole, UserStatus } from '@/lib/types';
 import { ObjectId } from 'mongodb';
 import { checkAuthRateLimit, recordAuthResult } from '@/lib/auth-rate-limiting';
+
+interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  username: string | null;
+  image: string | null;
+  role: UserRole;
+  status: UserStatus;
+}
 
 export const authOptions: NextAuthOptions = {
   debug: process.env.NODE_ENV === 'development',
@@ -75,9 +85,10 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user, trigger, session }) {
       if (user) {
-        token.role = (user as any).role;
-        token.status = (user as any).status;
-        token.username = (user as any).username;
+        const authUser = user as unknown as AuthUser;
+        token.role = authUser.role;
+        token.status = authUser.status;
+        token.username = authUser.username ?? undefined;
       }
       // Persist fields updated via useSession().update()
       if (trigger === 'update' && session) {
@@ -90,9 +101,9 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.sub!;
-        session.user.role = token.role as 'user' | 'admin';
-        session.user.status = token.status as 'active' | 'suspended' | 'deactivated';
-        session.user.username = token.username as string;
+        session.user.role = token.role ?? 'user';
+        session.user.status = token.status;
+        session.user.username = token.username;
         // Sync image from JWT so profile picture updates are reflected immediately
         if (token.picture !== undefined) {
           session.user.image = token.picture as string | null;
