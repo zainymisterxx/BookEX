@@ -377,11 +377,19 @@ export async function verifyEmail(token: string): Promise<{ success: boolean; me
 
     const now = new Date().toISOString();
     const usersCollection = db.collection('users');
-    await usersCollection.updateOne(
-      { _id: new (await import('mongodb')).ObjectId(tokenDoc.userId) },
-      { $set: { emailVerified: true, emailVerifiedAt: now } }
-    );
-    await tokensCollection.updateOne({ token }, { $set: { usedAt: now } });
+    const session = client.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await usersCollection.updateOne(
+          { _id: new ObjectId(tokenDoc.userId) },
+          { $set: { emailVerified: true, emailVerifiedAt: now } },
+          { session }
+        );
+        await tokensCollection.updateOne({ token }, { $set: { usedAt: now } }, { session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
     return { success: true, message: 'Your email has been verified successfully!' };
   } catch (error) {
@@ -2862,7 +2870,7 @@ export async function confirmDonationReceipt(
 
         if (bookIds.length > 0) {
             await db.collection("books").updateMany(
-                { _id: { $in: bookIds } },
+                { _id: { $in: bookIds }, sellerId: donation.donorId },
                 { $set: { status: 'donated', updatedAt: new Date().toISOString() } }
             );
         }
@@ -4482,7 +4490,7 @@ export async function deactivateUser(targetUserId: string): Promise<{ success: t
         revalidatePath('/profile');
         revalidatePath('/admin');
 
-        return { message: 'Account has been deactivated successfully.' };
+        return { message: 'Account deactivated. Active exchanges cancelled and book listings restored.' };
     });
 }
 
@@ -5540,6 +5548,12 @@ export async function proposeExchange(
             console.warn('Failed to send exchange proposal email:', emailError);
         }
         
+        // Lock books before emitting so no concurrent proposal can race in
+        await db.collection("books").updateMany(
+            { _id: { $in: [validatedProposerBookId, validatedResponderBookId] } },
+            { $set: { status: 'on_hold', updatedAt: now } }
+        );
+
         // Emit real-time status update for new exchange
         try {
             const { emitExchangeStatusUpdate } = await import('../../server');
@@ -5551,12 +5565,6 @@ export async function proposeExchange(
         } catch (emitError) {
             console.warn('Failed to emit real-time update for new exchange:', emitError);
         }
-
-        // Put both books on_hold to prevent duplicate proposals while this one is pending
-        await db.collection("books").updateMany(
-            { _id: { $in: [validatedProposerBookId, validatedResponderBookId] } },
-            { $set: { status: 'on_hold', updatedAt: now } }
-        );
 
         // Create in-app notification for responder
         try {

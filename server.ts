@@ -179,7 +179,8 @@ io.on('connection', (socket) => {
       const db = client.db('bookex');
       const chat = await db.collection('chats').findOne({ _id: new ObjectId(chatId) });
 
-      if (!chat || !chat.participantIds || !chat.participantIds.includes(socket.userId)) {
+      const chatParticipants = (chat?.participantIds || []).map((id: unknown) => String(id));
+      if (!chat || !chatParticipants.includes(socket.userId!)) {
         socket.emit('error', { message: 'Not a participant in this chat' });
         return;
       }
@@ -243,7 +244,7 @@ io.on('connection', (socket) => {
         }
 
         // Verify sender is a participant
-        if (!chat.participantIds || !chat.participantIds.includes(senderId)) {
+        if (!chat.participantIds || !chat.participantIds.map((id: unknown) => String(id)).includes(senderId)) {
             console.error(`User ${senderId} is not a participant in chat ${chatId}`);
             socket.emit('error', { message: 'Not authorized to send messages in this chat' });
             return;
@@ -382,14 +383,7 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left channel ${channelId}`);
   });
 
-  socket.on('joinUserRoom', (userId) => {
-    if (userId !== socket.userId) {
-      socket.emit('error', { message: 'Not authorized to join this user room' });
-      return;
-    }
-    socket.join(`user_${userId}`);
-    console.log(`User ${socket.id} joined user room ${userId}`);
-  });
+  // joinUserRoom is handled by the async handler above — duplicate removed
 
   // Handle presence check requests
   socket.on('checkPresence', async (data: { userIds: string[] }) => {
