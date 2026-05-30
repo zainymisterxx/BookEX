@@ -3,32 +3,18 @@
 
   "framework": "nextjs",
 
-  "$comment_socket_constraint": [
-    "IMPORTANT: Socket.IO requires a persistent TCP connection and cannot run in",
-    "Vercel's serverless/edge functions. The Socket.IO server (server.ts) MUST be",
-    "deployed separately on a platform that supports long-lived Node.js processes,",
-    "such as Railway, Fly.io, Render, or DigitalOcean App Platform.",
-    "",
-    "Set the SOCKET_SERVER_URL environment variable in your Vercel project settings",
-    "to point to the deployed socket server (e.g. https://bookex-socket.railway.app).",
-    "The NEXT_PUBLIC_SOCKET_URL variable used by the frontend client should match."
-  ],
-
-  "$comment_rewrites": "Socket.IO proxy rewrite lives in next.config.ts — vercel.json rewrites cannot expand $ENV_VAR in destination fields.",
-
   "headers": [
     {
       "source": "/socket.io/(.*)",
       "headers": [
-        { "key": "Connection",       "value": "Upgrade" },
-        { "key": "Upgrade",          "value": "websocket" },
-        { "key": "Cache-Control",    "value": "no-store, no-cache, must-revalidate" }
+        { "key": "Connection",    "value": "Upgrade" },
+        { "key": "Upgrade",       "value": "websocket" },
+        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
       ]
     }
   ],
 
   "env": {
-    "$comment": "Set these in the Vercel dashboard under Project → Settings → Environment Variables.",
     "NEXT_PUBLIC_SOCKET_URL": "@next_public_socket_url"
   }
 }
