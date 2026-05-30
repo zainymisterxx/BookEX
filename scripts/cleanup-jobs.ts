@@ -2,15 +2,21 @@
  * Background cleanup jobs — run on a cron schedule (e.g. hourly via pm2-cron or Vercel cron).
  *
  * Jobs:
- *   1. expireOldListings   — set books with expiresAt < now to status:'expired'
+ *   1. expireOldListings    — set books with expiresAt < now to status:'expired'
  *   2. cancelStaleExchanges — cancel exchanges stuck in proposed/accepted/in_progress > 30 days
+ *   3. warnInactiveUsers    — email active users who haven't logged in for 60+ days
+ *   4. sendDonationReminders — remind org reps of pending donations older than 3 days
  *
- * Usage: tsx scripts/cleanup-jobs.ts [--job=expire|stale|all]
+ * Usage: tsx scripts/cleanup-jobs.ts [--job=expire|stale|all|weekly-digest|inactive-warning|donation-reminders]
  */
 
 import { MongoClient, ObjectId } from 'mongodb';
 import * as dotenv from 'dotenv';
-import { sendWeeklyDigestEmail } from '../src/lib/email';
+import {
+  sendWeeklyDigestEmail,
+  sendInactivityWarningEmail,
+  sendDonationReminderEmail,
+} from '../src/lib/email';
 
 dotenv.config();
 
@@ -162,6 +168,109 @@ async function sendWeeklyDigest(db: ReturnType<MongoClient['db']>): Promise<numb
   return sentCount;
 }
 
+const INACTIVE_USER_DAYS = 60;
+const INACTIVITY_WARN_RESEND_DAYS = 14;
+const DONATION_REMINDER_DAYS = 3;
+
+async function warnInactiveUsers(db: ReturnType<MongoClient['db']>): Promise<number> {
+  const now = new Date();
+  const inactiveCutoff = new Date(now.getTime() - INACTIVE_USER_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const warnResendCutoff = new Date(now.getTime() - INACTIVITY_WARN_RESEND_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const candidates = await db.collection('users').find({
+    status: 'active',
+    deletedAt: { $exists: false },
+    email: { $exists: true },
+    'emailPreferences.adminActions': { $ne: false },
+    $or: [
+      { inactivityWarningSentAt: { $exists: false } },
+      { inactivityWarningSentAt: { $lt: warnResendCutoff } },
+    ],
+    $and: [
+      {
+        $or: [
+          { lastLoginAt: { $lt: inactiveCutoff } },
+          { $and: [{ lastLoginAt: { $exists: false } }, { createdAt: { $lt: inactiveCutoff } }] },
+        ],
+      },
+    ],
+  }).toArray();
+
+  let sentCount = 0;
+  const nowIso = now.toISOString();
+
+  for (const user of candidates) {
+    const lastLoginAt: string | null = user.lastLoginAt ?? null;
+    const result = await sendInactivityWarningEmail(user.email, user.name ?? 'Reader', lastLoginAt);
+
+    if (result.success) {
+      await db.collection('users').updateOne(
+        { _id: user._id },
+        { $set: { inactivityWarningSentAt: nowIso } }
+      );
+      sentCount++;
+    } else {
+      console.error(`[cleanup-jobs] warnInactiveUsers: failed for ${user.email}: ${result.error}`);
+    }
+  }
+
+  return sentCount;
+}
+
+async function sendDonationReminders(db: ReturnType<MongoClient['db']>): Promise<number> {
+  const cutoff = new Date(Date.now() - DONATION_REMINDER_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
+
+  const pending = await db.collection('donations').find({
+    status: 'pending',
+    createdAt: { $lt: cutoff },
+    reminderSentAt: { $exists: false },
+  }).toArray();
+
+  let sentCount = 0;
+
+  for (const donation of pending) {
+    // Fetch the organization to get the representative's email
+    const org = await db.collection('organizations').findOne(
+      { _id: new ObjectId(String(donation.organizationId)) },
+      { projection: { email: 1, name: 1, contactPersonName: 1 } }
+    );
+
+    if (!org?.email) {
+      console.error(`[cleanup-jobs] sendDonationReminders: no email for org ${donation.organizationId}`);
+      continue;
+    }
+
+    // Fetch donor name for context
+    const donor = await db.collection('users').findOne(
+      { _id: new ObjectId(String(donation.userId)) },
+      { projection: { name: 1 } }
+    );
+
+    const recipientName = org.contactPersonName ?? org.name ?? 'Organization Representative';
+    const donorName = donor?.name ?? 'A donor';
+
+    const result = await sendDonationReminderEmail(
+      org.email,
+      recipientName,
+      donorName,
+      String(donation._id)
+    );
+
+    if (result.success) {
+      await db.collection('donations').updateOne(
+        { _id: donation._id },
+        { $set: { reminderSentAt: now } }
+      );
+      sentCount++;
+    } else {
+      console.error(`[cleanup-jobs] sendDonationReminders: failed for donation ${donation._id}: ${result.error}`);
+    }
+  }
+
+  return sentCount;
+}
+
 async function main() {
   const jobArg = process.argv.find(a => a.startsWith('--job='))?.split('=')[1] ?? 'all';
   const client = new MongoClient(MONGODB_URI!);
@@ -184,6 +293,16 @@ async function main() {
     if (jobArg === 'weekly-digest') {
       const sent = await sendWeeklyDigest(db);
       console.log(`[cleanup-jobs] sendWeeklyDigest: ${sent} digest emails sent`);
+    }
+
+    if (jobArg === 'inactive-warning') {
+      const warned = await warnInactiveUsers(db);
+      console.log(`[cleanup-jobs] warnInactiveUsers: ${warned} warning emails sent`);
+    }
+
+    if (jobArg === 'donation-reminders') {
+      const reminded = await sendDonationReminders(db);
+      console.log(`[cleanup-jobs] sendDonationReminders: ${reminded} reminder emails sent`);
     }
 
     console.log('[cleanup-jobs] done');

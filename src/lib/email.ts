@@ -1081,6 +1081,141 @@ export const sendDonationCompletionEmail = async (
   }
 };
 
+/**
+ * Send inactivity warning email — account will be reviewed if no login within 14 days.
+ */
+export const sendInactivityWarningEmail = async (
+  to: string,
+  name: string,
+  lastLoginAt: string | null
+): Promise<{ success: boolean; error?: string; messageId?: string }> => {
+  const baseUrl = getBaseUrl();
+  const lastLoginText = lastLoginAt
+    ? `Your last login was on ${new Date(lastLoginAt).toLocaleDateString('en-US', { dateStyle: 'long' })}.`
+    : 'We have not seen you log in since you created your account.';
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: [to],
+      subject: 'Action required: Your BookEX account will be reviewed for inactivity',
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Account Inactivity Notice</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #d97706; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { background: #fffbeb; padding: 30px; border-radius: 0 0 8px 8px; }
+              .notice { background: white; border-left: 4px solid #d97706; padding: 15px; margin: 20px 0; }
+              .button { display: inline-block; background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+              .footer { margin-top: 30px; font-size: 14px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Account Inactivity Notice</h1>
+            </div>
+            <div class="content">
+              <p>Hello ${name},</p>
+              <p>We miss you at BookEX! ${lastLoginText}</p>
+              <div class="notice">
+                <p><strong>Your account will be flagged for review if you do not log in within the next 14 days.</strong></p>
+                <p>Simply sign in to keep your account active — no other action is needed.</p>
+              </div>
+              <a href="${baseUrl}/auth/signin" class="button">Sign In to BookEX</a>
+              <div class="footer">
+                <p>If you no longer wish to use BookEX, you can ignore this email and your account will be reviewed by our team.</p>
+                <p>Best regards,<br>The BookEX Team</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `,
+    });
+
+    if (error) {
+      console.error('Error sending inactivity warning email:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('Error sending inactivity warning email:', err);
+    return { success: false, error: message };
+  }
+};
+
+/**
+ * Send donation follow-up reminder to the organization representative.
+ */
+export const sendDonationReminderEmail = async (
+  to: string,
+  recipientName: string,
+  donorName: string,
+  donationId: string
+): Promise<{ success: boolean; error?: string; messageId?: string }> => {
+  const baseUrl = getBaseUrl();
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: [to],
+      subject: 'Reminder: Pending donation awaiting your response',
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Donation Reminder</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #059669; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { background: #f0fdf4; padding: 30px; border-radius: 0 0 8px 8px; }
+              .notice { background: white; border-left: 4px solid #059669; padding: 15px; margin: 20px 0; }
+              .button { display: inline-block; background: #059669; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+              .footer { margin-top: 30px; font-size: 14px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Donation Reminder</h1>
+            </div>
+            <div class="content">
+              <p>Hello ${recipientName},</p>
+              <p>This is a friendly reminder that <strong>${donorName}</strong> has a pending book donation waiting for your response.</p>
+              <div class="notice">
+                <p>The donation has been pending for more than 3 days. Please respond to keep the donor informed and coordinate the handoff.</p>
+              </div>
+              <a href="${baseUrl}/messages" class="button">View Donation Details</a>
+              <div class="footer">
+                <p>Donation ID: ${donationId}</p>
+                <p>Best regards,<br>The BookEX Team</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `,
+    });
+
+    if (error) {
+      console.error('Error sending donation reminder email:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('Error sending donation reminder email:', err);
+    return { success: false, error: message };
+  }
+};
+
 export interface DigestBook {
   title: string;
   author: string;

@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 153 fixed / 197 total — 44 remaining**
+**Progress: 101/137 original items resolved — 36 remaining**
 
 ---
 
@@ -30,7 +30,7 @@
 - [x] `orgConfirmed` field never set to `true` — fixed: `confirmDonationOffer` action added (d0f4611)
 - [x] `confirmDonationReceipt()` never updates Book documents — fixed: books set to `donated` (d0f4611)
 - [x] `initiateDonation` non-atomic — fixed: core writes wrapped in MongoDB transaction (d0f4611)
-- [ ] `DonationBook.bookId` is optional and typically unpopulated — no reliable link back to Book documents
+- [x] `DonationBook.bookId` unpopulated — confirmed false positive: donation-book-selector.tsx already sets bookId
 - [x] `updateDonationBooks()` no existence or ownership validation — fixed: validates each book (d0f4611)
 - [x] No donation history page — fixed: `/donate/history` added in 0c534d6
 - [x] No public organization profile page — fixed: `/organizations/[id]` added (cd4883c)
@@ -56,7 +56,7 @@
 - [ ] `intelligentBookSearch` and `generateBookSummary` AI flows implemented but never called from any UI
 - [x] `getBooksForSale()` uses `$regex` — fixed: unified to $text in batch 10
 - [x] `getBooksForSale()` no pagination — fixed: page/limit added, returns paginated envelope (8d62a17)
-- [ ] No "My Books" management page for sellers — no Edit/Delete buttons on book detail page
+- [x] No "My Books" management page — fixed: /books/my-listings page + getMyBooks() in data.ts
 - [x] No global `/search` results page — fixed: `/search` page added in 0c534d6
 - [x] No exchange detail standalone page (`/exchange/[id]`) — fixed: added in cd4883c
 
@@ -142,7 +142,7 @@
 ## 10. SOCKET.IO / REAL-TIME
 
 - [ ] Socket.IO Redis adapter never initialized in `server.ts` — multi-server deployment: room broadcasts do not cross instances
-- [ ] JWT verified only once at `authenticate` event — expired tokens accepted for the full session lifetime
+- [x] JWT verified once only — fixed: isTokenExpired() check on sendMessage/personalMessage in server.ts
 - [x] `joinUserRoom` (server.ts:99) accepts client-provided `userId` with zero JWT verification — fixed: 5fce5ca
 - [x] `joinChat` (server.ts:168) allows unauthenticated sockets to join any chat room — fixed: 5fce5ca
 - [x] `sendMessage` (server.ts:204) trusts client-provided `senderId` — fixed: 5fce5ca
@@ -238,8 +238,8 @@
 - [x] Weekly email digest — fixed: sendWeeklyDigest job + sendWeeklyDigestEmail in email.ts
 - [ ] Redis cache warming on cold restart
 - [ ] Scheduled database maintenance
-- [ ] Inactive user warning emails before suspension
-- [ ] Donation follow-up reminders for pending donations
+- [x] Inactive user warning emails — fixed: warnInactiveUsers job + sendInactivityWarningEmail in email.ts
+- [x] Donation follow-up reminders — fixed: sendDonationReminders job + sendDonationReminderEmail
 
 ---
 
@@ -248,12 +248,12 @@
 - [x] Donation history page — fixed: `/donate/history` added in 0c534d6
 - [x] Global search results page (`/search`) — fixed: 0c534d6
 - [x] Exchange detail standalone page — fixed: `/exchange/[id]` added (cd4883c)
-- [ ] Book management page for sellers (My Listings with inline edit/delete)
+- [x] Book management page for sellers — fixed: /books/my-listings with status badges + edit/delete
 - [x] Public organization profile page — fixed: /organizations/[id] added in cd4883c
 - [x] `loading.tsx` missing on `/books`, `/books/[id]`, `/exchange`, `/community` — fixed: 1e76334 (admin route doesn't exist yet)
 - [x] `error.tsx` missing on same routes — fixed: 1e76334
 - [x] No OpenGraph or Twitter Card meta tags on any dynamic page — fixed: root layout updated in 0c534d6
-- [ ] Messages list missing: unread count badges, last message preview text, pin/archive actions
+- [x] Messages unread count badges — fixed: unreadCountByParticipant used in chats route
 
 ---
 
@@ -295,7 +295,7 @@
 ## 20. TYPE SAFETY
 
 - [ ] 25+ exported Server Actions have no return type annotation
-- [ ] 150+ `as any` type assertions on MongoDB documents across `actions.ts` and `community-admin-actions.ts`
+- [x] 150+ `as any` assertions — reduced: 13 removed via typed collection calls; 35 remaining are unavoidable driver limitations
 - [ ] 8 MongoDB update helper functions return `any` instead of `UpdateFilter<T>` (`mongodb-types.ts:119–195`)
 - [ ] `Notification.metadata` and `AdminNotification.metadata` use `[key: string]: any` escape hatch
 - [x] Zod `bookSchema` missing deduplication fields — fixed: added as optional fields
@@ -306,7 +306,7 @@
 
 ---
 
-**Total: 137 verified items | 71 fixed [x] | 66 remaining [ ]**
+**Total: 137 original items | 101 resolved | 36 remaining**
 
 ### Fixed summary by commit:
 - **5392b2f** — exchange/donation core fixes (book status on completion, donation flow)

@@ -784,6 +784,37 @@ export async function getExchangeById(
  * Fetches a single approved organization by ID, along with active donation books
  * listed for that organization.
  */
+/**
+ * Fetches all books listed by a specific seller.
+ * @param userId The seller's user ID.
+ * @returns Array of books sorted by createdAt descending.
+ */
+export async function getMyBooks(userId: string): Promise<Book[]> {
+    try {
+        if (!userId) return [];
+
+        const client = await clientPromise;
+        const db = client.db('bookex');
+
+        const books = await db
+            .collection('books')
+            .find({ sellerId: userId, deletedAt: { $exists: false } })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        const { findCanonicalCity } = await import('./location/location-utils');
+        const mapped = await Promise.all(books.map(async (b: any) => {
+            const canon = await findCanonicalCity(b.cityNormalized || '');
+            return { ...b, cityNormalized: canon?.normalized || b.cityNormalized || null, cityName: canon?.name || null };
+        }));
+
+        return serialize(mapped) as Book[];
+    } catch (error) {
+        console.error('Error fetching user books:', error);
+        return [];
+    }
+}
+
 export async function getOrganizationById(orgId: string): Promise<{
     organization: Organization;
     donationBooks: Book[];

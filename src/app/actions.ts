@@ -1091,16 +1091,16 @@ export async function togglePostLike(communityId: string, postId: string, isLike
         const postObjectId = new ObjectId(postId);
 
         // Check membership and ban status
-        const community = await db.collection("communities").findOne(
+        const community = await db.collection<CommunityDocument>("communities").findOne(
             { _id: communityObjId },
             { projection: { members: 1 } }
         );
-        
+
         if (!community) {
             throw new Error('Community not found');
         }
 
-        const member = (community as any).members?.find((m: any) => m.userId === user.id);
+        const member = community.members?.find((m) => m.userId === user.id);
         if (!member) {
             throw new Error('You must be a member to interact with posts in this community');
         }
@@ -1299,8 +1299,8 @@ export async function deletePost(communityId: string, postId: string) {
         const postObjId = new ObjectId(postId);
 
         // FIXED CRITICAL-003: Check membership BEFORE attempting to access post
-        const community = await db.collection("communities").findOne(
-            { 
+        const community = await db.collection<CommunityDocument>("communities").findOne(
+            {
                 _id: communityObjId,
                 'members.userId': user.id  // Verify user is a member
             },
@@ -1313,11 +1313,11 @@ export async function deletePost(communityId: string, postId: string) {
         }
 
         // FIXED MAJOR-001: Use posts collection (not embedded posts)
-        const post = await db.collection("posts").findOne({
+        const post = await db.collection<PostDocument>("posts").findOne({
             _id: postObjId,
             communityId: communityObjId,
             deletedAt: { $exists: false }
-        }) as any;
+        });
 
         if (!post) {
             throw new Error("Post not found");
@@ -1329,7 +1329,7 @@ export async function deletePost(communityId: string, postId: string) {
         const isAuthor = post.authorId === user.id;
 
         // Get user's community role for moderator check
-        const member = (community as any).members?.find((m: any) => m.userId === user.id);
+        const member = community.members?.find((m) => m.userId === user.id);
         const hasModerationRole = member?.role === 'admin' || member?.role === 'moderator';
 
         if (!isAuthor && !isCreator && !isAdmin && !hasModerationRole) {
@@ -1407,11 +1407,11 @@ export async function editPost(communityId: string, postId: string, newContent: 
         }
 
         // FIXED MAJOR-001: Use posts collection (not embedded posts)
-        const post = await db.collection("posts").findOne({
+        const post = await db.collection<PostDocument>("posts").findOne({
             _id: postObjId,
             communityId: communityObjId,
             deletedAt: { $exists: false }
-        }) as any;
+        });
 
         if (!post) {
             throw new Error("Post not found");
@@ -5257,7 +5257,7 @@ export async function getMyProfileData(userId: string): Promise<{ success: true;
         
         const userListings = await db.collection("books").find({ sellerId: user.id }).toArray();
         
-        const userCommunities = await db.collection("communities").find({ "members.userId": user.id } as any).toArray();
+        const userCommunities = await db.collection<CommunityDocument>("communities").find({ "members.userId": user.id }).toArray();
 
         // Fetch wishlist books by their IDs
         const wishlistBooks: Book[] = [];
@@ -7321,10 +7321,10 @@ export async function getProfileCompleteness() {
 export async function promoteToModerator(communityId: string, targetUserId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
-        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        const community = await db.collection<CommunityDocument>('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
         if (!community) throw new Error('Community not found');
-        const current = (community as any).members?.find((m: any) => m.userId === user.id);
-        if (!(current?.role === 'admin' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
           { _id: new ObjectId(communityId), 'members.userId': targetUserId },
           { $set: { 'members.$.role': 'moderator' } }
@@ -7337,10 +7337,10 @@ export async function promoteToModerator(communityId: string, targetUserId: stri
 export async function demoteModerator(communityId: string, targetUserId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
-        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        const community = await db.collection<CommunityDocument>('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
         if (!community) throw new Error('Community not found');
-        const current = (community as any).members?.find((m: any) => m.userId === user.id);
-        if (!(current?.role === 'admin' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
           { _id: new ObjectId(communityId), 'members.userId': targetUserId },
           { $set: { 'members.$.role': 'member' } }
@@ -7353,10 +7353,10 @@ export async function demoteModerator(communityId: string, targetUserId: string)
 export async function banMember(communityId: string, targetUserId: string, reason?: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
-        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        const community = await db.collection<CommunityDocument>('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
         if (!community) throw new Error('Community not found');
-        const current = (community as any).members?.find((m: any) => m.userId === user.id);
-        if (!(current?.role === 'admin' || current?.role === 'moderator' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
           { _id: new ObjectId(communityId), 'members.userId': targetUserId },
           { $set: { 'members.$.banned': true, 'members.$.banReason': reason || '', 'members.$.bannedAt': new Date().toISOString() } }
@@ -7369,10 +7369,10 @@ export async function banMember(communityId: string, targetUserId: string, reaso
 export async function unbanMember(communityId: string, targetUserId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
-        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
+        const community = await db.collection<CommunityDocument>('communities').findOne({ _id: new ObjectId(communityId) }, { projection: { members: 1, createdBy: 1 } });
         if (!community) throw new Error('Community not found');
-        const current = (community as any).members?.find((m: any) => m.userId === user.id);
-        if (!(current?.role === 'admin' || current?.role === 'moderator' || (community as any).createdBy === user.id)) throw new Error('Insufficient permissions');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
           { _id: new ObjectId(communityId), 'members.userId': targetUserId },
           { $set: { 'members.$.banned': false }, $unset: { 'members.$.banReason': '', 'members.$.bannedAt': '' } as any }

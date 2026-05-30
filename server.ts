@@ -21,11 +21,32 @@ import { logger } from './src/lib/logger';
 // Create a child logger for socket server
 const socketLogger = logger.child({ service: 'socket-server' });
 
-// Extend Socket type to include userId and active chat
+/**
+ * Decode a JWT without verifying the signature and check whether the `exp`
+ * claim is in the past.  Full signature re-verification on every message is
+ * too expensive; a cheap exp-only check is enough to catch expired sessions.
+ */
+function isTokenExpired(token: string): boolean {
+  try {
+    // jwt.decode returns null or the payload without any signature check
+    const decoded = jwt.decode(token) as { exp?: number } | null;
+    if (!decoded || typeof decoded.exp !== 'number') {
+      // No exp claim — treat as non-expiring (e.g. NextAuth session tokens)
+      return false;
+    }
+    return Date.now() >= decoded.exp * 1000;
+  } catch {
+    // Malformed token
+    return true;
+  }
+}
+
+// Extend Socket type to include userId, active chat, and the raw auth token
 declare module 'socket.io' {
   interface Socket {
     userId: string | null;
     activeChatId: string | null;
+    authToken: string | null;
   }
 }
 
@@ -91,9 +112,10 @@ export async function emitExchangeStatusUpdate(exchangeId: string, exchangeData:
 io.on('connection', (socket) => {
   socketLogger.info('User connected', { socketId: socket.id, transport: socket.conn.transport.name });
   
-  // Store user ID and active chat in socket for authorization
+  // Store user ID, active chat, and raw token in socket for authorization
   socket.userId = null;
   socket.activeChatId = null;
+  socket.authToken = null;
 
   // Handle user room joining (simpler authentication)
   socket.on('joinUserRoom', async (userId) => {
@@ -143,6 +165,7 @@ io.on('connection', (socket) => {
       if (token && process.env.NEXTAUTH_SECRET) {
         const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET) as any;
         socket.userId = decoded.sub || decoded.id;
+        socket.authToken = token;
         console.log(`User ${socket.userId} authenticated via token`);
         
         // Set user as online in presence system
@@ -227,6 +250,12 @@ io.on('connection', (socket) => {
 
     if (!senderId) {
         socket.emit('error', { message: 'Not authenticated' });
+        return;
+    }
+
+    if (socket.authToken && isTokenExpired(socket.authToken)) {
+        socket.emit('session_expired', { event: 'session_expired' });
+        socket.disconnect(true);
         return;
     }
 
@@ -489,10 +518,16 @@ io.on('connection', (socket) => {
   // Personal messaging events
   socket.on('personalMessage', async (data) => {
     const { receiverId, content, attachments } = data; // Added attachments support
-    
+
     try {
       if (!socket.userId) {
         socket.emit('error', { message: 'Not authenticated' });
+        return;
+      }
+
+      if (socket.authToken && isTokenExpired(socket.authToken)) {
+        socket.emit('session_expired', { event: 'session_expired' });
+        socket.disconnect(true);
         return;
       }
 
