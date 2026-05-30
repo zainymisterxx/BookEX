@@ -320,13 +320,14 @@ export function isValidStatusTransition(
 ): { isValid: boolean; error?: string } {
   // Define valid transitions
   const validTransitions: Record<BookStatus, BookStatus[]> = {
-    'active': ['sold', 'exchanged', 'inactive', 'expired', 'reserved'],
+    'active': ['on_hold', 'sold', 'exchanged', 'inactive', 'expired', 'reserved'],
+    'on_hold': ['active', 'reserved'],     // pending proposal: restore on reject/cancel, advance on accept
     'sold': ['active'],
     'exchanged': ['active'],
     'inactive': ['active', 'expired'],
     'expired': ['active'],
-    'reserved': ['active', 'exchanged'],  // restored on cancel, finalised on completion
-    'donated': [],                         // terminal — cannot transition out
+    'reserved': ['active', 'exchanged'],   // restored on cancel, finalised on completion
+    'donated': [],                          // terminal — cannot transition out
   };
 
   if (!validTransitions[currentStatus]?.includes(newStatus)) {

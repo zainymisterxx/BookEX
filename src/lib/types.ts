@@ -3,7 +3,7 @@ import type { ObjectId } from 'mongodb';
 
 export type BookGenre = "fantasy" | "sci-fi" | "mystery" | "romance" | "self-help" | "historical-fiction" | "other";
 
-export type BookStatus = 'active' | 'sold' | 'exchanged' | 'inactive' | 'expired' | 'reserved' | 'donated';
+export type BookStatus = 'active' | 'on_hold' | 'sold' | 'exchanged' | 'inactive' | 'expired' | 'reserved' | 'donated';
 
 export interface Book {
   _id: ObjectId | string;

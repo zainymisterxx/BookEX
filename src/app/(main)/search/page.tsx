@@ -14,8 +14,8 @@ export default async function SearchPage({ searchParams }: Props) {
 
   const [saleResult, exchangeResult] = query
     ? await Promise.all([
-        getBooksForSale({ search: query, page: 1, limit: 24 }),
-        getBooksForExchange({ search: query, page: 1, limit: 24 }),
+        getBooksForSale({ searchQuery: query }),
+        getBooksForExchange({ searchQuery: query, page: 1, limit: 24 }),
       ])
     : [{ books: [] }, { books: [] }];
 
