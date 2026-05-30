@@ -72,6 +72,11 @@
 - [ ] `newChatCreated` event is listened on client but never emitted by `server.ts`
 - [ ] Two competing Socket.IO implementations: `server.ts` (room `user_${id}`) vs `src/lib/socket-server.ts` (room `user:${id}`)
 
+**Partially fixed (5fce5ca):**
+- [x] `sendMessage` trusts client-provided `senderId` — fixed: uses `socket.userId`
+- [x] `joinUserRoom` accepts any userId — fixed: verified against `socket.userId`
+- [x] `joinChat` allows unauthenticated sockets — fixed: hard auth gate + participant check
+
 ---
 
 ## 6. COMMUNITY
@@ -245,8 +250,8 @@
 - [x] Exchange detail standalone page — fixed: `/exchange/[id]` added (cd4883c)
 - [ ] Book management page for sellers (My Listings with inline edit/delete)
 - [ ] Public organization profile page (`/organizations/[id]`)
-- [ ] `loading.tsx` missing on: `/books`, `/books/[id]`, `/exchange`, `/community`, `/admin`, `/admin/organizations/[id]`
-- [ ] `error.tsx` missing on same routes
+- [x] `loading.tsx` missing on `/books`, `/books/[id]`, `/exchange`, `/community` — fixed: 1e76334 (admin route doesn't exist yet)
+- [x] `error.tsx` missing on same routes — fixed: 1e76334
 - [x] No OpenGraph or Twitter Card meta tags on any dynamic page — fixed: root layout updated in 0c534d6
 - [ ] Messages list missing: unread count badges, last message preview text, pin/archive actions
 
@@ -277,8 +282,8 @@
 
 - [ ] Redis failure returns `allowed: true` for rate limit — limits silently disabled when Redis is down
 - [ ] `initiateDonation` — 4-step operation with no MongoDB transaction
-- [ ] `resetPassword` — two separate `updateOne` calls with no transaction
-- [ ] `deleteReview` — deletes review then updates rating stats separately; if stats update fails, counts are wrong
+- [x] `resetPassword` — two separate `updateOne` calls, no transaction — fixed: 1a22983
+- [x] `deleteReview` — delete + stats update not atomic — fixed: 1a22983
 - [ ] Socket `sendMessage` broadcasts even when the DB `updateOne` fails
 - [ ] Email failures after chat/exchange creation are only `console.warn`
 - [ ] 10+ MongoDB `insertOne`/`updateOne` results not checked after the call
@@ -301,7 +306,7 @@
 
 ---
 
-**Total: 137 verified items | 47 fixed [x] | 90 remaining [ ]**
+**Total: 137 verified items | 57 fixed [x] | 80 remaining [ ]**
 
 ### Fixed summary by commit:
 - **5392b2f** — exchange/donation core fixes (book status on completion, donation flow)
