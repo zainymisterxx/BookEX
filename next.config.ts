@@ -125,7 +125,10 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: `default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:* ${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL} wss://${process.env.VERCEL_URL}` : ''}; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
+            // NOTE: unsafe-eval is allowed only in development (required by Next.js HMR/source maps).
+            // unsafe-inline is kept for Next.js inline scripts injected at build time; removing it
+            // requires a nonce-based approach which needs middleware-level integration.
+            value: `default-src 'self'; script-src 'self'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:* ${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL} wss://${process.env.VERCEL_URL}` : ''}; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
           },
           {
             key: 'Permissions-Policy',
@@ -137,18 +140,6 @@ const nextConfig: NextConfig = {
   },
   images: {
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'placehold.co',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'picsum.photos',
-        port: '',
-        pathname: '/**',
-      },
       {
         protocol: 'https',
         hostname: 'covers.openlibrary.org',

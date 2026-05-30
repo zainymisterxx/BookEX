@@ -79,6 +79,10 @@ export interface User {
     exchangeUpdates: boolean;        // Email when exchange status changes
     contactNotifications: boolean;   // Email when someone contacts about your book
     weeklyDigest: boolean;          // Weekly summary of new books in your area
+    communityMentions?: boolean;     // Email when mentioned in a community post
+    commentReplies?: boolean;        // Email when someone replies to your comment
+    reviewReceived?: boolean;        // Email when you receive a review
+    adminActions?: boolean;          // Email for admin actions affecting your account
   };
 }
 

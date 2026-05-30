@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +56,15 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
 
     // Users tab state
     const [userSearch, setUserSearch] = useState('');
+
+    // Global admin search state
+    type AdminSearchResult = { type: string; title: string; subtitle?: string; href: string };
+    const [globalSearch, setGlobalSearch] = useState('');
+    const [globalSearchResults, setGlobalSearchResults] = useState<AdminSearchResult[]>([]);
+    const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+    const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+    const globalSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const globalSearchRef = useRef<HTMLDivElement>(null);
 
     // Audit log tab state
     type AuditLog = { _id: string; action: string; performedBy: string; targetUserId?: string; reason?: string; timestamp: string };
@@ -157,6 +166,45 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab]);
 
+    useEffect(() => {
+        if (globalSearchDebounceRef.current) {
+            clearTimeout(globalSearchDebounceRef.current);
+        }
+        if (globalSearch.length < 2) {
+            setGlobalSearchResults([]);
+            setGlobalSearchOpen(false);
+            return;
+        }
+        globalSearchDebounceRef.current = setTimeout(async () => {
+            setGlobalSearchLoading(true);
+            try {
+                const res = await fetch(`/api/admin/search?q=${encodeURIComponent(globalSearch)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setGlobalSearchResults(Array.isArray(data) ? data : []);
+                    setGlobalSearchOpen(true);
+                }
+            } catch {
+                // NOTE: silent — search is best-effort, no need to surface fetch errors in the UI
+            } finally {
+                setGlobalSearchLoading(false);
+            }
+        }, 300);
+        return () => {
+            if (globalSearchDebounceRef.current) clearTimeout(globalSearchDebounceRef.current);
+        };
+    }, [globalSearch]);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (globalSearchRef.current && !globalSearchRef.current.contains(e.target as Node)) {
+                setGlobalSearchOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
     const handleResolveReport = (reportId: string) => {
         startReportAction(async () => {
             await resolveReport(reportId);
@@ -237,6 +285,57 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                     <p className="text-sm text-muted-foreground mt-1">
                         Platform Management
                     </p>
+                    {/* Global admin search */}
+                    <div ref={globalSearchRef} className="relative mt-4">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <Input
+                            type="search"
+                            placeholder="Search users, orgs, reports…"
+                            value={globalSearch}
+                            onChange={e => setGlobalSearch(e.target.value)}
+                            onFocus={() => globalSearchResults.length > 0 && setGlobalSearchOpen(true)}
+                            className="pl-9 text-sm"
+                            aria-label="Global admin search"
+                            aria-expanded={globalSearchOpen}
+                            aria-autocomplete="list"
+                        />
+                        {globalSearchLoading && (
+                            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
+                        {globalSearchOpen && globalSearchResults.length > 0 && (
+                            <Card className="absolute left-0 right-0 top-full mt-1 z-50 shadow-lg max-h-72 overflow-y-auto">
+                                <CardContent className="p-1">
+                                    {globalSearchResults.map((result, i) => (
+                                        <a
+                                            key={i}
+                                            href={result.href}
+                                            className="flex flex-col px-3 py-2 rounded hover:bg-accent transition-colors"
+                                            onClick={() => setGlobalSearchOpen(false)}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="secondary" className="text-xs shrink-0 capitalize">
+                                                    {result.type}
+                                                </Badge>
+                                                <span className="text-sm font-medium truncate">{result.title}</span>
+                                            </div>
+                                            {result.subtitle && (
+                                                <span className="text-xs text-muted-foreground mt-0.5 truncate pl-1">
+                                                    {result.subtitle}
+                                                </span>
+                                            )}
+                                        </a>
+                                    ))}
+                                </CardContent>
+                            </Card>
+                        )}
+                        {globalSearchOpen && globalSearchResults.length === 0 && !globalSearchLoading && globalSearch.length >= 2 && (
+                            <Card className="absolute left-0 right-0 top-full mt-1 z-50 shadow-lg">
+                                <CardContent className="p-3 text-sm text-muted-foreground text-center">
+                                    No results found.
+                                </CardContent>
+                            </Card>
+                        )}
+                    </div>
                 </div>
                 <nav className="p-4 space-y-1">
                     {sidebarItems.map((item) => {

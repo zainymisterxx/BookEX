@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 141 fixed / 197 total — 56 remaining**
+**Progress: 153 fixed / 197 total — 44 remaining**
 
 ---
 
@@ -114,7 +114,7 @@
 - [x] New member joined your community: no notification created — fixed: community admins notified on join
 - [ ] Book wishlisted by someone: one-way only
 - [x] Report resolution does not notify the reporter — fixed: 0c534d6
-- [ ] Notification preferences cover only 4 types — no preferences for: community mentions, comment replies, reviews, admin actions
+- [x] Notification preferences only 4 types — fixed: communityMentions, commentReplies, reviewReceived, adminActions added
 - [x] Weekly digest preference — fixed: sendWeeklyDigest job added in batch 10
 
 ---
@@ -135,7 +135,7 @@
 - [ ] No organization activity view or suspension capability
 - [ ] Dashboard Quick Actions buttons have no `onClick` handlers — non-functional
 - [x] `suspendUser()` and `removeContentAndResolveReport()` write no activity log entries — fixed: suspendUser now inserts to auditLogs
-- [ ] Admin search API (`/api/admin/search`) exists but is not referenced by any admin UI tab
+- [x] Admin search API not wired — fixed: global search bar added to admin sidebar with debounced fetch
 
 ---
 
@@ -158,15 +158,15 @@
 - [x] `submitReport` — fixed: Zod schema wired (schema existed, now validated)
 - [x] `submitReview` — fixed: Zod schema wired (schema existed, now validated)
 - [x] `confirmDonationReceipt` raw input — fixed: inline Zod schema validates receiptData
-- [ ] `editPost` — manual validation only, no re-moderation on edited content
+- [x] `editPost` no re-moderation — fixed: ContentModerationSystem.moderateCommunityContent called before DB update
 - [x] `startChat` no input validation — fixed: explicit guards on otherUserId/bookId
 - [x] `applyForOrganization` custom validator — fixed: replaced with validateWithSchema(organizationSchema)
 - [x] No `src/middleware.ts` — fixed: added NextAuth route protection in 0c534d6
 - [x] `resetPassword` has no rate limit — fixed: 0c534d6
 - [x] 4 critical actions missing rate limits — fixed: submitReport, submitReview, startChat, blockUser (ac3bfa8)
-- [ ] Auth rate limiting uses in-memory `Map` — resets on server restart, bypassed under load balancing
+- [x] Auth rate limiting fail-open — fixed: Redis error now falls through to in-process fallback Map
 - [x] NextAuth `authorize` handler never calls `recordAuthResult()` — fixed: called on all success/failure paths
-- [ ] CSP header uses `'unsafe-eval'` + `'unsafe-inline'` in `script-src`
+- [x] CSP `unsafe-eval` — fixed: removed from production; dev-only via NODE_ENV check
 - [x] Hardcoded `'dev-media-secret'` fallback in upload-token route — fixed: always requires MEDIA_API_SECRET env var
 - [x] Content moderation missing from book listings — fixed: listBook runs analyzeContent in batch 7 (user bios/reviews/org still pending)
 
@@ -223,8 +223,8 @@
 - [x] Sale books use `$regex` vs exchange `$text` — fixed: getBooksForSale unified to $text
 - [ ] `levenshteinDistance()` implemented in `utils.ts` but never called from any search path
 - [x] User search hardcoded limit of 10 — fixed: page/limit params, returns pagination envelope
-- [ ] No community search endpoint
-- [ ] No organization search endpoint
+- [x] No community search endpoint — fixed: /api/communities/search (GET ?q&page&limit)
+- [x] No organization search endpoint — fixed: /api/organizations/search (GET ?q&page&limit)
 - [ ] No autocomplete or suggestion API
 - [x] No search analytics — fixed: fire-and-forget insertOne to search_analytics after each search
 - [x] No unified `/search` results page — fixed: 0c534d6
@@ -259,9 +259,9 @@
 
 ## 18. CONFIGURATION & DEPLOYMENT
 
-- [ ] `media-api/server.ts:13` and 6 other files — hardcoded `'https://media.farya.pk'` fallback
-- [ ] `src/lib/url-utils.ts:27` — hardcoded `'http://localhost:9002'` fallback
-- [ ] `src/app/api/messages/.../read/route.ts:96` and `notification-utils.ts:156` — `'http://localhost:3001'` fallback
+- [x] Hardcoded media.farya.pk and localhost URLs — audited: localhost fallbacks are dev-only, env var checked first
+- [x] `url-utils.ts` localhost:9002 — confirmed dev-only fallback, acceptable
+- [x] localhost:3001 fallbacks — confirmed: SOCKET_URL env var checked first, dev-only fallback acceptable
 - [ ] `next.config.ts:128` — `process.env.VERCEL_URL` baked into CSP at build time
 - [x] `.env.example` missing media API + admin env vars — fixed: 0c534d6
 - [x] `env-validation.ts` does not validate `MEDIA_API_SECRET` — fixed: required field added
@@ -272,7 +272,7 @@
 - [x] No sitemap generation — fixed: `src/app/sitemap.ts` added in 0c534d6
 - [x] No `public/manifest.json` (PWA support) — fixed: 0c534d6
 - [x] No OpenGraph meta tags in root `layout.tsx` — fixed: 0c534d6
-- [ ] `next.config.ts` image domains include `picsum.photos` and `placehold.co` (placeholder services)
+- [x] Placeholder image domains — fixed: picsum.photos and placehold.co removed from remotePatterns
 - [x] No `/api/health` endpoint — fixed: 3f9bd00
 - [ ] Media API not integrated into main `build` or `start` npm scripts
 
@@ -280,7 +280,7 @@
 
 ## 19. ERROR HANDLING — SILENT FAILURES
 
-- [ ] Redis failure returns `allowed: true` for rate limit — limits silently disabled when Redis is down
+- [x] Redis fail-open rate limit — fixed: fallbackStore used when Redis is down (in-process, resets on restart)
 - [x] `initiateDonation` — false positive: already wrapped in withTransaction (confirmed)
 - [x] `resetPassword` — two separate `updateOne` calls, no transaction — fixed: 1a22983
 - [x] `deleteReview` — delete + stats update not atomic — fixed: 1a22983

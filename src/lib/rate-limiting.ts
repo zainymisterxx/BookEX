@@ -9,6 +9,30 @@ interface RateLimitEntry {
   resetTime: number;
 }
 
+// NOTE: In-process fallback store used only when Redis is unavailable.
+// Resets on server restart but still enforces limits within a single instance.
+const fallbackStore = new Map<string, { count: number; resetAt: number }>();
+let redisFallbackWarned = false;
+
+function checkFallback(key: string, limit: { windowMs: number; maxRequests: number }): RateLimitResult {
+  const now = Date.now();
+  const entry = fallbackStore.get(key);
+
+  if (!entry || entry.resetAt < now) {
+    fallbackStore.set(key, { count: 1, resetAt: now + limit.windowMs });
+    return { allowed: true, remaining: limit.maxRequests - 1, resetTime: now + limit.windowMs };
+  }
+
+  entry.count++;
+  const remaining = Math.max(0, limit.maxRequests - entry.count);
+  return {
+    allowed: entry.count <= limit.maxRequests,
+    remaining,
+    resetTime: entry.resetAt,
+    ...(entry.count > limit.maxRequests && { error: 'Rate limit exceeded. Please try again later.', severity: 'error' as const }),
+  };
+}
+
 export interface RateLimitConfig {
   windowMs: number; // Time window in milliseconds
   maxRequests: number; // Maximum requests per window
@@ -177,13 +201,11 @@ export async function checkRateLimit(
     };
 
   } catch (error) {
-    console.error('Rate limit check error:', error);
-    // Fallback to allow request if Redis fails
-    return {
-      allowed: true,
-      remaining: config.maxRequests - 1,
-      resetTime: now + config.windowMs
-    };
+    if (!redisFallbackWarned) {
+      console.warn('Rate limiter: Redis unavailable, falling back to in-process store. Limits reset on restart.', error);
+      redisFallbackWarned = true;
+    }
+    return checkFallback(key, config);
   }
 }
 

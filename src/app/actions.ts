@@ -1422,6 +1422,24 @@ export async function editPost(communityId: string, postId: string, newContent: 
             throw new Error("Unauthorized: You can only edit your own posts");
         }
 
+        // Re-moderate edited content before saving
+        try {
+            const { ContentModerationSystem } = await import('@/lib/content-moderation');
+            const moderationResult = await ContentModerationSystem.moderateCommunityContent(
+                postId,
+                'post',
+                newContent,
+                user.id
+            );
+            if (!moderationResult.approved && moderationResult.action === 'reject') {
+                throw createAppError(ErrorType.VALIDATION, 'Your edited post contains content that violates our community guidelines.');
+            }
+        } catch (moderationError) {
+            // Re-throw validation rejections; ignore moderation service failures so edits aren't blocked
+            if ((moderationError as { type?: string }).type === ErrorType.VALIDATION) throw moderationError;
+            console.warn('editPost: moderation service unavailable, proceeding with edit', moderationError);
+        }
+
         // Update the post with sanitized content
         await db.collection("posts").updateOne(
             { _id: postObjId },
@@ -6565,6 +6583,10 @@ export async function updateEmailPreferences(preferences: {
     exchangeUpdates: boolean;
     contactNotifications: boolean;
     weeklyDigest: boolean;
+    communityMentions?: boolean;
+    commentReplies?: boolean;
+    reviewReceived?: boolean;
+    adminActions?: boolean;
 }): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         await db.collection("users").updateOne(
