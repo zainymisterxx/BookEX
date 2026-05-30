@@ -1,8 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-
   "framework": "nextjs",
-
   "headers": [
     {
       "source": "/socket.io/(.*)",
@@ -12,7 +10,5 @@
         { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
       ]
     }
-  ],
-
-
+  ]
 }
