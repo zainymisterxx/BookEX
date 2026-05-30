@@ -316,6 +316,13 @@
 - **d0f4611** — donation flow: book status on completion, org confirm action, atomic inserts, book validation
 - **cd4883c** — new pages: /exchange/[id] detail + /organizations/[id] profile
 - **bac8317** — email: migrate nodemailer → Resend SDK (16 functions, API key wired)
+- **d76a0d8** — batch 5: 15 data model fields, bidirectional blocking, exchange completion email, suspendUser audit log
+- **d45c3ba** — batch 6: Zod on submitReport/submitReview, reply notifications, new-member notifications, cleanup-jobs.ts
+- **34bf9f3** — batch 7: listBook content moderation, remove hardcoded dev-media-secret
+- **6286302** — batch 8: socket room naming unified, emitNewBook/emitNewReview, recordAuthResult, env-validation, admin reports tab + user search
+- **11f0c7b** — batch 9: UserRole/UserStatus types, NextAuth as-any removed, Dockerfile + CI + vercel.json, 7 unchecked write results
+- **a2dc940** — batch 10: search unified to $text, CacheResult<T> redis fix, Zod gaps closed, audit log viewer, weekly digest job
+- **b6eb31e** — batch 11: Redis fail-open fixed, CSP unsafe-eval removed, community/org search endpoints, admin global search, placeholder domains removed
 
 ### Removed from original list (verified as already implemented):
 - ~~No mark all as read~~ — exists in `notification-provider.tsx:96`
