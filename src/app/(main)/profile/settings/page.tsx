@@ -91,6 +91,29 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRemoveAvatar = async () => {
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      const result = await updateUserProfile({
+        userId: user.id,
+        name,
+        username,
+        city,
+        avatarUrl: '',
+      });
+      if (!result.success) throw new Error(result.message);
+      setAvatarPreview(null);
+      setAvatarFile(null);
+      await updateSession({ image: null });
+      toast({ title: 'Profile picture removed.' });
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Could not remove picture.', description: 'Please try again.' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Debounced username validation
   const checkUsernameDebounced = useCallback(
     debounce(async (newUsername: string) => {
@@ -153,7 +176,13 @@ export default function SettingsPage() {
       let newAvatarUrl: string | undefined = undefined;
 
       if (avatarFile) {
-        newAvatarUrl = (await uploadImageFile(avatarFile, 'userAvatar', 'user', user.id)).url;
+        try {
+          newAvatarUrl = (await uploadImageFile(avatarFile, 'userAvatar', 'user', user.id)).url;
+        } catch {
+          toast({ variant: 'destructive', title: 'Image upload failed', description: 'Could not upload profile picture. Please ensure MEDIA_API_SECRET is configured or try again.' });
+          setIsSaving(false);
+          return;
+        }
       }
       
       // Validate username before saving
@@ -265,6 +294,11 @@ export default function SettingsPage() {
                   <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
                     Change Picture
                   </Button>
+                  {avatarPreview && (
+                    <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" onClick={handleRemoveAvatar} disabled={isSaving}>
+                      Remove
+                    </Button>
+                  )}
                   <Input 
                     type="file" 
                     className="hidden" 

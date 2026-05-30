@@ -218,7 +218,7 @@ export function BookActions({ book, seller }: BookActionsProps) {
                     <span className="flex-1 contents">{contactButton}</span>
                 </TooltipTrigger>
                 <TooltipContent>
-                    <p>You must list at least one book for exchange before you can contact other traders.</p>
+                    <p>You need an active exchange listing to propose a swap. <a href="/books/sell" className="underline font-medium">List a book for exchange →</a></p>
                 </TooltipContent>
              </Tooltip>
            ) : (

@@ -79,7 +79,10 @@ export function computeProfileCompleteness(user: Partial<User> & { listingsCount
 }
 
 export function isProfileComplete(user: Partial<User> & { listingsCount?: number }) {
-  return getProfileCompleteness(user).isComplete;
+  // NOTE: hasListing is excluded from the completion gate intentionally — a user
+  // with no listings yet must be able to list their first book without being
+  // redirected. hasListing still contributes to the percentage in getProfileCompleteness.
+  return !!(user.name && user.cityNormalized && user.bio);
 }
 
 export function getExchangeBlockReason({ proposer, responder, proposerBook, responderBook }: {

@@ -511,8 +511,10 @@ export async function updateUserProfile(profileData: { userId: string, name: str
             updateData.username = profileData.username;
         }
         
-        // Handle avatar update
-        if (profileData.avatarUrl) {
+        // Handle avatar update — empty string means explicit removal
+        if (profileData.avatarUrl === '') {
+            updateData.avatarUrl = '';
+        } else if (profileData.avatarUrl) {
             updateData.avatarUrl = normalizeMediaUrl(profileData.avatarUrl);
         }
 
@@ -798,7 +800,7 @@ export async function getUserCity(userId: string) {
 export async function toggleCommunityMembership(communityId: string, isMember: boolean) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Rate limiting for community membership operations
-        const rateLimitResult = await checkUserRateLimit(user.id, 'CREATE_COMMUNITY', RATE_LIMITS.CREATE_COMMUNITY);
+        const rateLimitResult = await checkUserRateLimit(user.id, 'COMMUNITY_MEMBER_ACTION', RATE_LIMITS.COMMUNITY_MEMBER_ACTION);
         if (!rateLimitResult.allowed) {
             throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.feedback || 'Too many membership changes. Please try again later.');
         }
@@ -2070,6 +2072,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string): Pr
         // Log successful exchange initiation for monitoring
         console.log(`Exchange chat initiated: User ${user.id} -> User ${otherUserId} for book ${bookId}`);
 
+        revalidatePath('/messages');
         return { chatId: result.insertedId.toString() };
     });
 }
@@ -2231,18 +2234,22 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== orgData.submittedBy) throw new Error("Unauthorized");
         
-        // Log organization application attempt
-        await logActivity(
-            user.id,
-            'organization_application',
-            'medium',
-            `User applied for organization: ${orgData.name}`,
-            { 
-                organizationName: orgData.name,
-                location: orgData.location,
-                contactEmail: orgData.contactEmail
-            }
-        );
+        // Log organization application attempt (non-fatal — don't block submission)
+        try {
+            await logActivity(
+                user.id,
+                'organization_application',
+                'medium',
+                `User applied for organization: ${orgData.name}`,
+                {
+                    organizationName: orgData.name,
+                    location: orgData.location,
+                    contactEmail: orgData.contactEmail
+                }
+            );
+        } catch (logErr) {
+            console.warn('logActivity failed for org application:', logErr);
+        }
         
         // Validate organization data
         const validation = validateWithSchema(organizationSchema, {

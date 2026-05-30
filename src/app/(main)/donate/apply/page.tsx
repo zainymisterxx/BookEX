@@ -49,18 +49,25 @@ export default function ApplyToDonatePage() {
         return;
     }
 
-    if (!name || !description || !location || !logoImage) {
+    if (!name || !description || !location) {
       toast({
         variant: 'destructive',
         title: 'Missing fields',
-        description: 'Please fill in all the required fields, including the logo.',
+        description: 'Please fill in name, description, and location.',
       });
       return;
     }
-    
+
     setIsSubmitting(true);
     try {
-      const imageUrl = (await uploadImageFile(logoImage, 'organizationImage', 'community', session.user.id)).url;
+      let imageUrl = '';
+      if (logoImage) {
+        try {
+          imageUrl = (await uploadImageFile(logoImage, 'organizationImage', 'community', session.user.id)).url;
+        } catch {
+          toast({ variant: 'destructive', title: 'Logo upload failed', description: 'Submitting without logo — you can add one later.' });
+        }
+      }
       
       const result = await applyForOrganization({
         name,
