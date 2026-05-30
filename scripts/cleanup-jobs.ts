@@ -7,7 +7,7 @@
  *   3. warnInactiveUsers    — email active users who haven't logged in for 60+ days
  *   4. sendDonationReminders — remind org reps of pending donations older than 3 days
  *
- * Usage: tsx scripts/cleanup-jobs.ts [--job=expire|stale|all|weekly-digest|inactive-warning|donation-reminders|warm-cache]
+ * Usage: tsx scripts/cleanup-jobs.ts [--job=expire|stale|all|weekly-digest|inactive-warning|donation-reminders|warm-cache|maintenance]
  */
 
 import { MongoClient, ObjectId } from 'mongodb';
@@ -309,6 +309,38 @@ async function warmCache(db: ReturnType<MongoClient['db']>): Promise<{ books: nu
   }
 }
 
+const MAINTENANCE_TOKEN_RETENTION_DAYS = 7;
+const MAINTENANCE_AUDIT_RETENTION_DAYS = 90;
+const MAINTENANCE_ANALYTICS_RETENTION_DAYS = 30;
+
+async function runDatabaseMaintenance(db: ReturnType<MongoClient['db']>): Promise<void> {
+  const now = Date.now();
+
+  const tokenCutoff = new Date(now - MAINTENANCE_TOKEN_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const auditCutoff = new Date(now - MAINTENANCE_AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const analyticsCutoff = new Date(now - MAINTENANCE_ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const passwordTokens = await db.collection('password_reset_tokens').deleteMany({
+    expiresAt: { $lt: tokenCutoff },
+  });
+  console.log(`[cleanup-jobs] maintenance: deleted ${passwordTokens.deletedCount} expired password reset tokens`);
+
+  const emailTokens = await db.collection('email_verification_tokens').deleteMany({
+    usedAt: { $lt: tokenCutoff },
+  });
+  console.log(`[cleanup-jobs] maintenance: deleted ${emailTokens.deletedCount} used email verification tokens`);
+
+  const auditLogs = await db.collection('audit_logs').deleteMany({
+    createdAt: { $lt: auditCutoff },
+  });
+  console.log(`[cleanup-jobs] maintenance: deleted ${auditLogs.deletedCount} old audit log entries`);
+
+  const analytics = await db.collection('search_analytics').deleteMany({
+    createdAt: { $lt: analyticsCutoff },
+  });
+  console.log(`[cleanup-jobs] maintenance: deleted ${analytics.deletedCount} old search analytics entries`);
+}
+
 async function main() {
   const jobArg = process.argv.find(a => a.startsWith('--job='))?.split('=')[1] ?? 'all';
   const client = new MongoClient(MONGODB_URI!);
@@ -346,6 +378,10 @@ async function main() {
     if (jobArg === 'warm-cache') {
       const { books, orgs } = await warmCache(db);
       console.log(`[cleanup-jobs] warmCache: ${books} books, ${orgs} orgs cached`);
+    }
+
+    if (jobArg === 'maintenance') {
+      await runDatabaseMaintenance(db);
     }
 
     console.log('[cleanup-jobs] done');

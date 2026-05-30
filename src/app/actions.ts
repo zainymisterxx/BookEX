@@ -1623,7 +1623,7 @@ export async function createCommunity(communityData: { name: string, description
  * @param userIdToBlock The ID of the user to block.
  * @returns An object with the result of the operation.
  */
-export async function blockUser(userIdToBlock: string) {
+export async function blockUser(userIdToBlock: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const rateLimitResult = await checkUserRateLimit(user.id, 'BLOCK_USER', RATE_LIMITS.BLOCK_USER);
         if (!rateLimitResult.allowed) {
@@ -1681,7 +1681,7 @@ export async function blockUser(userIdToBlock: string) {
  * @param userIdToUnblock The ID of the user to unblock.
  * @returns An object with the result of the operation.
  */
-export async function unblockUser(userIdToUnblock: string) {
+export async function unblockUser(userIdToUnblock: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const { validateObjectId } = await import('@/lib/validation');
         
@@ -1742,7 +1742,7 @@ export async function isUserBlocked(userId: string, targetUserId: string): Promi
  * Gets the list of users blocked by the current user.
  * @returns An object with the list of blocked users.
  */
-export async function getBlockedUsers() {
+export async function getBlockedUsers(): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const userDoc = await db.collection("users").findOne(
             { _id: new ObjectId(user.id) },
@@ -2067,7 +2067,7 @@ export async function isBookWishlisted(bookId: string): Promise<boolean> {
  * @param isWishlisted Whether the book is currently wishlisted.
  * @returns An object with the result of the operation.
  */
-export async function toggleWishlist(bookId: string, isWishlisted: boolean) {
+export async function toggleWishlist(bookId: string, isWishlisted: boolean): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Check rate limit
         const rateLimitResult = await checkUserRateLimit(user.id, 'TOGGLE_WISHLIST', RATE_LIMITS.TOGGLE_WISHLIST);
@@ -6621,7 +6621,7 @@ export async function getUserExchanges(
 /**
  * Gets exchange details for a specific chat if it exists
  */
-export async function getChatExchangeDetails(chatId: string) {
+export async function getChatExchangeDetails(chatId: string): Promise<any> {
     try {
         const client = await clientPromise;
         const db = client.db("bookex");
@@ -6980,7 +6980,7 @@ export async function runSecurityMaintenance(category: string): Promise<{ succes
 /**
  * Deletes a book listing (only by the owner)
  */
-export async function deleteBookListing(bookId: string) {
+export async function deleteBookListing(bookId: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
@@ -7080,7 +7080,7 @@ export async function deleteBookListing(bookId: string) {
     });
 }
 
-export async function updateBookStatus(bookId: string, status: BookStatus) {
+export async function updateBookStatus(bookId: string, status: BookStatus): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
@@ -7133,7 +7133,7 @@ export async function updateBookStatus(bookId: string, status: BookStatus) {
     });
 }
 
-export async function renewBookListing(bookId: string) {
+export async function renewBookListing(bookId: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (!ObjectId.isValid(bookId)) {
             throw createAppError(ErrorType.VALIDATION, "Invalid book ID");
@@ -7568,4 +7568,92 @@ export async function createChannel(communityId: string, channelData: { name: st
             throw new Error('Failed to create channel');
         }
     });
+}
+
+export async function requestEmailChange(
+    newEmail: string
+): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    const schema = z.string().email();
+    const parsed = schema.safeParse(newEmail);
+    if (!parsed.success) {
+        return { success: false, message: 'Invalid email address.' };
+    }
+
+    return withAuthenticatedUserFull(async ({ db, user, userId }) => {
+        const { randomBytes } = await import('crypto');
+        const { sendEmailChangeVerificationEmail } = await import('@/lib/email');
+        const { getBaseUrl } = await import('@/lib/url-utils');
+
+        // Check if email is already taken
+        const existing = await db.collection('users').findOne(
+            { email: newEmail, deletedAt: { $exists: false } },
+            { projection: { _id: 1 } }
+        );
+        if (existing) {
+            throw new Error('This email address is already in use.');
+        }
+
+        const token = randomBytes(32).toString('hex');
+        const now = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+        await db.collection('email_verification_tokens').insertOne({
+            token,
+            type: 'email_change',
+            userId,
+            newEmail,
+            createdAt: now,
+            expiresAt,
+        });
+
+        const verificationUrl = `${getBaseUrl()}/verify-email-change?token=${token}`;
+        await sendEmailChangeVerificationEmail(newEmail, user.name ?? 'Reader', verificationUrl);
+
+        return { message: 'Verification email sent. Please check your inbox.' };
+    });
+}
+
+export async function confirmEmailChange(
+    token: string
+): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    try {
+        const { connectToMongoDB } = await import('@/lib/mongodb-server');
+        const { client, db } = await connectToMongoDB();
+
+        const now = new Date().toISOString();
+
+        const tokenDoc = await db.collection('email_verification_tokens').findOne({
+            token,
+            type: 'email_change',
+            expiresAt: { $gt: now },
+            usedAt: { $exists: false },
+        });
+
+        if (!tokenDoc) {
+            return { success: false, message: 'Invalid or expired verification link.' };
+        }
+
+        const session = await client.startSession();
+        try {
+            await session.withTransaction(async () => {
+                await db.collection('users').updateOne(
+                    { _id: tokenDoc.userId },
+                    { $set: { email: tokenDoc.newEmail, emailVerified: true, updatedAt: now } },
+                    { session }
+                );
+                await db.collection('email_verification_tokens').updateOne(
+                    { _id: tokenDoc._id },
+                    { $set: { usedAt: now } },
+                    { session }
+                );
+            });
+        } finally {
+            await session.endSession();
+        }
+
+        return { success: true, data: { message: 'Email address updated successfully.' } };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'An unexpected error occurred';
+        return { success: false, message };
+    }
 }

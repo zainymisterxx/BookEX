@@ -59,6 +59,15 @@ redisCache.connect().catch(() => {
 const activeChats = new Map<string, Set<string>>();
 
 const httpServer = createServer();
+// NOTE: For multi-server deployments, initialize the Redis adapter:
+// import { createAdapter } from '@socket.io/redis-adapter';
+// import { createClient } from 'redis';
+// if (process.env.REDIS_URL) {
+//   const pubClient = createClient({ url: process.env.REDIS_URL });
+//   const subClient = pubClient.duplicate();
+//   await Promise.all([pubClient.connect(), subClient.connect()]);
+//   io.adapter(createAdapter(pubClient, subClient));
+// }
 const io = new Server(httpServer, {
   cors: {
     origin: getCorsOrigins(),
