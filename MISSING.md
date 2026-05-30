@@ -42,7 +42,7 @@
 - [x] Email verification unimplemented — fixed: token collection, verify-email page, signUpUser sends link (f6b2719)
 - [x] `deactivateUser()` does not exist — fixed: cancels exchanges, restores books, sets deactivatedAt (f6b2719)
 - [ ] No account recovery flow for deactivated accounts
-- [ ] `suspendUser()` stores no `suspendedAt` timestamp or `suspensionReason` on the User document
+- [x] `suspendUser()` stores no timestamps — fixed: suspendedAt + suspensionReason added (8d62a17)
 - [ ] No email change verification
 - [x] `signUpUser()` no DB unique index on email — fixed: sparse unique index added (f6b2719)
 - [ ] Profile completion modal can be permanently dismissed via localStorage — incomplete profile is not blocked
@@ -55,7 +55,7 @@
 - [x] `deleteBook()` uses hard `deleteOne()` — fixed: soft delete with `deletedAt` (0c534d6)
 - [ ] `intelligentBookSearch` and `generateBookSummary` AI flows implemented but never called from any UI
 - [ ] `getBooksForSale()` uses `$regex` search; `getBooksForExchange()` uses MongoDB `$text` index — inconsistent strategy
-- [ ] `getBooksForSale()` has no pagination — unbounded query returning all matching documents
+- [x] `getBooksForSale()` no pagination — fixed: page/limit added, returns paginated envelope (8d62a17)
 - [ ] No "My Books" management page for sellers — no Edit/Delete buttons on book detail page
 - [x] No global `/search` results page — fixed: `/search` page added in 0c534d6
 - [ ] No exchange detail standalone page (`/exchange/[id]`)
@@ -64,7 +64,7 @@
 
 ## 5. MESSAGING
 
-- [ ] `startChat()` find-or-create is not wrapped in a MongoDB transaction; race condition can create duplicate chats
+- [x] `startChat()` race condition — fixed: atomic findOneAndUpdate upsert (3f9bd00)
 - [ ] Socket `sendMessage` writes message to DB first, then emits — if emit fails, message is persisted but client never gets confirmation
 - [ ] Unread count calculated two different ways in legacy vs new chat route handlers — no single source of truth
 - [ ] Blocking is one-directional — only blocker's `blockedUsers` array updated
@@ -163,7 +163,7 @@
 - [ ] `applyForOrganization` — uses custom validator instead of Zod schema
 - [x] No `src/middleware.ts` — fixed: added NextAuth route protection in 0c534d6
 - [x] `resetPassword` has no rate limit — fixed: 0c534d6
-- [ ] 12+ Server Actions missing rate limits (submitReport, submitReview, blockUser, checkUsernameAvailability, startChat, applyForOrganization, etc.)
+- [x] 4 critical actions missing rate limits — fixed: submitReport, submitReview, startChat, blockUser (ac3bfa8)
 - [ ] Auth rate limiting uses in-memory `Map` — resets on server restart, bypassed under load balancing
 - [ ] NextAuth `authorize` handler never calls `recordAuthResult()` on failure — brute-force bypasses account lockout
 - [ ] CSP header uses `'unsafe-eval'` + `'unsafe-inline'` in `script-src`
@@ -273,7 +273,7 @@
 - [x] No `public/manifest.json` (PWA support) — fixed: 0c534d6
 - [x] No OpenGraph meta tags in root `layout.tsx` — fixed: 0c534d6
 - [ ] `next.config.ts` image domains include `picsum.photos` and `placehold.co` (placeholder services)
-- [ ] No `/api/health` endpoint for load balancers / uptime monitors
+- [x] No `/api/health` endpoint — fixed: 3f9bd00
 - [ ] Media API not integrated into main `build` or `start` npm scripts
 
 ---
@@ -306,7 +306,7 @@
 
 ---
 
-**Total: 137 verified items | 65 fixed [x] | 72 remaining [ ]**
+**Total: 137 verified items | 71 fixed [x] | 66 remaining [ ]**
 
 ### Fixed summary by commit:
 - **5392b2f** — exchange/donation core fixes (book status on completion, donation flow)
