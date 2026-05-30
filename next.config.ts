@@ -101,6 +101,18 @@ const nextConfig: NextConfig = {
     
     return config;
   },
+  // Proxy /socket.io/* to the externally hosted Socket.IO server.
+  // vercel.json rewrites cannot expand env vars in destination, so this must live here.
+  async rewrites() {
+    const socketUrl = process.env.SOCKET_SERVER_URL;
+    if (!socketUrl) return [];
+    return [
+      {
+        source: '/socket.io/:path*',
+        destination: `${socketUrl}/socket.io/:path*`,
+      },
+    ];
+  },
   // Add security headers
   async headers() {
     return [

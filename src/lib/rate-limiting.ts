@@ -108,9 +108,23 @@ export const RATE_LIMITS = {
   START_CHAT: { windowMs: 60 * 60 * 1000, maxRequests: 20 },    // 20 per hour
   BLOCK_USER: { windowMs: 60 * 60 * 1000, maxRequests: 10 },    // 10 per hour
 
+  // Exchange operations
+  PROPOSE_EXCHANGE: { windowMs: 60 * 60 * 1000, maxRequests: 10 }, // 10 per hour
+
+  // Reporting
+  REPORT_COMMUNITY_CONTENT: { windowMs: 60 * 60 * 1000, maxRequests: 5 }, // 5 per hour
+
   // Default fallback
   DEFAULT: { windowMs: 60 * 1000, maxRequests: 30 } // 30 per minute
 } as const;
+
+// Purge expired entries from the fallback store every minute to prevent unbounded growth.
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of fallbackStore) {
+    if (v.resetAt < now) fallbackStore.delete(k);
+  }
+}, 60_000).unref();
 
 /**
  * Generate a rate limit key

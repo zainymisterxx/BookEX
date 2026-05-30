@@ -19,10 +19,8 @@ export async function GET(request: NextRequest) {
     const { db } = await connectToMongoDB();
 
     const baseFilter: Record<string, unknown> = {
-      $or: [
-        { visibility: 'public' },
-        { deletedAt: { $exists: false } },
-      ],
+      visibility: 'public',
+      deletedAt: { $exists: false },
     };
 
     if (query && query.length >= 1) {

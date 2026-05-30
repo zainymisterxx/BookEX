@@ -310,12 +310,12 @@ async function setupIndexes() {
       background: true 
     });
     
-    await db.collection('exchanges').createIndex({ 
-      receiverId: 1, 
-      status: 1 
-    }, { 
-      name: 'exchanges_receiver_status_idx',
-      background: true 
+    await db.collection('exchanges').createIndex({
+      responderId: 1,
+      status: 1
+    }, {
+      name: 'exchanges_responder_status_idx',
+      background: true
     });
     
     await db.collection('exchanges').createIndex({ 

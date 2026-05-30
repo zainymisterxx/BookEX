@@ -70,20 +70,46 @@ async function cancelStaleExchanges(db: ReturnType<MongoClient['db']>): Promise<
     }
   );
 
-  // Restore books that were on_hold or reserved due to these exchanges
+  // Restore books that were on_hold or reserved due to these exchanges,
+  // but only if they are NOT referenced in any other still-active exchange.
   const bookIds = stale.flatMap(e => [
     String(e.proposerBookId),
     String(e.responderBookId),
   ]).filter(Boolean);
 
   if (bookIds.length > 0) {
-    await db.collection('books').updateMany(
+    const bookObjectIds = bookIds
+      .filter(id => ObjectId.isValid(id))
+      .map(id => new ObjectId(id));
+
+    // Find books locked by another active exchange that is not being cancelled now
+    const otherActiveExchanges = await db.collection('exchanges').find(
       {
-        _id: { $in: bookIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) },
-        status: { $in: ['on_hold', 'reserved'] },
+        _id: { $nin: exchangeIds },
+        status: { $in: ['proposed', 'accepted', 'in_progress'] },
+        $or: [
+          { proposerBookId: { $in: bookObjectIds } },
+          { responderBookId: { $in: bookObjectIds } },
+        ],
       },
-      { $set: { status: 'active', updatedAt: now } }
+      { projection: { proposerBookId: 1, responderBookId: 1 } }
+    ).toArray();
+
+    const lockedBookIds = new Set(
+      otherActiveExchanges.flatMap(e => [String(e.proposerBookId), String(e.responderBookId)])
     );
+
+    const booksToRestore = bookObjectIds.filter(id => !lockedBookIds.has(String(id)));
+
+    if (booksToRestore.length > 0) {
+      await db.collection('books').updateMany(
+        {
+          _id: { $in: booksToRestore },
+          status: { $in: ['on_hold', 'reserved'] },
+        },
+        { $set: { status: 'active', updatedAt: now } }
+      );
+    }
   }
 
   // Notify both parties of auto-cancellation

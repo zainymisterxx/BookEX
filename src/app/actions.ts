@@ -820,7 +820,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                 // FIXED: Check community existence inside transaction
                 const community = await db.collection("communities").findOne(
                     { _id: communityObjectId },
-                    { session, projection: { _id: 1, members: 1 } }
+                    { session, projection: { _id: 1, members: 1, visibility: 1 } }
                 );
                 
                 if (!community) {
@@ -1423,6 +1423,23 @@ export async function deletePost(communityId: string, postId: string) {
             }
         );
 
+        // Notify the post author when someone else (admin/mod) removes their post
+        if (post.authorId !== user.id) {
+            try {
+                await db.collection("notifications").insertOne({
+                    userId: post.authorId,
+                    type: 'system',
+                    title: 'Your post was removed',
+                    message: 'A moderator or admin removed your post for violating community guidelines.',
+                    link: `/community/${communityId}`,
+                    read: false,
+                    createdAt: new Date().toISOString()
+                });
+            } catch (notifError) {
+                console.warn('Failed to create post-removal notification:', notifError);
+            }
+        }
+
         // Also delete all comments associated with this post
         await db.collection("comments").updateMany(
             { postId: postObjId },
@@ -1493,9 +1510,19 @@ export async function editPost(communityId: string, postId: string, newContent: 
             throw new Error("Post not found");
         }
 
-        // IMPORTANT: Only post author can edit posts (even admins cannot edit others' posts)
-        if (post.authorId !== user.id) {
-            throw new Error("Unauthorized: You can only edit your own posts");
+        // Allow post author, community moderators, and admins to edit posts
+        const editCommunity = await db.collection("communities").findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { createdBy: 1, members: 1 } }
+        );
+        const editMember = editCommunity?.members?.find((m: any) => m.userId === user.id);
+        const canEdit = post.authorId === user.id
+            || user.role === 'admin'
+            || editCommunity?.createdBy === user.id
+            || editMember?.role === 'admin'
+            || editMember?.role === 'moderator';
+        if (!canEdit) {
+            throw new Error("Unauthorized: You cannot edit this post");
         }
 
         // Re-moderate edited content before saving
@@ -1516,14 +1543,21 @@ export async function editPost(communityId: string, postId: string, newContent: 
             console.warn('editPost: moderation service unavailable, proceeding with edit', moderationError);
         }
 
-        // Update the post with sanitized content
+        // Update the post with sanitized content and append to editHistory
         await db.collection("posts").updateOne(
             { _id: postObjId },
             {
                 $set: {
                     content: sanitizeInput(newContent),
                     editedAt: new Date()
-                }
+                },
+                $push: {
+                    editHistory: {
+                        content: post.content,
+                        editedAt: new Date(),
+                        editedBy: user.id
+                    }
+                } as any
             }
         );
 
@@ -1732,11 +1766,14 @@ export async function isUserBlocked(userId: string, targetUserId: string): Promi
         const client = await clientPromise;
         const db = client.db(process.env.MONGODB_DB);
         
+        if (!ObjectId.isValid(userId) || !ObjectId.isValid(targetUserId)) {
+            return false;
+        }
         const user = await db.collection("users").findOne(
             { _id: new ObjectId(userId) },
             { projection: { blockedUsers: 1 } }
         );
-        
+
         return user?.blockedUsers?.includes(targetUserId) || false;
     } catch (error) {
         console.error('Error checking if user is blocked:', error);
@@ -3316,6 +3353,9 @@ export async function submitReview(reviewData: Omit<Review, '_id' | 'createdAt'>
 
         // Then, perform a single, atomic update on the user document.
         // This is far more efficient and safer than the previous aggregation method.
+        if (!ObjectId.isValid(reviewData.revieweeId)) {
+            throw new Error('Invalid reviewee ID');
+        }
         const revieweeUpdateResult = await db.collection("users").updateOne(
             { _id: new ObjectId(reviewData.revieweeId) },
             {
@@ -3498,6 +3538,9 @@ export async function canUserReview(reviewerId: string, revieweeId: string): Pro
  */
 export async function deleteReview(reviewId: string) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(reviewId)) {
+            throw new Error("Invalid review ID");
+        }
         // Find the review to check ownership
         const review = await db.collection("reviews").findOne({ _id: new ObjectId(reviewId) });
         if (!review) {
@@ -3552,6 +3595,9 @@ export async function deleteReview(reviewId: string) {
  */
 export async function updateReview(reviewId: string, updates: { rating?: number; comment?: string }) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
+        if (!ObjectId.isValid(reviewId)) {
+            throw new Error("Invalid review ID");
+        }
         // Find the review to check ownership
         const review = await db.collection("reviews").findOne({ _id: new ObjectId(reviewId) });
         if (!review) {
@@ -3660,6 +3706,12 @@ export async function getUserReviewStats(userId: string): Promise<{
  */
 export async function reportCommunityContent(contentId: string, contentType: 'post' | 'comment' | 'community', reason: string, details?: string) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
+        // Rate-limit reports to prevent spam
+        const rl = await checkUserRateLimit(user.id, 'SUBMIT_REPORT', RATE_LIMITS.SUBMIT_REPORT);
+        if (!rl.allowed) {
+            throw new Error('You are submitting reports too quickly. Please try again later.');
+        }
+
         // Validate content exists based on type
         let contentExists = false;
         let reportedUserId = '';
@@ -4188,8 +4240,12 @@ export async function bulkResolveReports(reportIds: string[], resolutionNotes?: 
             throw new Error("Unauthorized");
         }
 
+        const validReportIds = reportIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id));
+        if (validReportIds.length === 0) {
+            return { success: true, modifiedCount: 0 };
+        }
         const result = await db.collection("reports").updateMany(
-            { _id: { $in: reportIds.map(id => new ObjectId(id)) } },
+            { _id: { $in: validReportIds } },
             {
                 $set: {
                     status: 'resolved',
@@ -4339,7 +4395,24 @@ export async function getAuditLogs(page: number = 1, limit: number = 50): Promis
  */
 export async function resolveReport(reportId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
-        await db.collection("reports").updateOne({ _id: new ObjectId(reportId) }, { $set: { status: 'resolved' } });
+        const report = await db.collection("reports").findOne({ _id: new ObjectId(reportId) });
+        await db.collection("reports").updateOne({ _id: new ObjectId(reportId) }, { $set: { status: 'resolved', resolvedBy: user.id, resolvedAt: new Date().toISOString() } });
+        // Notify the reporter that their report was acted on
+        if (report?.reporterId) {
+            try {
+                await db.collection("notifications").insertOne({
+                    userId: report.reporterId,
+                    type: 'system',
+                    title: 'Your report was resolved',
+                    message: 'Thank you for your report. Our moderators have reviewed it and taken action.',
+                    link: '/profile/me',
+                    read: false,
+                    createdAt: new Date().toISOString()
+                });
+            } catch (notifError) {
+                console.warn('Failed to send reporter notification:', notifError);
+            }
+        }
         revalidatePath('/admin');
         return { success: true };
     }, 'admin');
@@ -4368,13 +4441,17 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
                 );
 
                 // Remove the content based on type
+                let contentAuthorId: string | null = null;
                 switch (contentType) {
-                    case 'book':
+                    case 'book': {
+                        const removedBook = await db.collection('books').findOne({ _id: new ObjectId(contentId) }, { session, projection: { sellerId: 1 } });
+                        contentAuthorId = removedBook?.sellerId || null;
                         await db.collection('books').deleteOne(
                             { _id: new ObjectId(contentId) },
                             { session }
                         );
                         break;
+                    }
                     case 'user':
                         // Suspend user instead of deleting
                         await db.collection('users').updateOne(
@@ -4406,6 +4483,19 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
                             { session }
                         );
                         break;
+                }
+
+                // Notify content author that their content was removed
+                if (contentAuthorId) {
+                    await db.collection('notifications').insertOne({
+                        userId: contentAuthorId,
+                        type: 'system',
+                        title: 'Your content was removed',
+                        message: `Your ${contentType} was removed by a moderator for violating our community guidelines.`,
+                        link: '/',
+                        read: false,
+                        createdAt: new Date().toISOString()
+                    }, { session });
                 }
 
                 // Resolve the report
@@ -5787,6 +5877,17 @@ export async function proposeExchange(
                 if (!eligibility.allowed) {
                     throw new ValidationError(eligibility.reason || 'Exchange not allowed');
                 }
+
+        // Ensure the proposer's profile is complete before allowing an exchange
+        if (!isProfileComplete(proposer as any)) {
+            throw new ValidationError('Please complete your profile before proposing exchanges.');
+        }
+
+        // Rate-limit exchange proposals per user
+        const rl = await checkUserRateLimit(user.id, 'PROPOSE_EXCHANGE', RATE_LIMITS.PROPOSE_EXCHANGE);
+        if (!rl.allowed) {
+            throw new ValidationError('You are proposing exchanges too quickly. Please try again later.');
+        }
         
         // Check if there's already an active exchange between these books
         const existingExchange = await db.collection("exchanges").findOne({
@@ -5856,8 +5957,19 @@ export async function proposeExchange(
             proposalMessage: proposalMessage
         };
         
+        // Lock books before inserting the exchange so no concurrent proposal can race in.
+        await db.collection("books").updateMany(
+            { _id: { $in: [validatedProposerBookId, validatedResponderBookId] } },
+            { $set: { status: 'on_hold', updatedAt: now } }
+        );
+
         const exchangeResult = await db.collection("exchanges").insertOne(newExchange);
         if (!exchangeResult.insertedId) {
+            // Roll back the lock if insert fails
+            await db.collection("books").updateMany(
+                { _id: { $in: [validatedProposerBookId, validatedResponderBookId] } },
+                { $set: { status: 'active', updatedAt: now } }
+            );
             throw new Error('proposeExchange: exchange insert failed');
         }
 
@@ -5920,12 +6032,6 @@ export async function proposeExchange(
             console.error('[EMAIL_FAILURE] proposeExchange', (emailError as Error)?.message || emailError);
         }
         
-        // Lock books before emitting so no concurrent proposal can race in
-        await db.collection("books").updateMany(
-            { _id: { $in: [validatedProposerBookId, validatedResponderBookId] } },
-            { $set: { status: 'on_hold', updatedAt: now } }
-        );
-
         // Emit real-time status update for new exchange
         try {
             const { emitExchangeStatusUpdate } = await import('../../server');
@@ -6031,11 +6137,23 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
             }
         );
         
-        // Move both books to reserved — prevents other exchanges while this one is active
-        await db.collection("books").updateMany(
-            { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
-            { $set: { status: 'reserved', updatedAt: now } }
-        );
+        // Move both books to reserved inside a transaction so the exchange status change
+        // and book lock cannot diverge if the process crashes between the two writes.
+        {
+            const client = await clientPromise;
+            const session = client.startSession();
+            try {
+                await session.withTransaction(async () => {
+                    await db.collection("books").updateMany(
+                        { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
+                        { $set: { status: 'reserved', updatedAt: now } },
+                        { session }
+                    );
+                });
+            } finally {
+                await session.endSession();
+            }
+        }
 
         console.log(`Exchange accepted: ${exchangeId} by user ${user.id}`);
 
@@ -6135,9 +6253,12 @@ export async function rejectExchange(exchangeId: string, reason?: string): Promi
             throw new Error('Failed to reject exchange: it may have already been actioned.');
         }
 
-        // Restore both books to active
+        // Only restore books that are on_hold/reserved — never overwrite an unrelated status
         await db.collection("books").updateMany(
-            { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
+            {
+                _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] },
+                status: { $in: ['on_hold', 'reserved'] }
+            },
             { $set: { status: 'active', updatedAt: now } }
         );
 
@@ -6231,57 +6352,60 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
         
         const now = new Date().toISOString();
         const isProposer = exchange.proposerId === user.id;
-        
-        // Update confirmation status
-        const updateFields: any = {
-            updatedAt: now
-        };
-        
-        if (isProposer) {
-            updateFields.proposerConfirmed = true;
-        } else {
-            updateFields.responderConfirmed = true;
-        }
-        
-        // Check if both users have now confirmed
-        const bothConfirmed = (isProposer ? true : exchange.proposerConfirmed) && 
-                             (!isProposer ? true : exchange.responderConfirmed);
-        
-        if (bothConfirmed) {
-            updateFields.status = 'completed';
-            updateFields.completedAt = now;
-        } else if (exchange.status === 'accepted') {
-            updateFields.status = 'in_progress';
-        }
-        
-        // Add status update to history
-        const statusUpdate = {
-            status: bothConfirmed ? 'completed' as ExchangeStatus : 'in_progress' as ExchangeStatus,
-            timestamp: now,
-            updatedBy: user.id,
-            notes: isProposer ? 'Proposer confirmed completion' : 'Responder confirmed completion'
-        };
-        
-        const confirmResult = await db.collection("exchanges").updateOne(
-            { _id: validatedExchangeId },
+        const fieldToSet = isProposer ? 'proposerConfirmed' : 'responderConfirmed';
+
+        // Atomically set the confirmation flag and read the post-update document.
+        // { $ne: true } prevents double-confirming and ensures concurrent confirmations
+        // cannot both read stale state and both skip the 'completed' transition.
+        const postUpdate = await db.collection("exchanges").findOneAndUpdate(
             {
-                $set: updateFields,
+                _id: validatedExchangeId,
+                status: { $in: ['accepted', 'in_progress'] },
+                [fieldToSet]: { $ne: true },
+            },
+            {
+                $set: { [fieldToSet]: true, updatedAt: now },
                 $push: {
-                    statusHistory: statusUpdate
-                } as any
-            }
+                    statusHistory: {
+                        status: 'in_progress' as ExchangeStatus,
+                        timestamp: now,
+                        updatedBy: user.id,
+                        notes: isProposer ? 'Proposer confirmed completion' : 'Responder confirmed completion',
+                    },
+                } as any,
+            },
+            { returnDocument: 'after' }
         );
 
-        if (confirmResult.matchedCount === 0) {
-            throw new Error('Exchange not found or already modified');
+        if (!postUpdate) {
+            throw new Error('Exchange not found, not in a confirmable state, or you have already confirmed.');
         }
 
+        const bothConfirmed = postUpdate.proposerConfirmed === true && postUpdate.responderConfirmed === true;
+
         if (bothConfirmed) {
-            // Perform ownership transfer and record history in a transaction
+            // Both confirmed: perform the status update and book ownership transfer inside
+            // one transaction so they cannot diverge if the process crashes between the two writes.
             const client = await clientPromise;
             const session = client.startSession();
             try {
                 await session.withTransaction(async () => {
+                    await db.collection("exchanges").updateOne(
+                        { _id: validatedExchangeId },
+                        {
+                            $set: { status: 'completed', completedAt: now, updatedAt: now },
+                            $push: {
+                                statusHistory: {
+                                    status: 'completed' as ExchangeStatus,
+                                    timestamp: now,
+                                    updatedBy: user.id,
+                                    notes: 'Both parties confirmed — exchange completed',
+                                },
+                            } as any,
+                        },
+                        { session }
+                    );
+
                     const proposerBookIdObj = new ObjectId(String(exchange.proposerBookId));
                     const responderBookIdObj = new ObjectId(String(exchange.responderBookId));
 
@@ -6304,7 +6428,7 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                         );
 
                         // Record ownership history for auditability
-                        const ownershipHistoryEntries = [
+                        await db.collection('bookOwnershipHistory').insertMany([
                             {
                                 bookId: String(proposerBookIdObj),
                                 previousOwnerId: proposerBook.sellerId || null,
@@ -6319,9 +6443,7 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                                 exchangeId: String(validatedExchangeId),
                                 timestamp: now
                             }
-                        ];
-
-                        await db.collection('bookOwnershipHistory').insertMany(ownershipHistoryEntries, { session });
+                        ], { session });
                     }
                 });
             } finally {
@@ -6358,6 +6480,17 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                 }
             } catch (notifError) {
                 console.error('[EMAIL_FAILURE] confirmExchangeCompletion', (notifError as Error)?.message || notifError);
+            }
+        } else {
+            // Single confirmation: notify the other party that they need to confirm (#20)
+            try {
+                const { createExchangeUpdateNotification } = await import('@/lib/notification-utils');
+                const otherUserId = isProposer ? exchange.responderId : exchange.proposerId;
+                const proposerBook = await db.collection("books").findOne({ _id: new ObjectId(String(exchange.proposerBookId)) });
+                const bookTitle = proposerBook?.title || 'your book';
+                await createExchangeUpdateNotification(otherUserId, 'in_progress', bookTitle, String(validatedExchangeId));
+            } catch (notifError) {
+                console.warn('Failed to send waiting-confirmation notification:', notifError);
             }
         }
 
@@ -6397,8 +6530,8 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                 status: bothConfirmed ? 'completed' : 'in_progress',
                 updatedAt: now,
                 completedAt: bothConfirmed ? now : undefined,
-                proposerConfirmed: isProposer ? true : exchange.proposerConfirmed,
-                responderConfirmed: !isProposer ? true : exchange.responderConfirmed
+                proposerConfirmed: postUpdate.proposerConfirmed,
+                responderConfirmed: postUpdate.responderConfirmed
             });
         } catch (emitError) {
             console.warn('Failed to emit real-time update:', emitError);
@@ -6451,7 +6584,7 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
         };
         
         const cancelResult = await db.collection("exchanges").updateOne(
-            { _id: validatedExchangeId },
+            { _id: validatedExchangeId, status: { $nin: ['completed', 'cancelled'] } },
             {
                 $set: {
                     status: 'cancelled',
@@ -6467,9 +6600,12 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
             throw new Error('Exchange not found or already modified');
         }
 
-        // Restore both books to active so they can enter new exchanges
+        // Only restore books that are on_hold/reserved due to this exchange
         await db.collection("books").updateMany(
-            { _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] } },
+            {
+                _id: { $in: [new ObjectId(String(exchange.proposerBookId)), new ObjectId(String(exchange.responderBookId))] },
+                status: { $in: ['on_hold', 'reserved'] }
+            },
             { $set: { status: 'active', updatedAt: now } }
         );
 
@@ -7770,6 +7906,31 @@ export async function adminResolveDispute(exchangeId: string, resolution: 'compl
                 $push: { statusHistory: { status: newStatus, timestamp: now, updatedBy: user.id, notes: `Admin: ${notes}` } as any }
             }
         );
+
+        // Update book statuses based on resolution outcome
+        const proposerBookId = exchange.proposerBookId ? new ObjectId(String(exchange.proposerBookId)) : null;
+        const responderBookId = exchange.responderBookId ? new ObjectId(String(exchange.responderBookId)) : null;
+        const bookIds = [proposerBookId, responderBookId].filter(Boolean) as import('mongodb').ObjectId[];
+        if (bookIds.length > 0) {
+            if (resolution === 'complete') {
+                // Mark both books as exchanged
+                await db.collection('books').updateOne(
+                    { _id: proposerBookId! },
+                    { $set: { sellerId: exchange.responderId, status: 'exchanged', updatedAt: now } }
+                );
+                await db.collection('books').updateOne(
+                    { _id: responderBookId! },
+                    { $set: { sellerId: exchange.proposerId, status: 'exchanged', updatedAt: now } }
+                );
+            } else {
+                // Release books back to active
+                await db.collection('books').updateMany(
+                    { _id: { $in: bookIds }, status: { $in: ['on_hold', 'reserved'] } },
+                    { $set: { status: 'active', updatedAt: now } }
+                );
+            }
+        }
+
         await db.collection('auditLogs').insertOne({ action: 'ADMIN_RESOLVE_DISPUTE', performedBy: user.id, exchangeId, resolution, notes, timestamp: now });
         revalidatePath('/admin');
         return { message: `Exchange ${newStatus} by admin` };

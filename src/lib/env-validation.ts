@@ -87,11 +87,18 @@ export function validateEnv(): Env {
   }
 }
 
+let _cachedEnv: Env | null = null;
+
 /**
- * Gets a validated environment variable
- * Use this helper to ensure type safety when accessing env vars
+ * Gets a validated environment variable.
+ * Result is cached after first parse to avoid re-running Zod on every call.
  */
 export function getEnv<K extends keyof Env>(key: K): Env[K] {
-  const env = validateEnv();
-  return env[key];
+  if (!_cachedEnv) {
+    _cachedEnv = validateEnv();
+    if (process.env.NODE_ENV === 'production' && !_cachedEnv.RESEND_API_KEY) {
+      console.warn('[env] RESEND_API_KEY is not set — email delivery will fail silently in production');
+    }
+  }
+  return _cachedEnv[key];
 }

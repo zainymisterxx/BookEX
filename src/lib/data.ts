@@ -10,13 +10,11 @@ import redisCache from './redis-cache';
 const serialize = (data: any) => JSON.parse(JSON.stringify(data));
 
 // Helper to calculate and format average rating
-const calculateAverageRating = (user: User | null) => {
+const calculateAverageRating = (user: User | null): User | null => {
     if (!user) return user;
     const { totalRatingPoints = 0, reviews = 0 } = user;
     const averageRating = reviews > 0 ? totalRatingPoints / reviews : 0;
-    // Round to one decimal place and convert to number
-    user.averageRating = parseFloat(averageRating.toFixed(1));
-    return user;
+    return { ...user, averageRating: parseFloat(averageRating.toFixed(1)) };
 }
 
 
@@ -214,7 +212,8 @@ export async function getUserProfileData(userId: string): Promise<{ profileUser:
     }
 
     const userListings = await db.collection("books")
-        .find({ sellerId: userId })
+        .find({ sellerId: userId, deletedAt: { $exists: false } })
+        .limit(200)
         .toArray();
 
     // Normalize/attach city names for profile and books
@@ -562,7 +561,7 @@ export async function getAvailableBookFilters(type: 'sell' | 'exchange') {
         const client = await clientPromise;
         const db = client.db("bookex");
         const pipeline = [
-            { $match: { type: type } },
+            { $match: { type: type, status: 'active', deletedAt: { $exists: false } } },
           { $group: {
             _id: null,
             genres: { $addToSet: "$genre" },
@@ -601,6 +600,7 @@ export async function getCommunities(): Promise<Community[]> {
         const communities = await db.collection("communities")
             .find({})
             .sort({ memberCount: -1 })
+            .limit(100)
             .toArray();
         return serialize(communities);
     } catch (error) {

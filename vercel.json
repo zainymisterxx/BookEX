@@ -14,13 +14,7 @@
     "The NEXT_PUBLIC_SOCKET_URL variable used by the frontend client should match."
   ],
 
-  "rewrites": [
-    {
-      "$comment": "Proxy /socket.io/* requests to the externally deployed Socket.IO server.",
-      "source": "/socket.io/:path*",
-      "destination": "SOCKET_SERVER_URL/socket.io/:path*"
-    }
-  ],
+  "$comment_rewrites": "Socket.IO proxy rewrite lives in next.config.ts — vercel.json rewrites cannot expand $ENV_VAR in destination fields.",
 
   "headers": [
     {
