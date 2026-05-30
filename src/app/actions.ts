@@ -1653,29 +1653,34 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
         }
         
         const participantIds = [user.id, validatedOtherUserId.toString()].sort();
+        const now = new Date().toISOString();
 
-        // Find existing chat
-        let chat = await db.collection("chats").findOne({ 
-            participantIds: { $all: participantIds },
-            bookId: validatedBookId
-        });
+        // Atomic find-or-create: prevents duplicate chats under concurrent calls (TOCTOU fix)
+        const upsertResult = await db.collection("chats").findOneAndUpdate(
+            { participantIds: { $all: participantIds }, bookId: validatedBookId ?? null },
+            {
+                $setOnInsert: {
+                    participantIds,
+                    bookId: validatedBookId,
+                    messages: [],
+                    updatedAt: now,
+                    createdAt: now,
+                }
+            },
+            { upsert: true, returnDocument: 'after' }
+        );
 
-        if (chat) {
-            return { chatId: chat._id.toString() };
+        const chat = upsertResult!;
+        const chatId = chat._id.toString();
+        // NOTE: createdAt matching `now` means this call did the insert; otherwise another caller won the race
+        const isNewChat = (chat as { createdAt?: string }).createdAt === now;
+
+        if (!isNewChat) {
+            return { chatId };
         }
 
-        // Create new chat
-        const newChat: Omit<Chat, '_id'> = {
-            participantIds,
-            bookId: validatedBookId,
-            messages: [],
-            updatedAt: new Date().toISOString(),
-        };
-
-        const result = await db.collection("chats").insertOne(newChat);
-        
         // Send email notification to book seller (if they have email notifications enabled)
-        if (validatedBookId && !chat) { // Only for new chats about books
+        if (validatedBookId) { // Only for new chats about books
             try {
                 const book = await db.collection("books").findOne({ _id: validatedBookId });
                 if (book) {
@@ -1687,7 +1692,7 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
                             user.name || 'BookEx User',
                             book.title,
                             book.type,
-                            result.insertedId.toString()
+                            chatId
                         );
                     }
                 }
@@ -1696,11 +1701,11 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
                 console.warn('Failed to send book contact email:', emailError);
             }
         }
-        
+
         // Notify the other participant in real-time that a new chat was created
         try {
             const { emitNewChatNotification } = await import('../../server');
-            await emitNewChatNotification(result.insertedId.toString(), user.id, validatedOtherUserId.toString());
+            await emitNewChatNotification(chatId, user.id, validatedOtherUserId.toString());
         } catch {
             // Don't fail chat creation if socket emission fails
         }
@@ -1708,7 +1713,7 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
         // Log successful chat initiation
         console.log(`Chat initiated: User ${user.id} -> User ${otherUserId}${bookId ? ` for book ${bookId}` : ''}`);
 
-        return { chatId: result.insertedId.toString() };
+        return { chatId };
     });
 }
 
@@ -4438,13 +4443,21 @@ export async function addOrganizationByAdmin(orgData: {
  * @param userId The ID of the user to suspend.
  * @returns An object with the result of the operation.
  */
-export async function suspendUser(userId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
-    return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
+export async function suspendUser(userId: string, reason?: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db }) => {
+        const now = new Date().toISOString();
         await db.collection("users").updateOne(
             { _id: new ObjectId(userId) },
-            { $set: { status: 'suspended' } }
+            {
+                $set: {
+                    status: 'suspended',
+                    suspendedAt: now,
+                    suspensionReason: reason ?? null,
+                    updatedAt: now,
+                },
+            }
         );
-        
+
         revalidatePath('/admin');
         return { success: true };
     }, 'admin');
