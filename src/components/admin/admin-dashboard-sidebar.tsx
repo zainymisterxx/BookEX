@@ -10,11 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X, Search, ClipboardList } from "lucide-react";
 import type { Organization, Report, User } from '@/lib/types';
+import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { AdminReportActions } from '@/components/admin/admin-report-actions';
 import { AdminOrgActions } from '@/components/admin/admin-org-actions';
 import { AdminUserActions } from '@/components/admin/admin-user-actions';
-import { getAdminDashboardData, getAdminReports, resolveReport, removeContentAndResolveReport, getAuditLogs } from '@/app/actions';
+import { getAdminDashboardData, getAdminReports, resolveReport, removeContentAndResolveReport, getAuditLogs, updateUserRole, updateSystemSetting, suspendOrganization, reactivateOrganization } from '@/app/actions';
 import { AddOrganizationModal } from '@/components/admin/add-organization-modal';
 import { DatabaseManagement } from '@/components/admin/database-management';
 import SecurityAdminDashboard from '@/components/admin/security-admin-dashboard';
@@ -53,6 +54,12 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
     const [reportsPagination, setReportsPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, hasNext: false, hasPrev: false });
     const [reportsLoading, setReportsLoading] = useState(false);
     const [reportActionPending, startReportAction] = useTransition();
+    const [, startAdminAction] = useTransition();
+    const { toast } = useToast();
+
+    // System settings state
+    const [emailNotifications, setEmailNotifications] = useState(true);
+    const [maintenanceMode, setMaintenanceMode] = useState(false);
 
     // Users tab state
     const [userSearch, setUserSearch] = useState('');
@@ -219,6 +226,70 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
         });
     };
 
+    const handleUpdateUserRole = (userId: string, newRole: 'user' | 'admin') => {
+        startAdminAction(async () => {
+            const result = await updateUserRole(userId, newRole);
+            if (result.success) {
+                toast({ title: result.data.message });
+                fetchAdminData();
+            } else {
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleToggleEmailNotifications = (enabled: boolean) => {
+        setEmailNotifications(enabled);
+        startAdminAction(async () => {
+            const result = await updateSystemSetting('emailNotifications', enabled);
+            if (result.success) {
+                toast({ title: result.data.message });
+            } else {
+                setEmailNotifications(!enabled);
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleToggleMaintenanceMode = (enabled: boolean) => {
+        setMaintenanceMode(enabled);
+        startAdminAction(async () => {
+            const result = await updateSystemSetting('maintenance_mode', enabled);
+            if (result.success) {
+                toast({ title: result.data.message });
+            } else {
+                setMaintenanceMode(!enabled);
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleSuspendOrg = (orgId: string, orgName: string) => {
+        const reason = window.prompt(`Reason for suspending "${orgName}":`);
+        if (!reason?.trim()) return;
+        startAdminAction(async () => {
+            const result = await suspendOrganization(orgId, reason.trim());
+            if (result.success) {
+                toast({ title: result.data.message });
+                handleOrgActionCompleted(orgId, 'rejected');
+            } else {
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
+    const handleReactivateOrg = (orgId: string) => {
+        startAdminAction(async () => {
+            const result = await reactivateOrganization(orgId);
+            if (result.success) {
+                toast({ title: result.data.message });
+                handleOrgActionCompleted(orgId, 'approved');
+            } else {
+                toast({ variant: 'destructive', title: 'Failed', description: result.message });
+            }
+        });
+    };
+
     const { userCount, listingCount, organizations, reports: dashboardReports, users } = data;
 
     const filteredUsers = userSearch.trim().length === 0
@@ -253,6 +324,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             badge: dashboardReports?.filter(r => r.status === 'pending').length || 0
         },
         { id: 'audit-log', label: 'Audit Log', icon: ClipboardList },
+        { id: 'settings', label: 'Settings', icon: Shield },
     ];
 
     return (
@@ -459,16 +531,33 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                                 {org.status}
                                                             </Badge>
                                                         </TableCell>
-                                                        <TableCell className="flex gap-2">
+                                                        <TableCell className="flex gap-2 flex-wrap">
                                                             <Link href={`/admin/organizations/${String(org._id)}`}>
                                                                 <Button variant="outline" size="sm">
                                                                     View Details
                                                                 </Button>
                                                             </Link>
-                                                            <AdminOrgActions 
-                                                                organization={org} 
+                                                            <AdminOrgActions
+                                                                organization={org}
                                                                 onActionCompleted={handleOrgActionCompleted}
                                                             />
+                                                            {org.status !== 'rejected' ? (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="destructive"
+                                                                    onClick={() => handleSuspendOrg(String(org._id), org.name)}
+                                                                >
+                                                                    Suspend
+                                                                </Button>
+                                                            ) : (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    onClick={() => handleReactivateOrg(String(org._id))}
+                                                                >
+                                                                    Reactivate
+                                                                </Button>
+                                                            )}
                                                         </TableCell>
                                                     </TableRow>
                                                 ))}
@@ -480,16 +569,33 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <div className="md:hidden space-y-4">
                                         {organizations?.map((org) => (
                                             <OrganizationMobileCard key={String(org._id)} organization={org}>
-                                                <div className="flex gap-2">
+                                                <div className="flex gap-2 flex-wrap">
                                                     <Link href={`/admin/organizations/${String(org._id)}`} className="flex-1">
                                                         <Button variant="outline" size="sm" className="w-full">
                                                             View Details
                                                         </Button>
                                                     </Link>
-                                                    <AdminOrgActions 
-                                                        organization={org} 
+                                                    <AdminOrgActions
+                                                        organization={org}
                                                         onActionCompleted={handleOrgActionCompleted}
                                                     />
+                                                    {org.status !== 'rejected' ? (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="destructive"
+                                                            onClick={() => handleSuspendOrg(String(org._id), org.name)}
+                                                        >
+                                                            Suspend
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => handleReactivateOrg(String(org._id))}
+                                                        >
+                                                            Reactivate
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </OrganizationMobileCard>
                                         ))}
@@ -555,11 +661,30 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                             {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}
                                                         </TableCell>
                                                         <TableCell>
-                                                            <AdminUserActions
-                                                                user={user}
-                                                                onUserStatusChanged={handleUserStatusChanged}
-                                                                onUserDeleted={handleUserDeleted}
-                                                            />
+                                                            <div className="flex items-center gap-2">
+                                                                <AdminUserActions
+                                                                    user={user}
+                                                                    onUserStatusChanged={handleUserStatusChanged}
+                                                                    onUserDeleted={handleUserDeleted}
+                                                                />
+                                                                {user.role !== 'admin' ? (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        onClick={() => handleUpdateUserRole(String(user._id), 'admin')}
+                                                                    >
+                                                                        Make Admin
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="secondary"
+                                                                        onClick={() => handleUpdateUserRole(String(user._id), 'user')}
+                                                                    >
+                                                                        Remove Admin
+                                                                    </Button>
+                                                                )}
+                                                            </div>
                                                         </TableCell>
                                                     </TableRow>
                                                 ))}
@@ -578,11 +703,30 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                     <div className="md:hidden space-y-4">
                                         {filteredUsers?.map((user) => (
                                             <UserMobileCard key={String(user._id)} user={user}>
-                                                <AdminUserActions
-                                                    user={user}
-                                                    onUserStatusChanged={handleUserStatusChanged}
-                                                    onUserDeleted={handleUserDeleted}
-                                                />
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <AdminUserActions
+                                                        user={user}
+                                                        onUserStatusChanged={handleUserStatusChanged}
+                                                        onUserDeleted={handleUserDeleted}
+                                                    />
+                                                    {user.role !== 'admin' ? (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => handleUpdateUserRole(String(user._id), 'admin')}
+                                                        >
+                                                            Make Admin
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="secondary"
+                                                            onClick={() => handleUpdateUserRole(String(user._id), 'user')}
+                                                        >
+                                                            Remove Admin
+                                                        </Button>
+                                                    )}
+                                                </div>
                                             </UserMobileCard>
                                         ))}
                                         {filteredUsers?.length === 0 && (
@@ -895,6 +1039,44 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                             )}
                                         </>
                                     )}
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+                    {activeTab === 'settings' && (
+                        <div className="space-y-6 h-full">
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="font-headline text-2xl">System Settings</CardTitle>
+                                    <CardDescription>Configure platform-wide settings.</CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-6">
+                                    <div className="flex items-center justify-between p-4 border rounded-lg">
+                                        <div>
+                                            <p className="font-medium">Email Notifications</p>
+                                            <p className="text-sm text-muted-foreground">Send system emails to users</p>
+                                        </div>
+                                        <Button
+                                            variant={emailNotifications ? 'default' : 'outline'}
+                                            size="sm"
+                                            onClick={() => handleToggleEmailNotifications(!emailNotifications)}
+                                        >
+                                            {emailNotifications ? 'Enabled' : 'Disabled'}
+                                        </Button>
+                                    </div>
+                                    <div className="flex items-center justify-between p-4 border rounded-lg">
+                                        <div>
+                                            <p className="font-medium">Maintenance Mode</p>
+                                            <p className="text-sm text-muted-foreground">Take the platform offline for maintenance</p>
+                                        </div>
+                                        <Button
+                                            variant={maintenanceMode ? 'destructive' : 'outline'}
+                                            size="sm"
+                                            onClick={() => handleToggleMaintenanceMode(!maintenanceMode)}
+                                        >
+                                            {maintenanceMode ? 'ON' : 'OFF'}
+                                        </Button>
+                                    </div>
                                 </CardContent>
                             </Card>
                         </div>

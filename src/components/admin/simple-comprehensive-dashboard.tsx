@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { 
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
-import { 
-  Users, BookOpen, MessageSquare, Shield, TrendingUp, 
+import {
+  Users, BookOpen, MessageSquare, Shield,
   Activity, AlertTriangle, CheckCircle, RefreshCw
 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api-client';
+import { suspendUser, bulkDeleteBooks, broadcastAnnouncement } from '@/app/actions';
 
 // Types for dashboard data
 interface DashboardStats {
@@ -57,6 +60,9 @@ export default function ComprehensiveAdminDashboard() {
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [analyticsDays, setAnalyticsDays] = useState<'7' | '30' | '90'>('7');
+  const [, startQuickAction] = useTransition();
+  const { toast } = useToast();
 
   useEffect(() => {
     loadDashboardData();
@@ -75,13 +81,61 @@ export default function ComprehensiveAdminDashboard() {
       const data = await response.json();
       setStats(data.stats);
       setChartData(data.charts);
-      
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleSuspendUser = () => {
+    const userId = window.prompt('Enter User ID to suspend:');
+    if (!userId?.trim()) return;
+    startQuickAction(async () => {
+      const result = await suspendUser(userId.trim());
+      if (result.success) {
+        toast({ title: 'User suspended' });
+      } else {
+        toast({ variant: 'destructive', title: 'Failed', description: result.message });
+      }
+    });
+  };
+
+  const handleFeatureBook = () => {
+    const bookId = window.prompt('Enter Book ID to feature/remove:');
+    if (!bookId?.trim()) return;
+    startQuickAction(async () => {
+      const result = await bulkDeleteBooks([bookId.trim()]);
+      if (result.success) {
+        toast({ title: 'Book listing removed', description: `${result.data.count} listing(s) removed` });
+      } else {
+        toast({ variant: 'destructive', title: 'Failed', description: result.message });
+      }
+    });
+  };
+
+  const handleSendAnnouncement = () => {
+    const title = window.prompt('Announcement title:');
+    if (!title?.trim()) return;
+    const message = window.prompt('Announcement message:');
+    if (!message?.trim()) return;
+    startQuickAction(async () => {
+      const result = await broadcastAnnouncement(title.trim(), message.trim());
+      if (result.success) {
+        toast({ title: 'Announcement sent', description: `Notified ${result.data.notified} users` });
+      } else {
+        toast({ variant: 'destructive', title: 'Failed', description: result.message });
+      }
+    });
+  };
+
+  // Filter chart data client-side based on selected days range
+  const filteredUserActivity = (() => {
+    const activity = chartData?.userActivity ?? [];
+    const days = parseInt(analyticsDays, 10);
+    return activity.slice(-days);
+  })();
 
   if (loading) {
     return (
@@ -193,29 +247,43 @@ export default function ComprehensiveAdminDashboard() {
         {/* User Activity Chart */}
         <Card>
           <CardHeader>
-            <CardTitle className="font-headline">User Activity Trend</CardTitle>
-            <CardDescription>Daily user engagement over the past week</CardDescription>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <CardTitle className="font-headline">User Activity Trend</CardTitle>
+                <CardDescription>Daily user engagement over selected period</CardDescription>
+              </div>
+              <Select value={analyticsDays} onValueChange={(v) => setAnalyticsDays(v as '7' | '30' | '90')}>
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">Last 7 days</SelectItem>
+                  <SelectItem value="30">Last 30 days</SelectItem>
+                  <SelectItem value="90">Last 90 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData?.userActivity || []}>
+                <LineChart data={filteredUserActivity}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Line 
-                    type="monotone" 
-                    dataKey="users" 
-                    stroke="#3B82F6" 
+                  <Line
+                    type="monotone"
+                    dataKey="users"
+                    stroke="#3B82F6"
                     strokeWidth={2}
                     name="Active Users"
                   />
-                  <Line 
-                    type="monotone" 
-                    dataKey="messages" 
-                    stroke="#10B981" 
+                  <Line
+                    type="monotone"
+                    dataKey="messages"
+                    stroke="#10B981"
                     strokeWidth={2}
                     name="Messages"
                   />
@@ -294,21 +362,21 @@ export default function ComprehensiveAdminDashboard() {
         </CardHeader>
         <CardContent>
           <div className="grid md:grid-cols-4 gap-4">
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleSuspendUser}>
               <Users className="h-4 w-4 mr-2" />
-              Manage Users
+              Suspend User
             </Button>
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleFeatureBook}>
               <BookOpen className="h-4 w-4 mr-2" />
-              Review Books
+              Remove Listing
             </Button>
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleSendAnnouncement}>
               <Shield className="h-4 w-4 mr-2" />
-              Security Logs
+              Send Announcement
             </Button>
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={loadDashboardData}>
               <Activity className="h-4 w-4 mr-2" />
-              System Status
+              Refresh Stats
             </Button>
           </div>
         </CardContent>

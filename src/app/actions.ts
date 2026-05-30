@@ -566,7 +566,13 @@ export async function listBook(bookData: { title: string, author: string, descri
       throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || "Rate limit exceeded");
     }
 
-    // Validate input data with Zod schema
+        // Enforce profile completion before listing
+        const actingUser = await db.collection('users').findOne({ _id: new ObjectId(user.id) }, { projection: { name: 1, city: 1, bio: 1 } });
+        if (!isProfileComplete((actingUser ?? {}) as { name?: string; city?: string; bio?: string })) {
+            throw createAppError(ErrorType.VALIDATION, 'Please complete your profile (name, city, bio) before proceeding.');
+        }
+
+            // Validate input data with Zod schema
     const validation = validateWithSchema(bookSchema, bookData);
     if (!validation.success) {
       throw createAppError(ErrorType.VALIDATION, validation.message);
@@ -7770,6 +7776,90 @@ export async function adminResolveDispute(exchangeId: string, resolution: 'compl
     }, 'admin');
 }
 
+export async function updateUserRole(targetUserId: string, newRole: 'user' | 'admin'): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(targetUserId)) throw createAppError(ErrorType.VALIDATION, 'Invalid user ID');
+        if (user.id === targetUserId) throw createAppError(ErrorType.VALIDATION, 'Cannot change your own role');
+        const now = new Date().toISOString();
+        const result = await db.collection('users').updateOne(
+            { _id: new ObjectId(targetUserId) },
+            { $set: { role: newRole, updatedAt: now } }
+        );
+        if (result.matchedCount === 0) throw createAppError(ErrorType.NOT_FOUND, 'User not found');
+        await db.collection('auditLogs').insertOne({
+            action: newRole === 'admin' ? 'PROMOTE_TO_ADMIN' : 'DEMOTE_FROM_ADMIN',
+            performedBy: user.id,
+            targetUserId,
+            timestamp: now,
+        });
+        revalidatePath('/admin');
+        return { message: `User role updated to ${newRole}` };
+    }, 'admin');
+}
+
+export async function updateSystemSetting(key: string, value: boolean | string | number): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        const allowedKeys = ['emailNotifications', 'maintenance_mode', 'registrationOpen', 'maxBooksPerUser'];
+        if (!allowedKeys.includes(key)) throw createAppError(ErrorType.VALIDATION, 'Unknown setting key');
+        const now = new Date().toISOString();
+        await db.collection('feature_flags').updateOne(
+            { key },
+            { $set: { key, value, enabled: typeof value === 'boolean' ? value : true, updatedAt: now, updatedBy: user.id } },
+            { upsert: true }
+        );
+        await db.collection('auditLogs').insertOne({
+            action: 'UPDATE_SYSTEM_SETTING',
+            performedBy: user.id,
+            settingKey: key,
+            newValue: value,
+            timestamp: now,
+        });
+        revalidatePath('/admin');
+        return { message: `Setting "${key}" updated` };
+    }, 'admin');
+}
+
+export async function suspendOrganization(orgId: string, reason: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(orgId)) throw createAppError(ErrorType.VALIDATION, 'Invalid organization ID');
+        const now = new Date().toISOString();
+        const result = await db.collection('organizations').updateOne(
+            { _id: new ObjectId(orgId) },
+            { $set: { status: 'rejected', isActive: false, suspendedAt: now, suspensionReason: reason, updatedAt: now } }
+        );
+        if (result.matchedCount === 0) throw createAppError(ErrorType.NOT_FOUND, 'Organization not found');
+        await db.collection('auditLogs').insertOne({
+            action: 'SUSPEND_ORGANIZATION',
+            performedBy: user.id,
+            targetOrgId: orgId,
+            reason,
+            timestamp: now,
+        });
+        revalidatePath('/admin');
+        return { message: 'Organization suspended' };
+    }, 'admin');
+}
+
+export async function reactivateOrganization(orgId: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(orgId)) throw createAppError(ErrorType.VALIDATION, 'Invalid organization ID');
+        const now = new Date().toISOString();
+        const result = await db.collection('organizations').updateOne(
+            { _id: new ObjectId(orgId) },
+            { $set: { status: 'approved', isActive: true, updatedAt: now }, $unset: { suspendedAt: '', suspensionReason: '' } }
+        );
+        if (result.matchedCount === 0) throw createAppError(ErrorType.NOT_FOUND, 'Organization not found');
+        await db.collection('auditLogs').insertOne({
+            action: 'REACTIVATE_ORGANIZATION',
+            performedBy: user.id,
+            targetOrgId: orgId,
+            timestamp: now,
+        });
+        revalidatePath('/admin');
+        return { message: 'Organization reactivated' };
+    }, 'admin');
+}
+
 export async function lockComment(communityId: string, commentId: string, locked: boolean): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user }) => {
         if (!ObjectId.isValid(communityId) || !ObjectId.isValid(commentId)) throw new Error('Invalid ID');
@@ -7783,5 +7873,327 @@ export async function lockComment(communityId: string, commentId: string, locked
         );
         revalidatePath(`/community/${communityId}`);
         return { message: locked ? 'Comment locked' : 'Comment unlocked' };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Community moderation queue
+// ---------------------------------------------------------------------------
+
+export interface ModerationQueueResult {
+    flaggedPosts: Array<{
+        _id: string;
+        content: string;
+        authorId: string;
+        author?: { name: string };
+        status: string;
+        createdAt: string;
+    }>;
+    flaggedComments: Array<{
+        _id: string;
+        content: string;
+        authorId: string;
+        author?: { name: string };
+        postId: string;
+        createdAt: string;
+    }>;
+    pendingJoinRequests: Array<{
+        _id: string;
+        userId: string;
+        userName: string;
+        userAvatarUrl?: string;
+        message?: string;
+        requestedAt: string;
+    }>;
+}
+
+export async function getCommunityModerationQueue(
+    communityId: string
+): Promise<{ success: true; data: ModerationQueueResult } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        const community = await db.collection<CommunityDocument>('communities').findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { members: 1, createdBy: 1, pendingRequests: 1 } }
+        );
+        if (!community) throw new Error('Community not found');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        const communityObjId = new ObjectId(communityId);
+
+        const [flaggedPosts, flaggedComments] = await Promise.all([
+            db
+                .collection<PostDocument>('posts')
+                .find(
+                    { communityId: communityObjId, status: { $in: ['flagged', 'quarantined'] as any }, deletedAt: { $exists: false } },
+                    { projection: { _id: 1, content: 1, authorId: 1, author: 1, status: 1, createdAt: 1 } }
+                )
+                .toArray(),
+            db
+                .collection<CommentDocument>('comments')
+                .find(
+                    { communityId: communityObjId, status: { $in: ['flagged', 'quarantined'] } as any, deletedAt: { $exists: false } },
+                    { projection: { _id: 1, content: 1, authorId: 1, author: 1, postId: 1, createdAt: 1 } }
+                )
+                .toArray(),
+        ]);
+
+        const pendingJoinRequests = ((community as any).pendingRequests ?? [])
+            .filter((r: any) => r.status === 'pending')
+            .map((r: any) => ({
+                _id: String(r._id ?? ''),
+                userId: r.userId,
+                userName: r.userName,
+                userAvatarUrl: r.userAvatarUrl,
+                message: r.message,
+                requestedAt: r.requestedAt,
+            }));
+
+        return {
+            flaggedPosts: flaggedPosts.map((p) => ({ ...p, _id: String(p._id) })) as any,
+            flaggedComments: flaggedComments.map((c) => ({ ...c, _id: String(c._id), postId: String(c.postId) })) as any,
+            pendingJoinRequests,
+        };
+    });
+}
+
+export async function approveFlaggedContent(
+    communityId: string,
+    contentId: string,
+    contentType: 'post' | 'comment'
+): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        if (!ObjectId.isValid(contentId)) throw new Error('Invalid content ID');
+        const community = await db.collection<CommunityDocument>('communities').findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { members: 1, createdBy: 1 } }
+        );
+        if (!community) throw new Error('Community not found');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        const collection = contentType === 'post' ? 'posts' : 'comments';
+        await db.collection(collection).updateOne(
+            { _id: new ObjectId(contentId) },
+            { $set: { status: 'active', reviewedAt: new Date().toISOString(), reviewedBy: user.id } }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { message: `${contentType} approved` };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Community analytics
+// ---------------------------------------------------------------------------
+
+export interface CommunityAnalytics {
+    postsLastNDays: number;
+    newMembersLastNDays: number;
+    totalPosts: number;
+    totalMembers: number;
+    topPosts: Array<{ _id: string; content: string; likes: number; createdAt: string }>;
+}
+
+export async function getCommunityAnalytics(
+    communityId: string,
+    days = 30
+): Promise<{ success: true; data: CommunityAnalytics } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        const community = await db.collection<CommunityDocument>('communities').findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { members: 1, createdBy: 1, memberCount: 1 } }
+        );
+        if (!community) throw new Error('Community not found');
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || community.createdBy === user.id)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        const communityObjId = new ObjectId(communityId);
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+        const [postsLastNDays, totalPosts, topPosts] = await Promise.all([
+            db.collection<PostDocument>('posts').countDocuments({
+                communityId: communityObjId,
+                createdAt: { $gte: since },
+                deletedAt: { $exists: false },
+            }),
+            db.collection<PostDocument>('posts').countDocuments({
+                communityId: communityObjId,
+                deletedAt: { $exists: false },
+            }),
+            db
+                .collection<PostDocument>('posts')
+                .find(
+                    { communityId: communityObjId, deletedAt: { $exists: false } },
+                    { projection: { _id: 1, content: 1, likes: 1, createdAt: 1 } }
+                )
+                .sort({ likes: -1 })
+                .limit(5)
+                .toArray(),
+        ]);
+
+        const newMembersLastNDays = community.members?.filter((m) => m.joinedAt >= since).length ?? 0;
+        const totalMembers = community.memberCount ?? community.members?.length ?? 0;
+
+        return {
+            postsLastNDays,
+            newMembersLastNDays,
+            totalPosts,
+            totalMembers,
+            topPosts: topPosts.map((p) => ({
+                _id: String(p._id),
+                content: p.content.slice(0, 120),
+                likes: p.likes,
+                createdAt: p.createdAt,
+            })),
+        };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Move post between channels
+// ---------------------------------------------------------------------------
+
+export async function movePost(
+    communityId: string,
+    postId: string,
+    targetChannelId: string
+): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        if (!ObjectId.isValid(postId)) throw new Error('Invalid post ID');
+        if (!ObjectId.isValid(targetChannelId)) throw new Error('Invalid channel ID');
+
+        const community = await db.collection('communities').findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { members: 1, createdBy: 1, channels: 1 } }
+        );
+        if (!community) throw new Error('Community not found');
+
+        const current = (community.members as any[])?.find((m: any) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        const channelExists = (community.channels as any[])?.some((c: any) => c._id === targetChannelId);
+        if (!channelExists) throw new Error('Target channel not found in community');
+
+        const result = await db.collection<PostDocument>('posts').updateOne(
+            { _id: new ObjectId(postId), communityId: new ObjectId(communityId), deletedAt: { $exists: false } },
+            { $set: { channelId: targetChannelId, updatedAt: new Date().toISOString() } }
+        );
+        if (result.matchedCount === 0) throw new Error('Post not found');
+
+        revalidatePath(`/community/${communityId}`);
+        return { message: 'Post moved successfully' };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Bulk moderation actions
+// ---------------------------------------------------------------------------
+
+export async function bulkDeletePosts(
+    communityId: string,
+    postIds: string[]
+): Promise<{ success: true; data: { count: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        if (!postIds.length) throw new Error('No post IDs provided');
+        if (postIds.some((id) => !ObjectId.isValid(id))) throw new Error('One or more invalid post IDs');
+
+        const community = await db.collection<CommunityDocument>('communities').findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { members: 1, createdBy: 1 } }
+        );
+        if (!community) throw new Error('Community not found');
+
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        const now = new Date().toISOString();
+        const result = await db.collection<PostDocument>('posts').updateMany(
+            {
+                _id: { $in: postIds.map((id) => new ObjectId(id)) },
+                communityId: new ObjectId(communityId),
+                deletedAt: { $exists: false },
+            },
+            { $set: { deletedAt: now, deletedBy: user.id, status: 'removed' } }
+        );
+
+        revalidatePath(`/community/${communityId}`);
+        return { count: result.modifiedCount };
+    });
+}
+
+export async function bulkBanMembers(
+    communityId: string,
+    userIds: string[],
+    reason?: string
+): Promise<{ success: true; data: { count: number } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID');
+        if (!userIds.length) throw new Error('No user IDs provided');
+
+        const community = await db.collection<CommunityDocument>('communities').findOne(
+            { _id: new ObjectId(communityId) },
+            { projection: { members: 1, createdBy: 1 } }
+        );
+        if (!community) throw new Error('Community not found');
+
+        const current = community.members?.find((m) => m.userId === user.id);
+        if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) {
+            throw new Error('Insufficient permissions');
+        }
+
+        const now = new Date().toISOString();
+        const result = await db.collection('communities').updateMany(
+            { _id: new ObjectId(communityId), 'members.userId': { $in: userIds } },
+            {
+                $set: {
+                    'members.$[elem].banned': true,
+                    'members.$[elem].banReason': reason ?? '',
+                    'members.$[elem].bannedAt': now,
+                    'members.$[elem].bannedBy': user.id,
+                },
+            },
+            { arrayFilters: [{ 'elem.userId': { $in: userIds } }] } as any
+        );
+
+        revalidatePath(`/community/${communityId}`);
+        return { count: result.modifiedCount };
+    });
+}
+
+// ─── Profile completion helper + moderator reaction removal ───────────────────
+
+function isProfileComplete(user: { name?: string; city?: string; bio?: string }): boolean {
+    return Boolean(user.name?.trim() && user.city?.trim() && user.bio?.trim());
+}
+
+export async function removeReaction(communityId: string, postId: string, targetUserId: string, reactionType: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId) || !ObjectId.isValid(postId)) throw new Error('Invalid ID');
+        const community = await db.collection('communities').findOne({ _id: new ObjectId(communityId) });
+        if (!community) throw new Error('Community not found');
+        const member = community.members?.find((m: { userId: string; role: string }) => m.userId === user.id);
+        const isMod = member && ['creator', 'admin', 'moderator'].includes(member.role);
+        if (!isMod && user.id !== targetUserId) throw new Error('Not authorised to remove this reaction');
+        await db.collection('posts').updateOne(
+            { _id: new ObjectId(postId) },
+            { $pull: { reactions: { userId: targetUserId, type: reactionType } } as any }
+        );
+        revalidatePath(`/community/${communityId}`);
+        return { message: 'Reaction removed' };
     });
 }
