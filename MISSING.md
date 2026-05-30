@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 136 fixed / 197 total — 61 remaining**
+**Progress: 141 fixed / 197 total — 56 remaining**
 
 ---
 
@@ -54,7 +54,7 @@
 - [x] `listBook()` has zero content moderation calls — fixed: ContentModerationSystem.analyzeContent called before insert
 - [x] `deleteBook()` uses hard `deleteOne()` — fixed: soft delete with `deletedAt` (0c534d6)
 - [ ] `intelligentBookSearch` and `generateBookSummary` AI flows implemented but never called from any UI
-- [ ] `getBooksForSale()` uses `$regex` search; `getBooksForExchange()` uses MongoDB `$text` index — inconsistent strategy
+- [x] `getBooksForSale()` uses `$regex` — fixed: unified to $text in batch 10
 - [x] `getBooksForSale()` no pagination — fixed: page/limit added, returns paginated envelope (8d62a17)
 - [ ] No "My Books" management page for sellers — no Edit/Delete buttons on book detail page
 - [x] No global `/search` results page — fixed: `/search` page added in 0c534d6
@@ -115,7 +115,7 @@
 - [ ] Book wishlisted by someone: one-way only
 - [x] Report resolution does not notify the reporter — fixed: 0c534d6
 - [ ] Notification preferences cover only 4 types — no preferences for: community mentions, comment replies, reviews, admin actions
-- [ ] Weekly digest preference field exists in User type but no job ever sends it
+- [x] Weekly digest preference — fixed: sendWeeklyDigest job added in batch 10
 
 ---
 
@@ -168,7 +168,7 @@
 - [x] NextAuth `authorize` handler never calls `recordAuthResult()` — fixed: called on all success/failure paths
 - [ ] CSP header uses `'unsafe-eval'` + `'unsafe-inline'` in `script-src`
 - [x] Hardcoded `'dev-media-secret'` fallback in upload-token route — fixed: always requires MEDIA_API_SECRET env var
-- [ ] Content moderation applied only to community posts/comments — missing from book listings, user bios, reviews, org descriptions
+- [x] Content moderation missing from book listings — fixed: listBook runs analyzeContent in batch 7 (user bios/reviews/org still pending)
 
 ---
 
@@ -249,7 +249,7 @@
 - [x] Global search results page (`/search`) — fixed: 0c534d6
 - [x] Exchange detail standalone page — fixed: `/exchange/[id]` added (cd4883c)
 - [ ] Book management page for sellers (My Listings with inline edit/delete)
-- [ ] Public organization profile page (`/organizations/[id]`)
+- [x] Public organization profile page — fixed: /organizations/[id] added in cd4883c
 - [x] `loading.tsx` missing on `/books`, `/books/[id]`, `/exchange`, `/community` — fixed: 1e76334 (admin route doesn't exist yet)
 - [x] `error.tsx` missing on same routes — fixed: 1e76334
 - [x] No OpenGraph or Twitter Card meta tags on any dynamic page — fixed: root layout updated in 0c534d6
@@ -284,7 +284,7 @@
 - [x] `initiateDonation` — false positive: already wrapped in withTransaction (confirmed)
 - [x] `resetPassword` — two separate `updateOne` calls, no transaction — fixed: 1a22983
 - [x] `deleteReview` — delete + stats update not atomic — fixed: 1a22983
-- [ ] Socket `sendMessage` broadcasts even when the DB `updateOne` fails
+- [x] Socket `sendMessage` broadcasts on DB fail — false positive: already guarded by modifiedCount > 0
 - [x] Email failures only console.warn — fixed: critical paths now use console.error with [EMAIL_FAILURE] prefix
 - [x] 10+ MongoDB write results not checked — fixed: 7 critical paths now check result and throw on failure
 - [x] 15+ missing null guards — confirmed: all critical exchange/admin findOne paths already guarded
