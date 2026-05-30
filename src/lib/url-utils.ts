@@ -31,21 +31,12 @@ export function getBaseUrl(): string {
  * Get the socket URL for WebSocket connections
  */
 export function getSocketUrl(): string {
-  // In browser on a real domain (production), always use same-domain proxy.
-  // Vercel proxies /socket.io/* → SOCKET_SERVER_URL (set server-side only).
-  // This avoids CSP violations and mixed-content issues.
-  if (typeof window !== 'undefined') {
-    const { hostname, protocol } = window.location;
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return `${protocol}//${hostname}`;
-    }
-  }
-
-  // Development: use explicit override or default localhost port
+  // Explicit override wins (set NEXT_PUBLIC_SOCKET_URL=https://socket.farya.pk in Vercel)
   if (process.env.NEXT_PUBLIC_SOCKET_URL) {
     return process.env.NEXT_PUBLIC_SOCKET_URL;
   }
 
+  // Development fallback
   const socketPort = process.env.SOCKET_PORT || '3001';
   return `http://localhost:${socketPort}`;
 }
