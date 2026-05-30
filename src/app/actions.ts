@@ -2201,110 +2201,130 @@ export async function initiateDonation(organizationId: string) {
         
         if (!chat) {
             isNewChat = true;
-            // Create new donation record
-            const newDonation = {
+
+            // Wrap the core inserts in a MongoDB transaction for atomicity
+            const mongoClient = await clientPromise;
+            const txSession = mongoClient.startSession();
+            let donationResult: any;
+            let chatResult: any;
+
+            try {
+                await txSession.withTransaction(async () => {
+                    const newDonation = {
+                        donorId: user.id,
+                        organizationId: new ObjectId(organizationId),
+                        chatId: null as any, // Updated after chat creation below
+                        books: [],
+                        status: 'pending' as const,
+                        statusHistory: [{
+                            status: 'pending' as const,
+                            timestamp: new Date().toISOString(),
+                            updatedBy: user.id,
+                            notes: 'Donation inquiry started'
+                        }],
+                        orgConfirmed: false,
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    };
+
+                    donationResult = await db.collection("donations").insertOne(newDonation, { session: txSession });
+
+                    const newChat = {
+                        participantIds,
+                        organizationId: new ObjectId(organizationId),
+                        donationId: donationResult.insertedId,
+                        messages: [],
+                        lastMessage: `Donation inquiry for ${org.name}`,
+                        updatedAt: new Date().toISOString(),
+                    };
+
+                    chatResult = await db.collection("chats").insertOne(newChat, { session: txSession });
+
+                    await db.collection("donations").updateOne(
+                        { _id: donationResult.insertedId },
+                        { $set: { chatId: chatResult.insertedId } },
+                        { session: txSession }
+                    );
+                });
+            } finally {
+                await txSession.endSession();
+            }
+
+            // Reconstruct objects after transaction
+            donation = {
                 donorId: user.id,
                 organizationId: new ObjectId(organizationId),
-                chatId: null as any, // Will be updated after chat creation
+                chatId: chatResult.insertedId,
                 books: [],
                 status: 'pending' as const,
-                statusHistory: [{
-                    status: 'pending' as const,
-                    timestamp: new Date().toISOString(),
-                    updatedBy: user.id,
-                    notes: 'Donation inquiry started'
-                }],
                 orgConfirmed: false,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+                _id: donationResult.insertedId
             };
-            
-            const donationResult = await db.collection("donations").insertOne(newDonation);
-            donation = { ...newDonation, _id: donationResult.insertedId };
-
-            // Create new chat with REAL participants
-            const newChat = {
+            chat = {
                 participantIds,
                 organizationId: new ObjectId(organizationId),
                 donationId: donationResult.insertedId,
                 messages: [],
                 lastMessage: `Donation inquiry for ${org.name}`,
                 updatedAt: new Date().toISOString(),
+                _id: chatResult.insertedId
             };
-            
-            const chatResult = await db.collection("chats").insertOne(newChat);
-            chat = { ...newChat, _id: chatResult.insertedId };
-            
-            // Get donor user info for notifications
+
+            // Send notifications and emails for the new chat (outside transaction — non-critical)
             const donorUserInfo = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
             const donorName = donorUserInfo?.name || 'A user';
-            
-            // Update donation with chatId
-            await db.collection("donations").updateOne(
-                { _id: donationResult.insertedId },
-                { $set: { chatId: chatResult.insertedId } }
-            );
-            
-            // Only send notifications and emails for NEW chats
-            if (isNewChat) {
-                // Get donor user info for notifications
-                const donorUserInfo = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
-                const donorName = donorUserInfo?.name || 'A user';
-                
-                // Create notification for organization contact
-                await db.collection("notifications").insertOne({
-                    userId: org.primaryContactId,
-                    type: 'donation_request',
-                    title: 'New Donation Request',
-                    message: `${donorName} wants to donate books to ${org.name}`,
-                    link: `/messages/${chatResult.insertedId}`,
-                    read: false,
-                    createdAt: new Date().toISOString(),
-                    metadata: {
-                        donationId: donationResult.insertedId.toString(),
-                        donorId: user.id,
-                        organizationId: organizationId
-                    }
-                });
-                
-                // Send donation chat confirmation email to donor
-                try {
-                    const userDetails = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
-                    if (userDetails?.email) {
-                        await sendDonationChatConfirmationEmail(
-                            userDetails.email,
-                            userDetails.name || 'BookEx User',
-                            org.name,
-                            chatResult.insertedId.toString()
-                        );
-                    }
-                } catch (emailError) {
-                    // Only log email errors in production to reduce noise
-                    if (process.env.NODE_ENV === 'production') {
-                        console.error("Email notification failed:", emailError);
-                    }
-                }
 
-                // Send notification email to organization contact
-                try {
-                    const orgContact = await db.collection("users").findOne({ _id: new ObjectId(org.primaryContactId) });
-                    const donorUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
-                    
-                    if (orgContact?.email && donorUser?.name) {
-                        await sendDonationStatusUpdateEmail(
-                            orgContact.email,
-                            orgContact.name || 'Organization Contact',
-                            org.name,
-                            'pending',
-                            `${donorUser.name} wants to donate books to your organization`,
-                            undefined,
-                            chatResult.insertedId.toString()
-                        );
-                    }
-                } catch (emailError) {
-                    if (process.env.NODE_ENV === 'production') {
-                        console.error("Email notification failed:", emailError);
-                    }
+            await db.collection("notifications").insertOne({
+                userId: org.primaryContactId,
+                type: 'donation_request',
+                title: 'New Donation Request',
+                message: `${donorName} wants to donate books to ${org.name}`,
+                link: `/messages/${chatResult.insertedId}`,
+                read: false,
+                createdAt: new Date().toISOString(),
+                metadata: {
+                    donationId: donationResult.insertedId.toString(),
+                    donorId: user.id,
+                    organizationId: organizationId
+                }
+            });
+
+            // Send donation chat confirmation email to donor
+            try {
+                const userDetails = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
+                if (userDetails?.email) {
+                    await sendDonationChatConfirmationEmail(
+                        userDetails.email,
+                        userDetails.name || 'BookEx User',
+                        org.name,
+                        chatResult.insertedId.toString()
+                    );
+                }
+            } catch (emailError) {
+                if (process.env.NODE_ENV === 'production') {
+                    console.error("Email notification failed:", emailError);
+                }
+            }
+
+            // Send notification email to organization contact
+            try {
+                const orgContact = await db.collection("users").findOne({ _id: new ObjectId(org.primaryContactId) });
+                const donorUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
+
+                if (orgContact?.email && donorUser?.name) {
+                    await sendDonationStatusUpdateEmail(
+                        orgContact.email,
+                        orgContact.name || 'Organization Contact',
+                        org.name,
+                        'pending',
+                        `${donorUser.name} wants to donate books to your organization`,
+                        undefined,
+                        chatResult.insertedId.toString()
+                    );
+                }
+            } catch (emailError) {
+                if (process.env.NODE_ENV === 'production') {
+                    console.error("Email notification failed:", emailError);
                 }
             }
         } else {
@@ -2429,6 +2449,23 @@ export async function updateDonationBooks(
                 ErrorType.AUTHORIZATION,
                 'Only the donor or organization representatives can update donation books'
             );
+        }
+
+        // Validate book existence and ownership for books with a bookId
+        const booksWithId = books.filter(b => b.bookId);
+        if (booksWithId.length > 0) {
+            for (const b of booksWithId) {
+                if (!ObjectId.isValid(b.bookId!)) {
+                    throw createAppError(ErrorType.VALIDATION, `Invalid book ID: ${b.bookId}`);
+                }
+                const bookDoc = await db.collection("books").findOne({ _id: new ObjectId(b.bookId!) });
+                if (!bookDoc) {
+                    throw createAppError(ErrorType.VALIDATION, `Book not found: ${b.bookId}`);
+                }
+                if (bookDoc.sellerId !== user.id) {
+                    throw createAppError(ErrorType.AUTHORIZATION, `You do not own book: ${b.bookId}`);
+                }
+            }
         }
 
         // Update donation with new books
@@ -2736,11 +2773,23 @@ export async function confirmDonationReceipt(
 
         await db.collection("donations").updateOne(
             { _id: new ObjectId(donationId) },
-            { 
+            {
                 $set: updateDoc,
                 $push: { statusHistory: statusUpdate } as any
             }
         );
+
+        // Update all donated books to status='donated'
+        const bookIds = (donation.books || [])
+            .filter((b: any) => b.bookId && ObjectId.isValid(b.bookId))
+            .map((b: any) => new ObjectId(b.bookId));
+
+        if (bookIds.length > 0) {
+            await db.collection("books").updateMany(
+                { _id: { $in: bookIds } },
+                { $set: { status: 'donated', updatedAt: new Date().toISOString() } }
+            );
+        }
 
         // Create notification for donor
         await db.collection("notifications").insertOne({
@@ -2803,6 +2852,82 @@ export async function confirmDonationReceipt(
     });
 }
 
+
+/**
+ * Confirms a donation offer on behalf of the organization (sets orgConfirmed=true).
+ * Only callable by organization representatives.
+ * @param donationId The donation ID to confirm
+ * @returns Success message or error
+ */
+export async function confirmDonationOffer(donationId: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(donationId)) {
+            throw createAppError(ErrorType.VALIDATION, 'Invalid donation ID');
+        }
+
+        const donation = await db.collection("donations").findOne({
+            _id: new ObjectId(donationId)
+        });
+
+        if (!donation) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Donation not found');
+        }
+
+        const org = await db.collection("organizations").findOne({
+            _id: new ObjectId(donation.organizationId)
+        });
+
+        if (!org) {
+            throw createAppError(ErrorType.NOT_FOUND, 'Organization not found');
+        }
+
+        // Only organization representatives may confirm
+        const isOrgRep = org.representatives?.some(
+            (rep: OrganizationRepresentative) => rep.userId === user.id
+        );
+
+        if (!isOrgRep) {
+            throw createAppError(
+                ErrorType.AUTHORIZATION,
+                'Only organization representatives can confirm a donation offer'
+            );
+        }
+
+        if (donation.orgConfirmed) {
+            return { success: true, data: { message: 'Donation offer already confirmed' } };
+        }
+
+        await db.collection("donations").updateOne(
+            { _id: new ObjectId(donationId) },
+            { $set: { orgConfirmed: true, updatedAt: new Date().toISOString() } }
+        );
+
+        // Notify donor that the organization confirmed receipt
+        await db.collection("notifications").insertOne({
+            userId: donation.donorId,
+            type: 'donation_update',
+            title: 'Organization Confirmed Your Donation',
+            message: `${org.name} has confirmed your donation offer.`,
+            link: `/messages/${donation.chatId}`,
+            read: false,
+            createdAt: new Date().toISOString(),
+            metadata: {
+                donationId,
+                organizationId: donation.organizationId.toString()
+            }
+        });
+
+        await logActivity(
+            user.id,
+            'donation_status_update',
+            'low',
+            `Organization representative confirmed donation offer for donation ${donationId}`,
+            { donationId, organizationId: donation.organizationId.toString() }
+        );
+
+        return { success: true, data: { message: `${org.name} has confirmed your donation offer.` } };
+    });
+}
 
 /**
  * Submits a content report.

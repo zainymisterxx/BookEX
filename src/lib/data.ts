@@ -1,6 +1,6 @@
 
 import clientPromise from './mongodb';
-import { Book, Community, User } from './types';
+import { Book, Community, Exchange, Organization, User } from './types';
 import { ObjectId } from 'mongodb';
 import { OptimizedQueries } from './database-optimization';
 import redisCache from './redis-cache';
@@ -636,7 +636,7 @@ export async function getThreadedComments(postId: string, parentId?: string | nu
 export async function getCommunityDetailsLegacy(communityId: string) {
     const result = await getCommunityDetails(communityId, 1, 1000); // Large limit to get all posts
     if (!result) return null;
-    
+
     return {
         community: {
             ...result.community,
@@ -644,4 +644,136 @@ export async function getCommunityDetailsLegacy(communityId: string) {
         },
         posts: result.posts
     };
+}
+
+export interface ExchangeDetail extends Exchange {
+    proposer: User;
+    responder: User;
+    proposerBook: Book;
+    responderBook: Book;
+}
+
+/**
+ * Fetches a single exchange by ID, verifying the requesting user is a participant.
+ * Populates proposer, responder, proposerBook, and responderBook via $lookup.
+ */
+export async function getExchangeById(
+    exchangeId: string,
+    userId: string,
+): Promise<ExchangeDetail | null> {
+    try {
+        if (!ObjectId.isValid(exchangeId)) return null;
+
+        const client = await clientPromise;
+        const db = client.db('bookex');
+
+        const pipeline = [
+            { $match: { _id: new ObjectId(exchangeId) } },
+            {
+                $lookup: {
+                    from: 'users',
+                    let: { pid: { $toObjectId: '$proposerId' } },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$_id', '$$pid'] } } },
+                        { $project: { name: 1, avatarUrl: 1, city: 1, cityNormalized: 1 } },
+                    ],
+                    as: 'proposerArr',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    let: { rid: { $toObjectId: '$responderId' } },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$_id', '$$rid'] } } },
+                        { $project: { name: 1, avatarUrl: 1, city: 1, cityNormalized: 1 } },
+                    ],
+                    as: 'responderArr',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'books',
+                    localField: 'proposerBookId',
+                    foreignField: '_id',
+                    as: 'proposerBookArr',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'books',
+                    localField: 'responderBookId',
+                    foreignField: '_id',
+                    as: 'responderBookArr',
+                },
+            },
+            {
+                $addFields: {
+                    proposer: { $arrayElemAt: ['$proposerArr', 0] },
+                    responder: { $arrayElemAt: ['$responderArr', 0] },
+                    proposerBook: { $arrayElemAt: ['$proposerBookArr', 0] },
+                    responderBook: { $arrayElemAt: ['$responderBookArr', 0] },
+                },
+            },
+            {
+                $project: {
+                    proposerArr: 0,
+                    responderArr: 0,
+                    proposerBookArr: 0,
+                    responderBookArr: 0,
+                },
+            },
+        ];
+
+        const [exchange] = await db.collection('exchanges').aggregate(pipeline).toArray();
+
+        if (!exchange) return null;
+
+        // NOTE: Only participants may view this exchange.
+        const isParticipant =
+            exchange.proposerId === userId || exchange.responderId === userId;
+        if (!isParticipant) return null;
+
+        return serialize(exchange) as ExchangeDetail;
+    } catch (error) {
+        console.error('Error fetching exchange by id:', error);
+        return null;
+    }
+}
+
+/**
+ * Fetches a single approved organization by ID, along with active donation books
+ * listed for that organization.
+ */
+export async function getOrganizationById(orgId: string): Promise<{
+    organization: Organization;
+    donationBooks: Book[];
+} | null> {
+    try {
+        if (!ObjectId.isValid(orgId)) return null;
+
+        const client = await clientPromise;
+        const db = client.db('bookex');
+
+        const organization = await db
+            .collection<Organization>('organizations')
+            .findOne({ _id: new ObjectId(orgId), status: 'approved' });
+
+        if (!organization) return null;
+
+        // Active donation books linked to this org
+        const donationBooks = await db
+            .collection('books')
+            .find({ type: 'donation', status: 'active', organizationId: orgId })
+            .limit(50)
+            .toArray();
+
+        return serialize({ organization, donationBooks }) as {
+            organization: Organization;
+            donationBooks: Book[];
+        };
+    } catch (error) {
+        console.error('Error fetching organization by id:', error);
+        return null;
+    }
 }
