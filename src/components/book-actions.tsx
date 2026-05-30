@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import type { Book, User } from '@/lib/types';
 import { useSession } from 'next-auth/react';
 import { useToast } from '@/hooks/use-toast';
@@ -218,7 +219,7 @@ export function BookActions({ book, seller }: BookActionsProps) {
                     <span className="flex-1 contents">{contactButton}</span>
                 </TooltipTrigger>
                 <TooltipContent>
-                    <p>You need an active exchange listing to propose a swap. <a href="/books/sell" className="underline font-medium">List a book for exchange →</a></p>
+                    <p>You need an active exchange listing to propose a swap. <Link href="/books/sell" className="underline font-medium">List a book for exchange →</Link></p>
                 </TooltipContent>
              </Tooltip>
            ) : (
