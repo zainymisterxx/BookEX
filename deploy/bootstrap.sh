@@ -5,7 +5,7 @@
 set -euo pipefail
 
 APP_DIR="/var/www/bookex"
-REPO_URL="https://github.com/sabih-haider1/BookEX.git"
+REPO_URL="https://github.com/prof-rdx/BookEX.git"
 DOMAIN="bookex.farya.pk"
 CERTBOT_EMAIL="ahmednaeemx@gmail.com"
 UPLOAD_ROOT="/var/www/bookex-uploads"

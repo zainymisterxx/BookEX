@@ -36,7 +36,7 @@ Wait ~5 minutes. Verify: `nslookup bookex.farya.pk`
 
 ### Step 2 — GitHub Secrets
 
-Go to: **GitHub → sabih-haider1/BookEX → Settings → Secrets and variables → Actions → New repository secret**
+Go to: **GitHub → prof-rdx/BookEX → Settings → Secrets and variables → Actions → New repository secret**
 
 | Secret Name          | Value                     |
 |----------------------|---------------------------|
@@ -62,7 +62,7 @@ sudo mkdir -p /var/www/bookex
 sudo chown $USER:$USER /var/www/bookex
 
 # Clone
-git clone https://github.com/sabih-haider1/BookEX.git /var/www/bookex
+git clone https://github.com/prof-rdx/BookEX.git /var/www/bookex
 
 # Create env file from template
 cp /var/www/bookex/env.production.example /var/www/bookex/.env.local
