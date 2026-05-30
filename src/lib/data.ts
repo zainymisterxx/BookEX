@@ -253,6 +253,8 @@ export interface EnhancedBookFilters {
   minPrice?: number;
   maxPrice?: number;
   sortBy?: 'relevance' | 'price-low' | 'price-high' | 'newest' | 'oldest' | 'title-asc' | 'title-desc';
+  page?: number;
+  limit?: number;
 }
 
 /**
@@ -260,14 +262,17 @@ export interface EnhancedBookFilters {
  * @param filters The filters to apply.
  * @returns A promise resolving to an array of books.
  */
-export async function getBooksForSale(filters: EnhancedBookFilters): Promise<Book[]> {
+export async function getBooksForSale(filters: EnhancedBookFilters): Promise<{ books: Book[]; totalCount: number; hasMore: boolean }> {
   try {
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(100, Math.max(1, filters.limit ?? 20));
+
     const client = await clientPromise;
     const db = client.db("bookex");
-    
+
     // Base query - only show active, available books
     const now = new Date().toISOString();
-    const query: any = { 
+    const query: any = {
       type: "sell",
       status: 'active',
       $or: [
@@ -287,11 +292,11 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<Boo
           ]
         });
     }
-    
+
     // Category filters
     if (filters.genre) query.genre = filters.genre;
     if (filters.condition) query.condition = filters.condition;
-    
+
     // Price range filter
     if (filters.minPrice !== undefined && filters.minPrice > 0) {
         query.price = { ...query.price, $gte: filters.minPrice };
@@ -333,11 +338,20 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<Boo
             break;
     }
 
-    const books = await db.collection("books").find(query).sort(sort).toArray();
-    return serialize(books);
+    const skip = (page - 1) * limit;
+    const [books, totalCount] = await Promise.all([
+      db.collection("books").find(query).sort(sort).skip(skip).limit(limit).toArray(),
+      db.collection("books").countDocuments(query),
+    ]);
+
+    return {
+      books: serialize(books),
+      totalCount,
+      hasMore: skip + books.length < totalCount,
+    };
   } catch (error) {
     console.error("Error fetching books for sale:", error);
-    return [];
+    return { books: [], totalCount: 0, hasMore: false };
   }
 }
 

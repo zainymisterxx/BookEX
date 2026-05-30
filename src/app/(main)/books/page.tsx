@@ -22,7 +22,7 @@ export default async function BooksPage({
     sortBy: typeof sortBy === 'string' ? sortBy as any : undefined,
   };
 
-  const books = await getBooksForSale(filters);
+  const { books, totalCount } = await getBooksForSale(filters);
   const { genres, conditions } = await getAvailableBookFilters('sell');
 
   return (
@@ -50,7 +50,7 @@ export default async function BooksPage({
         />
 
         <SearchResultsHeader
-          totalResults={books.length}
+          totalResults={totalCount}
           searchQuery={filters.searchQuery}
           activeFiltersCount={Object.values(filters).filter(Boolean).length}
           className="mt-8"

@@ -53,6 +53,8 @@ export interface User {
   averageRating?: number; // Calculated on read: totalRatingPoints / reviews
   role?: 'user' | 'admin';
   status?: 'active' | 'suspended' | 'deactivated'; // User account status
+  suspendedAt?: string; // ISO 8601 date string (UTC) - when account was suspended
+  suspensionReason?: string | null; // Reason provided at suspension time
   deactivatedAt?: string; // ISO 8601 date string (UTC) - when account was deactivated
   emailVerified?: boolean;
   emailVerifiedAt?: string; // ISO 8601 date string (UTC)
