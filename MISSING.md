@@ -3,7 +3,7 @@
 > All items verified against actual source code. False positives removed.
 > Last verified: 2026-05-29 | Last updated: 2026-05-30
 
-**Progress: 126 fixed / 197 total — 71 remaining**
+**Progress: 136 fixed / 197 total — 61 remaining**
 
 ---
 
@@ -123,7 +123,7 @@
 
 - [ ] No book/listing management section — cannot view, search, remove, or feature any listing from admin
 - [ ] No exchange/transaction oversight section — cannot view exchanges or intervene in disputes
-- [ ] Audit log viewer missing — activity logs are written to DB but no admin UI reads them
+- [x] Audit log viewer missing — fixed: getAuditLogs action + Audit Log tab in admin dashboard
 - [x] Report management UI missing — fixed: reports tab added to admin dashboard with status filter and resolve/remove actions
 - [ ] System settings are view-only — all "Configure" buttons have no `onClick` handlers
 - [ ] No announcement/broadcast system
@@ -157,10 +157,10 @@
 - [ ] Only ~30 of 104 exported Server Actions have any Zod parsing
 - [x] `submitReport` — fixed: Zod schema wired (schema existed, now validated)
 - [x] `submitReview` — fixed: Zod schema wired (schema existed, now validated)
-- [ ] `confirmDonationReceipt` — `receiptData` accepted raw
+- [x] `confirmDonationReceipt` raw input — fixed: inline Zod schema validates receiptData
 - [ ] `editPost` — manual validation only, no re-moderation on edited content
-- [ ] `startChat` — no input validation, no rate limit
-- [ ] `applyForOrganization` — uses custom validator instead of Zod schema
+- [x] `startChat` no input validation — fixed: explicit guards on otherUserId/bookId
+- [x] `applyForOrganization` custom validator — fixed: replaced with validateWithSchema(organizationSchema)
 - [x] No `src/middleware.ts` — fixed: added NextAuth route protection in 0c534d6
 - [x] `resetPassword` has no rate limit — fixed: 0c534d6
 - [x] 4 critical actions missing rate limits — fixed: submitReport, submitReview, startChat, blockUser (ac3bfa8)
@@ -220,13 +220,13 @@
 
 ## 15. SEARCH
 
-- [ ] Sale books use `$regex`; exchange books use `$text` index — inconsistent on the same data type
+- [x] Sale books use `$regex` vs exchange `$text` — fixed: getBooksForSale unified to $text
 - [ ] `levenshteinDistance()` implemented in `utils.ts` but never called from any search path
-- [ ] User search (`/api/users/search`) has a hardcoded limit of 10 with no pagination support
+- [x] User search hardcoded limit of 10 — fixed: page/limit params, returns pagination envelope
 - [ ] No community search endpoint
 - [ ] No organization search endpoint
 - [ ] No autocomplete or suggestion API
-- [ ] No search analytics or query logging
+- [x] No search analytics — fixed: fire-and-forget insertOne to search_analytics after each search
 - [x] No unified `/search` results page — fixed: 0c534d6
 
 ---
@@ -235,7 +235,7 @@
 
 - [x] Expired book listings cleanup — fixed: scripts/cleanup-jobs.ts expireOldListings job
 - [x] Stale exchange auto-cancellation — fixed: scripts/cleanup-jobs.ts cancelStaleExchanges job (30-day cutoff, books restored, parties notified)
-- [ ] Weekly email digest — preference field exists in User type but nothing sends it
+- [x] Weekly email digest — fixed: sendWeeklyDigest job + sendWeeklyDigestEmail in email.ts
 - [ ] Redis cache warming on cold restart
 - [ ] Scheduled database maintenance
 - [ ] Inactive user warning emails before suspension
@@ -285,10 +285,10 @@
 - [x] `resetPassword` — two separate `updateOne` calls, no transaction — fixed: 1a22983
 - [x] `deleteReview` — delete + stats update not atomic — fixed: 1a22983
 - [ ] Socket `sendMessage` broadcasts even when the DB `updateOne` fails
-- [ ] Email failures after chat/exchange creation are only `console.warn`
+- [x] Email failures only console.warn — fixed: critical paths now use console.error with [EMAIL_FAILURE] prefix
 - [x] 10+ MongoDB write results not checked — fixed: 7 critical paths now check result and throw on failure
 - [x] 15+ missing null guards — confirmed: all critical exchange/admin findOne paths already guarded
-- [ ] `redis-cache.ts` `get()` returns `null` on Redis error — callers cannot distinguish cache miss from Redis failure
+- [x] `redis-cache.ts` cache miss vs error ambiguous — fixed: CacheResult<T> type, get() returns { hit, value? }
 
 ---
 

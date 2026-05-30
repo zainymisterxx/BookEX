@@ -10,6 +10,7 @@
 
 import { MongoClient, ObjectId } from 'mongodb';
 import * as dotenv from 'dotenv';
+import { sendWeeklyDigestEmail } from '../src/lib/email';
 
 dotenv.config();
 
@@ -110,6 +111,57 @@ async function cancelStaleExchanges(db: ReturnType<MongoClient['db']>): Promise<
   return stale.length;
 }
 
+async function sendWeeklyDigest(db: ReturnType<MongoClient['db']>): Promise<number> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const subscribers = await db.collection('users').find({
+    'emailPreferences.weeklyDigest': true,
+    status: 'active',
+    deletedAt: { $exists: false },
+    email: { $exists: true },
+  }, { projection: { _id: 1, name: 1, email: 1, city: 1, cityNormalized: 1 } }).toArray();
+
+  let sentCount = 0;
+
+  for (const user of subscribers) {
+    const city = user.cityNormalized ?? user.city;
+    if (!city) continue;
+
+    const cityFilter = user.cityNormalized
+      ? { cityNormalized: user.cityNormalized }
+      : { city: user.city };
+
+    const recentBooks = await db.collection('books').find({
+      ...cityFilter,
+      status: 'active',
+      createdAt: { $gte: sevenDaysAgo },
+      deletedAt: { $exists: false },
+    }, { projection: { _id: 1, title: 1, author: 1, condition: 1 } })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray();
+
+    if (recentBooks.length === 0) continue;
+
+    const books = recentBooks.map(b => ({
+      id: String(b._id),
+      title: b.title ?? 'Unknown Title',
+      author: b.author ?? 'Unknown Author',
+      condition: b.condition ?? 'Unknown',
+    }));
+
+    const result = await sendWeeklyDigestEmail(user.email, user.name ?? 'Reader', books);
+
+    if (result.success) {
+      sentCount++;
+    } else {
+      console.error(`[cleanup-jobs] sendWeeklyDigest: failed for ${user.email}: ${result.error}`);
+    }
+  }
+
+  return sentCount;
+}
+
 async function main() {
   const jobArg = process.argv.find(a => a.startsWith('--job='))?.split('=')[1] ?? 'all';
   const client = new MongoClient(MONGODB_URI!);
@@ -127,6 +179,11 @@ async function main() {
     if (jobArg === 'stale' || jobArg === 'all') {
       const cancelled = await cancelStaleExchanges(db);
       console.log(`[cleanup-jobs] cancelStaleExchanges: ${cancelled} exchanges cancelled`);
+    }
+
+    if (jobArg === 'weekly-digest') {
+      const sent = await sendWeeklyDigest(db);
+      console.log(`[cleanup-jobs] sendWeeklyDigest: ${sent} digest emails sent`);
     }
 
     console.log('[cleanup-jobs] done');

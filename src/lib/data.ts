@@ -140,11 +140,11 @@ export async function getBookAndSellerDetails(id: string): Promise<{ book: Book;
     if (book.sellerId && ObjectId.isValid(book.sellerId)) {
       // Try to get seller from cache first
       const sellerCacheKey = `user:${book.sellerId}`;
-      const cachedSeller = await redisCache.get<User>(sellerCacheKey);
+      const sellerCacheResult = await redisCache.get<User>(sellerCacheKey);
 
-      if (cachedSeller) {
+      if (sellerCacheResult.hit) {
         console.log(`✅ Cache hit for seller: ${book.sellerId}`);
-        seller = cachedSeller;
+        seller = sellerCacheResult.value;
       } else {
         console.log(`❌ Cache miss for seller: ${book.sellerId}, fetching from database`);
         seller = await db.collection<User>("users").findOne({ _id: new ObjectId(book.sellerId) });
@@ -190,11 +190,11 @@ export async function getUserProfileData(userId: string): Promise<{ profileUser:
 
     // Try to get from cache first
     const cacheKey = `user_profile:${userId}`;
-    const cachedData = await redisCache.get<{ profileUser: User; userListings: Book[] }>(cacheKey);
+    const profileCacheResult = await redisCache.get<{ profileUser: User; userListings: Book[] }>(cacheKey);
 
-    if (cachedData) {
+    if (profileCacheResult.hit) {
       console.log(`✅ Cache hit for user profile: ${userId}`);
-      return cachedData;
+      return profileCacheResult.value;
     }
 
     console.log(`❌ Cache miss for user profile: ${userId}, fetching from database`);
@@ -281,16 +281,11 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<{ b
       ]
     };
 
-    // Text search
+    // Use $text index (books_text_search_idx covers title, author, description).
+    // NOTE: Fall back to $regex only if the text index is dropped — $text is preferred
+    // for production as it uses the index and supports relevance scoring.
     if (filters.searchQuery) {
-        query.$and = query.$and || [];
-        query.$and.push({
-          $or: [
-            { title: { $regex: filters.searchQuery, $options: 'i' } },
-            { author: { $regex: filters.searchQuery, $options: 'i' } },
-            { description: { $regex: filters.searchQuery, $options: 'i' } }
-          ]
-        });
+      query.$text = { $search: filters.searchQuery };
     }
 
     // Category filters
@@ -328,21 +323,39 @@ export async function getBooksForSale(filters: EnhancedBookFilters): Promise<{ b
             break;
         case 'relevance':
         default:
-            // For relevance, use text score if there's a search query, otherwise newest
-            if (filters.searchQuery) {
-                query.$text = { $search: filters.searchQuery };
-                sort = { score: { $meta: "textScore" } };
-            } else {
-                sort = { createdAt: -1 };
-            }
+            // Sort by text relevance score when searching, otherwise newest-first
+            sort = filters.searchQuery
+              ? { score: { $meta: "textScore" } }
+              : { createdAt: -1 };
             break;
     }
 
+    const projection = filters.searchQuery
+      ? { score: { $meta: 'textScore' } }
+      : undefined;
+
     const skip = (page - 1) * limit;
     const [books, totalCount] = await Promise.all([
-      db.collection("books").find(query).sort(sort).skip(skip).limit(limit).toArray(),
+      db.collection("books")
+        .find(query, projection ? { projection } : undefined)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
       db.collection("books").countDocuments(query),
     ]);
+
+    // Fire-and-forget search analytics — failures must not break the search response
+    if (filters.searchQuery) {
+      db.collection('search_analytics').insertOne({
+        query: filters.searchQuery,
+        type: 'books_sale',
+        resultsCount: totalCount,
+        createdAt: new Date().toISOString(),
+      }).catch((err) => {
+        console.error('search_analytics insert failed (books_sale):', err);
+      });
+    }
 
     return {
       books: serialize(books),
@@ -463,6 +476,18 @@ export async function getBooksForExchange(filters: EnhancedBookFilters & { page?
     // Log query performance for monitoring (in development)
     if (process.env.NODE_ENV === 'development') {
       console.log(`Exchange query: ${books.length}/${totalCount} books, page ${validatedFilters.page}`);
+    }
+
+    // Fire-and-forget search analytics — failures must not break the search response
+    if (validatedFilters.searchQuery) {
+      db.collection('search_analytics').insertOne({
+        query: validatedFilters.searchQuery,
+        type: 'books_exchange',
+        resultsCount: totalCount,
+        createdAt: new Date().toISOString(),
+      }).catch((err) => {
+        console.error('search_analytics insert failed (books_exchange):', err);
+      });
     }
 
     return {

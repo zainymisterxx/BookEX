@@ -1,5 +1,6 @@
 'use server';
 
+import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { ObjectId, type UpdateFilter } from 'mongodb';
 import clientPromise from '@/lib/mongodb';
@@ -1697,6 +1698,13 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
             throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || 'Too many chat requests. Please try again later.');
         }
 
+        if (!otherUserId || typeof otherUserId !== 'string') {
+            throw new ValidationError('otherUserId is required and must be a string.');
+        }
+        if (bookId !== undefined && (typeof bookId !== 'string' || bookId.trim() === '')) {
+            throw new ValidationError('bookId must be a non-empty string when provided.');
+        }
+
         // Validate input parameters
         const validatedOtherUserId = validateObjectId(otherUserId);
         const validatedBookId = bookId ? validateObjectId(bookId) : undefined;
@@ -2036,11 +2044,10 @@ export async function getApprovedOrganizationsCached(): Promise<Organization[]> 
     try {
         // Try to get from cache first
         const { default: redisCache } = await import('@/lib/redis-cache');
-        const cachedData = await redisCache.get(CACHE_KEY);
+        const cacheResult = await redisCache.get<Organization[]>(CACHE_KEY);
 
-        if (cachedData && typeof cachedData === 'string') {
-            console.log('✅ Retrieved approved organizations from cache');
-            return JSON.parse(cachedData);
+        if (cacheResult.hit) {
+            return cacheResult.value;
         }
 
         // Cache miss - fetch from database
@@ -2052,7 +2059,7 @@ export async function getApprovedOrganizationsCached(): Promise<Organization[]> 
 
         // Cache the result
         try {
-            await redisCache.set(CACHE_KEY, JSON.stringify(serializedOrgs), CACHE_TTL);
+            await redisCache.set(CACHE_KEY, serializedOrgs, CACHE_TTL);
             console.log('💾 Cached approved organizations for', CACHE_TTL, 'seconds');
         } catch (cacheError) {
             console.warn('⚠️ Failed to cache organizations:', cacheError);
@@ -2089,17 +2096,18 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
         );
         
         // Validate organization data
-        const validation = validateOrganizationData({
+        const validation = validateWithSchema(organizationSchema, {
             name: orgData.name,
             description: orgData.description,
             location: orgData.location,
             contactEmail: orgData.contactEmail,
             contactPhone: orgData.contactPhone,
-            website: orgData.website
+            website: orgData.website,
+            submittedBy: orgData.submittedBy,
         });
 
-        if (!validation.isValid) {
-            return { success: false, message: validation.error };
+        if (!validation.success) {
+            return { success: false, message: validation.message };
         }
 
         // Check for duplicate organization names (case-insensitive)
@@ -2904,10 +2912,20 @@ export async function confirmDonationReceipt(
         notes?: string;
     }
 ) {
+    const receiptSchema = z.object({
+        receivedDate: z.string().min(1, 'Received date is required'),
+        condition: z.string().min(1, 'Condition is required').max(200, 'Condition must be 200 characters or less'),
+        notes: z.string().max(1000, 'Notes must be 1000 characters or less').optional(),
+    });
+    const receiptValidation = validateWithSchema(receiptSchema, receiptData);
+    if (!receiptValidation.success) {
+        return { success: false, message: receiptValidation.message };
+    }
+
     return withAuthenticatedAction(async ({ db, user }) => {
         // Get the donation
-        const donation = await db.collection("donations").findOne({ 
-            _id: new ObjectId(donationId) 
+        const donation = await db.collection("donations").findOne({
+            _id: new ObjectId(donationId)
         });
 
         if (!donation) {
@@ -3008,9 +3026,7 @@ export async function confirmDonationReceipt(
                 );
             }
         } catch (emailError) {
-            if (process.env.NODE_ENV === 'production') {
-                console.error("Email notification failed:", emailError);
-            }
+            console.error('[EMAIL_FAILURE] confirmDonationReceipt', (emailError as Error)?.message || emailError);
         }
 
         // Log activity
@@ -4157,6 +4173,50 @@ export async function getAdminDashboardData(): Promise<{ success: true; data: an
         const users = await db.collection("users").find({}, { projection: { password: 0 } }).sort({ name: 1 }).toArray();
 
         return JSON.parse(JSON.stringify({ userCount, listingCount, organizations, reports, users }));
+    }, 'admin');
+}
+
+export async function getAuditLogs(page: number = 1, limit: number = 50): Promise<{
+    success: true;
+    data: {
+        logs: Array<{
+            _id: string;
+            action: string;
+            performedBy: string;
+            targetUserId?: string;
+            reason?: string;
+            timestamp: string;
+        }>;
+        pagination: { currentPage: number; totalPages: number; totalCount: number; hasNext: boolean; hasPrev: boolean };
+    };
+} | { success: false; message: string }> {
+    return withAuthenticatedAction(async ({ db }) => {
+        const sanitizedPage = Math.max(1, Math.floor(page));
+        const sanitizedLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+        const skip = (sanitizedPage - 1) * sanitizedLimit;
+
+        const [totalCount, logs] = await Promise.all([
+            db.collection('auditLogs').countDocuments(),
+            db.collection('auditLogs')
+                .find({})
+                .sort({ timestamp: -1 })
+                .skip(skip)
+                .limit(sanitizedLimit)
+                .toArray(),
+        ]);
+
+        const totalPages = Math.ceil(totalCount / sanitizedLimit);
+
+        return JSON.parse(JSON.stringify({
+            logs,
+            pagination: {
+                currentPage: sanitizedPage,
+                totalPages,
+                totalCount,
+                hasNext: sanitizedPage < totalPages,
+                hasPrev: sanitizedPage > 1,
+            },
+        }));
     }, 'admin');
 }
 
@@ -5705,8 +5765,8 @@ export async function proposeExchange(
                 );
             }
         } catch (emailError) {
-            // Log email error but don't fail the exchange creation
-            console.warn('Failed to send exchange proposal email:', emailError);
+            // NOTE: email failure is non-fatal but must be visible in production logs
+            console.error('[EMAIL_FAILURE] proposeExchange', (emailError as Error)?.message || emailError);
         }
         
         // Lock books before emitting so no concurrent proposal can race in
@@ -5847,7 +5907,7 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
                 }
             }
         } catch (emailError) {
-            console.warn('Failed to send exchange acceptance email:', emailError);
+            console.error('[EMAIL_FAILURE] acceptExchange', (emailError as Error)?.message || emailError);
         }
 
         // Create in-app notification for proposer
@@ -6146,7 +6206,7 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                     ]);
                 }
             } catch (notifError) {
-                console.warn('Failed to create completion notifications:', notifError);
+                console.error('[EMAIL_FAILURE] confirmExchangeCompletion', (notifError as Error)?.message || notifError);
             }
         }
 

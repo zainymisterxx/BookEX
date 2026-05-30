@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X, Search } from "lucide-react";
+import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X, Search, ClipboardList } from "lucide-react";
 import type { Organization, Report, User } from '@/lib/types';
 import Link from 'next/link';
 import { AdminReportActions } from '@/components/admin/admin-report-actions';
 import { AdminOrgActions } from '@/components/admin/admin-org-actions';
 import { AdminUserActions } from '@/components/admin/admin-user-actions';
-import { getAdminDashboardData, getAdminReports, resolveReport, removeContentAndResolveReport } from '@/app/actions';
+import { getAdminDashboardData, getAdminReports, resolveReport, removeContentAndResolveReport, getAuditLogs } from '@/app/actions';
 import { AddOrganizationModal } from '@/components/admin/add-organization-modal';
 import { DatabaseManagement } from '@/components/admin/database-management';
 import SecurityAdminDashboard from '@/components/admin/security-admin-dashboard';
@@ -56,6 +56,12 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
 
     // Users tab state
     const [userSearch, setUserSearch] = useState('');
+
+    // Audit log tab state
+    type AuditLog = { _id: string; action: string; performedBy: string; targetUserId?: string; reason?: string; timestamp: string };
+    const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+    const [auditPagination, setAuditPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0, hasNext: false, hasPrev: false });
+    const [auditLoading, setAuditLoading] = useState(false);
 
     const fetchAdminData = async () => {
         setIsLoading(true);
@@ -126,6 +132,16 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
         setReportsLoading(false);
     };
 
+    const fetchAuditLogs = async (page = 1) => {
+        setAuditLoading(true);
+        const result = await getAuditLogs(page, 50);
+        if (result.success) {
+            setAuditLogs(result.data.logs);
+            setAuditPagination(result.data.pagination);
+        }
+        setAuditLoading(false);
+    };
+
     useEffect(() => {
         if (activeTab === 'reports') {
             fetchReports(reportsStatus, 1);
@@ -133,6 +149,13 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
     // NOTE: only re-run when tab or status changes, not fetchReports identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, reportsStatus]);
+
+    useEffect(() => {
+        if (activeTab === 'audit-log') {
+            fetchAuditLogs(1);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     const handleResolveReport = (reportId: string) => {
         startReportAction(async () => {
@@ -181,6 +204,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             icon: AlertTriangle,
             badge: dashboardReports?.filter(r => r.status === 'pending').length || 0
         },
+        { id: 'audit-log', label: 'Audit Log', icon: ClipboardList },
     ];
 
     return (
@@ -654,6 +678,117 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                         size="sm"
                                                         disabled={!reportsPagination.hasNext || reportsLoading}
                                                         onClick={() => fetchReports(reportsStatus, reportsPagination.currentPage + 1)}
+                                                    >
+                                                        Next
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+                    {activeTab === 'audit-log' && (
+                        <div className="space-y-6 h-full">
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="font-headline text-2xl">Audit Log</CardTitle>
+                                    <CardDescription>
+                                        {auditPagination.totalCount} admin action{auditPagination.totalCount !== 1 ? 's' : ''} recorded
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    {auditLoading ? (
+                                        <div className="flex justify-center py-12">
+                                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="hidden md:block">
+                                                <Table>
+                                                    <TableHeader>
+                                                        <TableRow>
+                                                            <TableHead>Action</TableHead>
+                                                            <TableHead>Performed By</TableHead>
+                                                            <TableHead>Target User</TableHead>
+                                                            <TableHead>Reason</TableHead>
+                                                            <TableHead>Timestamp</TableHead>
+                                                        </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {auditLogs.map((log) => (
+                                                            <TableRow key={log._id}>
+                                                                <TableCell>
+                                                                    <Badge variant="secondary" className="font-mono text-xs">
+                                                                        {log.action}
+                                                                    </Badge>
+                                                                </TableCell>
+                                                                <TableCell className="font-mono text-xs">{log.performedBy}</TableCell>
+                                                                <TableCell className="font-mono text-xs">{log.targetUserId ?? '—'}</TableCell>
+                                                                <TableCell className="max-w-xs truncate text-sm" title={log.reason ?? undefined}>
+                                                                    {log.reason ?? '—'}
+                                                                </TableCell>
+                                                                <TableCell className="text-sm">
+                                                                    {new Date(log.timestamp).toLocaleString()}
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                        {auditLogs.length === 0 && (
+                                                            <TableRow>
+                                                                <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                                                                    No audit log entries found.
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )}
+                                                    </TableBody>
+                                                </Table>
+                                            </div>
+
+                                            {/* Mobile cards */}
+                                            <div className="md:hidden space-y-3">
+                                                {auditLogs.map((log) => (
+                                                    <Card key={log._id} className="border">
+                                                        <CardContent className="pt-4 space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <Badge variant="secondary" className="font-mono text-xs">{log.action}</Badge>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    {new Date(log.timestamp).toLocaleDateString()}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground">By: {log.performedBy}</p>
+                                                            {log.targetUserId && (
+                                                                <p className="text-xs text-muted-foreground">Target: {log.targetUserId}</p>
+                                                            )}
+                                                            {log.reason && (
+                                                                <p className="text-sm">{log.reason}</p>
+                                                            )}
+                                                        </CardContent>
+                                                    </Card>
+                                                ))}
+                                                {auditLogs.length === 0 && (
+                                                    <p className="text-center text-muted-foreground py-6">No audit log entries found.</p>
+                                                )}
+                                            </div>
+
+                                            {auditPagination.totalPages > 1 && (
+                                                <div className="flex items-center justify-between pt-4">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={!auditPagination.hasPrev || auditLoading}
+                                                        onClick={() => fetchAuditLogs(auditPagination.currentPage - 1)}
+                                                    >
+                                                        Previous
+                                                    </Button>
+                                                    <span className="text-sm text-muted-foreground">
+                                                        Page {auditPagination.currentPage} of {auditPagination.totalPages}
+                                                    </span>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={!auditPagination.hasNext || auditLoading}
+                                                        onClick={() => fetchAuditLogs(auditPagination.currentPage + 1)}
                                                     >
                                                         Next
                                                     </Button>

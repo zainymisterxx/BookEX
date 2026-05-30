@@ -1080,3 +1080,94 @@ export const sendDonationCompletionEmail = async (
     return { success: false, error: message };
   }
 };
+
+export interface DigestBook {
+  title: string;
+  author: string;
+  condition: string;
+  id: string;
+}
+
+export const sendWeeklyDigestEmail = async (
+  to: string,
+  name: string,
+  books: DigestBook[]
+): Promise<{ success: true; messageId?: string } | { success: false; error: string }> => {
+  const baseUrl = getBaseUrl();
+
+  const bookRows = books
+    .slice(0, 5)
+    .map(
+      (b) => `
+        <tr>
+          <td style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">
+            <a href="${baseUrl}/books/${b.id}" style="color:#2563eb;text-decoration:none;font-weight:500;">${b.title}</a>
+          </td>
+          <td style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">${b.author}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">${b.condition}</td>
+        </tr>`
+    )
+    .join('');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Your Weekly BookEX Digest</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 16px; background: white; border-radius: 6px; overflow: hidden; }
+          th { background: #eff6ff; text-align: left; padding: 10px 8px; font-size: 13px; color: #1e40af; }
+          .footer { margin-top: 24px; font-size: 13px; color: #6b7280; }
+          .cta { display: inline-block; background: #2563eb; color: white; padding: 10px 22px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="header"><h1>BookEX Weekly Digest</h1></div>
+        <div class="content">
+          <p>Hello ${name},</p>
+          <p>Here are the new books listed in your area this week:</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Author</th>
+                <th>Condition</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${bookRows}
+            </tbody>
+          </table>
+          <a href="${baseUrl}/books" class="cta">Browse All Books</a>
+          <div class="footer">
+            <p>You're receiving this because you have weekly digest enabled in your BookEX preferences.</p>
+            <p>To unsubscribe, update your <a href="${baseUrl}/profile/settings">email preferences</a>.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: [to],
+      subject: 'Your Weekly BookEX Digest',
+      html,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: message };
+  }
+};

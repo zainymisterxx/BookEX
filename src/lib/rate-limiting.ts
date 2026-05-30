@@ -111,8 +111,8 @@ export async function checkRateLimit(
 
   try {
     // Get current rate limit data from Redis
-    const entryData = await redisCache.get<RateLimitEntry>(key);
-    const entry: RateLimitEntry | null = entryData;
+    const entryCacheResult = await redisCache.get<RateLimitEntry>(key);
+    const entry: RateLimitEntry | null = entryCacheResult.hit ? entryCacheResult.value : null;
 
     if (!entry || now >= entry.resetTime) {
       // First request or window has reset
@@ -216,14 +216,15 @@ export async function getRateLimitStatus(identifier: string, action: string): Pr
 }> {
   try {
     const key = generateKey(identifier, action);
-    const data = await redisCache.get<RateLimitEntry>(key);
-    
-    if (!data) {
+    const dataCacheResult = await redisCache.get<RateLimitEntry>(key);
+
+    if (!dataCacheResult.hit) {
       return { exists: false };
     }
 
+    const data = dataCacheResult.value;
     const now = Date.now();
-    
+
     return {
       exists: true,
       count: data.count,

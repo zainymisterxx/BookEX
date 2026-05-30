@@ -16,46 +16,64 @@ export async function GET(request: NextRequest) {
     const query = searchParams.get('q');
 
     if (!query || query.length < 2) {
-      return NextResponse.json({ users: [] });
+      return NextResponse.json({ users: [], total: 0, page: 1, limit: 20, hasMore: false });
     }
+
+    const MAX_LIMIT = 50;
+    const DEFAULT_LIMIT = 20;
+    const rawPage = parseInt(searchParams.get('page') ?? '1', 10);
+    const rawLimit = parseInt(searchParams.get('limit') ?? String(DEFAULT_LIMIT), 10);
+    const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
+    const limit = Math.min(MAX_LIMIT, Math.max(1, isNaN(rawLimit) ? DEFAULT_LIMIT : rawLimit));
+    const skip = (page - 1) * limit;
 
     const { db } = await connectToMongoDB();
 
-    // Create case-insensitive regex for username search
+    // Create case-insensitive regex for username/name search
     const searchRegex = new RegExp(query, 'i');
 
-    // Search users by username, excluding current user
+    // Search users by username or name, excluding current user
     const currentUserId = typeof session.user.id === 'string' ? new ObjectId(session.user.id) : session.user.id;
-    
-    const users = await db.collection('users')
-      .find({
-        $and: [
-          {
-            $or: [
-              { username: searchRegex },
-              { name: searchRegex }
-            ]
-          },
-          { _id: { $ne: currentUserId } } // Exclude current user
-        ]
-      })
-      .limit(10)
-      .project({
-        _id: 1,
-        name: 1,
-        username: 1,
-        avatarUrl: 1,
-        image: 1
-      })
-      .toArray();
 
-    return NextResponse.json({ 
+    const searchFilter = {
+      $and: [
+        {
+          $or: [
+            { username: searchRegex },
+            { name: searchRegex }
+          ]
+        },
+        { _id: { $ne: currentUserId } } // Exclude current user
+      ]
+    };
+
+    const [users, total] = await Promise.all([
+      db.collection('users')
+        .find(searchFilter)
+        .skip(skip)
+        .limit(limit)
+        .project({
+          _id: 1,
+          name: 1,
+          username: 1,
+          avatarUrl: 1,
+          image: 1
+        })
+        .toArray(),
+      db.collection('users').countDocuments(searchFilter),
+    ]);
+
+    return NextResponse.json({
       users: users.map(user => ({
         _id: user._id,
         name: user.name,
         username: user.username,
         avatarUrl: user.avatarUrl || user.image
-      }))
+      })),
+      total,
+      page,
+      limit,
+      hasMore: skip + users.length < total,
     });
 
   } catch (error) {
