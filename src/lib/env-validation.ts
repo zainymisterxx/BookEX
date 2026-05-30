@@ -40,7 +40,10 @@ const envSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_URL: z.string().optional(),
   
-  // Email (optional for now)
+  // Email — Resend SDK (warn if missing, don't hard fail)
+  RESEND_API_KEY: z.string().optional(),
+
+  // Legacy email fields (kept for reference)
   EMAIL_FROM: z.string().email('EMAIL_FROM must be a valid email').optional(),
   EMAIL_SERVER_HOST: z.string().optional(),
   EMAIL_SERVER_PORT: z.string().regex(/^\d+$/, 'EMAIL_SERVER_PORT must be a valid port number').optional(),

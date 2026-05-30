@@ -50,8 +50,9 @@ export const validateApplicationStartup = async (): Promise<StartupValidationRes
     }
 
     // Check for warnings
-    if (emailResult.details?.validation?.warnings?.length > 0) {
-      warnings.push(...emailResult.details.validation.warnings.map((w: string) => `Email: ${w}`));
+    const emailDetails = emailResult.details as { validation?: { warnings?: string[] } } | undefined;
+    if (emailDetails?.validation?.warnings?.length) {
+      warnings.push(...emailDetails.validation.warnings.map((w: string) => `Email: ${w}`));
     }
 
   } catch (error: any) {
