@@ -18,11 +18,6 @@ export function getBaseUrl(): string {
     return process.env.NEXT_PUBLIC_APP_URL;
   }
   
-  if (process.env.NODE_ENV === 'production') {
-    // Vercel provides VERCEL_URL automatically
-    return `https://${process.env.VERCEL_URL || 'your-app.vercel.app'}`;
-  }
-  
   // Development fallback
   return 'http://localhost:9002';
 }
@@ -31,7 +26,6 @@ export function getBaseUrl(): string {
  * Get the socket URL for WebSocket connections
  */
 export function getSocketUrl(): string {
-  // Explicit override wins (set NEXT_PUBLIC_SOCKET_URL=https://socket.farya.pk in Vercel)
   if (process.env.NEXT_PUBLIC_SOCKET_URL) {
     return process.env.NEXT_PUBLIC_SOCKET_URL;
   }
@@ -65,10 +59,6 @@ export function getCorsOrigins(): string[] {
 
   if (process.env.NEXT_PUBLIC_APP_URL) {
     origins.push(process.env.NEXT_PUBLIC_APP_URL);
-  }
-
-  if (process.env.VERCEL_URL) {
-    origins.push(`https://${process.env.VERCEL_URL}`);
   }
 
   return origins;

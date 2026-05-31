@@ -1,0 +1,62 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+  deploy:
+    name: Deploy to Azure VM
+    needs: lint-typecheck
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_SSH_HOST }}
+          username: ${{ secrets.AZURE_SSH_USER }}
+          password: ${{ secrets.AZURE_SSH_PASSWORD }}
+          script_stop: true
+          script: |
+            set -e
+            cd /var/www/bookex
+
+            echo "▶ Pulling latest code..."
+            git pull origin main
+
+            echo "▶ Installing dependencies..."
+            npm ci --frozen-lockfile
+
+            echo "▶ Building Next.js app..."
+            npm run build
+
+            echo "▶ Restarting services..."
+            pm2 restart bookex --update-env
+            pm2 restart bookex-socket --update-env
+            pm2 restart bookex-media --update-env
+            pm2 save
+
+            echo "✅ Deployed at $(date)"

@@ -101,8 +101,8 @@ const nextConfig: NextConfig = {
     
     return config;
   },
-  // Proxy /socket.io/* to the externally hosted Socket.IO server.
-  // vercel.json rewrites cannot expand env vars in destination, so this must live here.
+  // In production, Nginx proxies /socket.io/* → localhost:3001 directly.
+  // SOCKET_SERVER_URL can be set in local dev (without Nginx) to enable the rewrite.
   async rewrites() {
     const socketUrl = process.env.SOCKET_SERVER_URL;
     if (!socketUrl) return [];
@@ -140,9 +140,7 @@ const nextConfig: NextConfig = {
             // NOTE: unsafe-eval is allowed only in development (required by Next.js HMR/source maps).
             // unsafe-inline is kept for Next.js inline scripts injected at build time; removing it
             // requires a nonce-based approach which needs middleware-level integration.
-            // NOTE: connect-src uses 'self' and *.vercel.app wildcard so the CSP value
-            // is static at build time — no VERCEL_URL baked in per-deployment.
-            value: `default-src 'self'; script-src 'self'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} 'unsafe-inline' https://vercel.live; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:* https://*.vercel.app wss://*.vercel.app wss://socket.farya.pk https://socket.farya.pk; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
+            value: `default-src 'self'; script-src 'self'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: wss://bookex.farya.pk https://bookex.farya.pk http://localhost:* ws://localhost:* wss://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`,
           },
           {
             key: 'Permissions-Policy',
