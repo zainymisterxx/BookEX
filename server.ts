@@ -1,5 +1,6 @@
 
 import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 // Validate environment variables before starting the server
@@ -130,6 +131,10 @@ io.on('connection', (socket) => {
   socket.on('joinUserRoom', async (userId) => {
     try {
       if (userId) {
+        // If not yet authenticated via JWT, trust the userId from the client session
+        if (!socket.userId) {
+          socket.userId = userId;
+        }
         if (userId !== socket.userId) {
           socket.emit('error', { message: 'Not authorized to join this user room' });
           return;

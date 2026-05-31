@@ -35,14 +35,13 @@ export async function GET(
       return NextResponse.json({ error: 'Community not found' }, { status: 404 });
     }
 
-    // Get total count
-    const total = await db.collection('posts').countDocuments({
-      communityId: new ObjectId(communityId)
-    });
+    // Match both ObjectId and string forms — posts may have been inserted either way
+    const communityIdFilter = { $or: [{ communityId: new ObjectId(communityId) }, { communityId: communityId }] };
 
-    // Get paginated posts with author details
+    const total = await db.collection('posts').countDocuments(communityIdFilter);
+
     const posts = await db.collection('posts').aggregate([
-      { $match: { communityId: new ObjectId(communityId) } },
+      { $match: communityIdFilter },
       {
         $lookup: {
           from: 'users',
