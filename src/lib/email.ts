@@ -3,7 +3,7 @@ import { getBaseUrl } from './url-utils';
 
 const FROM_ADDRESS = 'BookEX <Bookex.mail@farya.pk>';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_build_placeholder');
 
 // Email configuration validation types
 export interface EmailConfigValidation {
