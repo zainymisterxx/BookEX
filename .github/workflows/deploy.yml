@@ -42,7 +42,7 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd /var/www/bookex
+            cd /home/sabih/bookex
 
             echo "▶ Pulling latest code..."
             git pull origin main
