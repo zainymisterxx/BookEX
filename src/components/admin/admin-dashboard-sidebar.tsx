@@ -8,10 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X, Search, ClipboardList } from "lucide-react";
+import { Loader2, PlusCircle, Shield, Database, Users, FileText, AlertTriangle, UserCheck, Menu, X, Search, ClipboardList, Settings } from "lucide-react";
 import type { Organization, Report, User } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { AdminReportActions } from '@/components/admin/admin-report-actions';
 import { AdminOrgActions } from '@/components/admin/admin-org-actions';
 import { AdminUserActions } from '@/components/admin/admin-user-actions';
@@ -47,6 +48,15 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
     const [isLoading, setIsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('comprehensive');
     const [sidebarOpen, setSidebarOpen] = useState(false);
+
+    const searchParams = useSearchParams();
+    const tabParam = searchParams.get('tab');
+
+    useEffect(() => {
+        if (tabParam) {
+            setActiveTab(tabParam);
+        }
+    }, [tabParam]);
 
     // Reports tab state
     const [reports, setReports] = useState<ReportWithUsers[]>([]);
@@ -323,7 +333,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
             badge: dashboardReports?.filter(r => r.status === 'pending').length || 0
         },
         { id: 'audit-log', label: 'Audit Log', icon: ClipboardList },
-        { id: 'settings', label: 'Settings', icon: Shield },
+        { id: 'settings', label: 'Settings', icon: Settings },
     ];
 
     return (
