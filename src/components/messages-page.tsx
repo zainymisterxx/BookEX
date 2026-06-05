@@ -34,8 +34,9 @@ import type { Book, MessageAttachment } from '@/lib/types';
 interface Message {
   _id: string;
   senderId: string;
-  receiverId: string;
-  content: string;
+  receiverId?: string;
+  content?: string;
+  text?: string;
   createdAt: string;
   read?: boolean;
   attachments?: MessageAttachment[];
@@ -94,6 +95,15 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
   const hasInitiallyLoaded = useRef(false);
   // Ref to scroll to bottom of messages
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Always-current ref for selectedChat — prevents stale closures in socket handlers
+  const selectedChatRef = useRef<Chat | null>(null);
+  useEffect(() => { selectedChatRef.current = selectedChat; }, [selectedChat]);
+
+  // Reset messages and pagination when switching to a different chat
+  useEffect(() => {
+    setMessages([]);
+    setNextCursor(null);
+  }, [selectedChat?._id]);
   // Track deleted legacy chats (old personalMessages format) in localStorage
   const [deletedLegacyChats, setDeletedLegacyChats] = useState<Set<string>>(() => {
     if (typeof window !== 'undefined') {
@@ -148,14 +158,8 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
           setChats(prev => [newChat, ...prev]);
         }
 
-        // Select the chat
+        // Select the chat (reset effect handles clearing messages/cursor)
         setSelectedChat(newChat);
-
-        // If it's a new chat, initialize empty messages
-        if (!data.existing) {
-          setMessages([]);
-          setNextCursor(null);
-        }
 
         toast({
           title: 'Chat Started',
@@ -200,7 +204,43 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
             }
           });
           
-          return filteredChats;
+          // Deduplicate chats by otherParticipant._id so we only show one chat per user in sidebar
+          const deduplicatedChats = new Map<string, Chat>();
+          
+          // data.chats is already sorted by last active, so we can just iterate and take the first one we see
+          // for each otherParticipant._id
+          const finalChats: Chat[] = [];
+          
+          for (const chat of filteredChats) {
+            if (chat.otherParticipant?._id) {
+              if (!deduplicatedChats.has(chat.otherParticipant._id)) {
+                deduplicatedChats.set(chat.otherParticipant._id, chat);
+                finalChats.push(chat);
+              } else {
+                // Combine unread count from duplicates
+                const existing = deduplicatedChats.get(chat.otherParticipant._id)!;
+                if (chat.unreadCount) {
+                  existing.unreadCount = (existing.unreadCount || 0) + chat.unreadCount;
+                }
+              }
+            } else if (chat.organization?._id) {
+              if (!deduplicatedChats.has(chat.organization._id)) {
+                deduplicatedChats.set(chat.organization._id, chat);
+                finalChats.push(chat);
+              } else {
+                // Combine unread count from duplicates
+                const existing = deduplicatedChats.get(chat.organization._id)!;
+                if (chat.unreadCount) {
+                  existing.unreadCount = (existing.unreadCount || 0) + chat.unreadCount;
+                }
+              }
+            } else {
+              // Chats without otherParticipant or organization (should be rare) - keep them
+              finalChats.push(chat);
+            }
+          }
+          
+          return finalChats;
         });
       }
     } catch (error) {
@@ -300,7 +340,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
       const otherUserId = userIdParam || participantIds.find(id => id !== currentUser.id);
 
       if (otherUserId) {
-        // Use start-chat API to get/create the chat with user info
+        // Call start-chat to find or create the conversation
         apiFetch('/api/messages/start-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -309,23 +349,27 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
           .then(res => res.json())
           .then(data => {
             if (data.chatId && data.otherParticipant) {
+              // Prefer the chatId from the URL (e.g. an exchange chat) over the
+              // DM chat the API may have created/returned for the same two users.
+              const resolvedId = chatIdParam || data.chatId;
               const newChat: Chat = {
-                _id: data.chatId,
+                _id: resolvedId,
                 participantIds: [currentUser.id, otherUserId],
                 otherParticipant: data.otherParticipant,
                 unreadCount: 0
               };
-
-              // Add to chats list if not already there
               setChats(prev => {
-                if (prev.some(c => c._id === newChat._id)) return prev;
+                if (prev.some(c => c._id === resolvedId)) return prev;
                 return [newChat, ...prev];
               });
-
               setSelectedChat(newChat);
             }
           })
           .catch(err => console.error('Failed to start chat:', err));
+      } else {
+        // No userId available — the chat was just created (e.g. exchange proposal).
+        // Refetch the list; the updated chats state will re-trigger this effect and find it.
+        fetchChats();
       }
     }
   }, [searchParams, chats, selectedChat, isLoading, currentUser.id]);
@@ -500,7 +544,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
       setChats(prev => prev.map(chat => {
         // Check if this message belongs to this chat
         const chatParticipants = chat.participantIds || [];
-        const messageParticipants = [message.senderId, message.receiverId];
+        const messageParticipants = [message.senderId, message.receiverId].filter(Boolean) as string[];
         const isSameChat = chatParticipants.every(id => messageParticipants.includes(id)) &&
                            messageParticipants.every(id => chatParticipants.includes(id));
         
@@ -518,13 +562,12 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
 
     const handleMessageConfirmed = (data: { message: Message; timestamp: string }) => {
       const { message } = data;
-      
-      // Replace optimistic message (temp-*) with the real message from server
-      setMessages(prev => prev.map(msg => 
-        msg._id.toString().startsWith('temp-') && 
-        msg.senderId === message.senderId && 
-        msg.receiverId === message.receiverId &&
-        msg.content === message.content ? message : msg
+      setMessages(prev => prev.map(msg =>
+        msg._id.toString().startsWith('temp-') &&
+        msg.senderId === message.senderId &&
+        // Compare stringified receiverIds — server may return ObjectId, client stores string
+        String(msg.receiverId) === String(message.receiverId) &&
+        (msg.content ?? msg.text) === (message.content ?? message.text) ? message : msg
       ));
     };
 
@@ -588,10 +631,10 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
         return [...prev, message];
       });
       
-      // Update chat list with new last message
-      setChats(prevChats => 
-        prevChats.map(chat => 
-          chat._id === selectedChat?._id 
+      // Update chat list with new last message — use ref to avoid stale closure
+      setChats(prevChats =>
+        prevChats.map(chat =>
+          chat._id === selectedChatRef.current?._id
             ? { ...chat, lastMessage: message }
             : chat
         )
@@ -827,7 +870,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
                             )}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            {chat.lastMessage && (
+                            {chat.lastMessage?.createdAt && (
                               <span className="text-xs text-muted-foreground whitespace-nowrap">
                                 {formatTime(chat.lastMessage.createdAt)}
                               </span>
@@ -840,7 +883,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
                           </div>
                         </div>
                         <p className="text-sm text-muted-foreground truncate pr-8">
-                          {chat.lastMessage?.content || 'No messages yet'}
+                          {chat.lastMessage?.content ?? chat.lastMessage?.text ?? 'No messages yet'}
                         </p>
                       </div>
                       <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
@@ -921,7 +964,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
                               : "bg-secondary"
                           )}
                         >
-                          {message.content && <p className="text-sm">{message.content}</p>}
+                          {(message.content ?? message.text) && <p className="text-sm">{message.content ?? message.text}</p>}
                           {message.attachments && message.attachments.length > 0 && (
                             <MessageAttachmentDisplay 
                               attachments={message.attachments}

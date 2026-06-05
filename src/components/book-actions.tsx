@@ -29,7 +29,8 @@ export function BookActions({ book, seller }: BookActionsProps) {
   const [userHasExchangeBooks, setUserHasExchangeBooks] = useState(false);
   const [showExchangeModal, setShowExchangeModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  const [isContactPending, startContactTransition] = useTransition();
+  const [isWishlistPending, startWishlistTransition] = useTransition();
 
   const { data: session, status } = useSession();
   const user = session?.user;
@@ -66,7 +67,7 @@ export function BookActions({ book, seller }: BookActionsProps) {
       // Implement optimistic update with proper rollback
       setIsWishlisted(!previousWishlistedState);
       
-      startTransition(async () => {
+      startWishlistTransition(async () => {
           try {
               const result = await toggleWishlist(String(book._id), previousWishlistedState);
               if (result.success) {
@@ -106,13 +107,13 @@ export function BookActions({ book, seller }: BookActionsProps) {
         return;
     }
 
-    startTransition(async () => {
+    startContactTransition(async () => {
         const result = await startChat(String(seller._id), String(book._id));
-        
+
         if (result.success && result.data?.chatId) {
-            router.push(`/messages/${result.data.chatId}`);
+            router.push(`/messages?chatId=${result.data.chatId}&userId=${seller._id}`);
         } else {
-            toast({ variant: 'destructive', title: 'Could not start conversation.', description: 'Failed to start conversation' });
+            toast({ variant: 'destructive', title: 'Could not start conversation.', description: (!result.success && result.message) || 'Please try again.' });
         }
     });
   }
@@ -157,13 +158,13 @@ export function BookActions({ book, seller }: BookActionsProps) {
   const isSellerInactive = !seller;
 
   const contactButton = (
-    <Button 
-      size="lg" 
-      className="flex-1 py-7 text-lg" 
-      onClick={handleContactSeller} 
-      disabled={isPending || user?.id === sellerId || isExchangeDisabled || isInitialDataLoading || isSellerInactive}
+    <Button
+      size="lg"
+      className="flex-1 py-7 text-lg"
+      onClick={handleContactSeller}
+      disabled={isContactPending || user?.id === sellerId || isExchangeDisabled || isInitialDataLoading || isSellerInactive}
     >
-        {isPending ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <ContactIcon className="mr-2 h-5 w-5"/>}
+        {isContactPending ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <ContactIcon className="mr-2 h-5 w-5"/>}
         {isInitialDataLoading ? 'Loading...' : (user?.id === sellerId ? "This is your listing" : contactText)}
     </Button>
   );
@@ -234,8 +235,8 @@ export function BookActions({ book, seller }: BookActionsProps) {
         )}
 
         {status === 'authenticated' ? (
-            <Button size="lg" variant="outline" className="flex-1 py-7 text-lg" onClick={handleToggleWishlist} disabled={isInitialDataLoading || isPending}>
-                {isPending ? <Loader2 className="animate-spin" /> : <Heart className={`mr-2 h-5 w-5 ${isWishlisted ? 'fill-destructive text-destructive' : ''}`}/>}
+            <Button size="lg" variant="outline" className="flex-1 py-7 text-lg" onClick={handleToggleWishlist} disabled={isInitialDataLoading || isWishlistPending}>
+                {isWishlistPending ? <Loader2 className="animate-spin" /> : <Heart className={`mr-2 h-5 w-5 ${isWishlisted ? 'fill-destructive text-destructive' : ''}`}/>}
                 {isInitialDataLoading ? 'Loading...' : (isWishlisted ? 'Remove from Wishlist' : 'Add to Wishlist')}
             </Button>
         ) : (

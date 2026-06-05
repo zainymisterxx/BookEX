@@ -4,6 +4,8 @@ import { EnhancedBookFilters } from '@/components/enhanced-book-filters';
 import { SearchResultsHeader } from '@/components/ui/filter-tags';
 import { getBooksForSale, getAvailableBookFilters, type EnhancedBookFilters as BookFilterType } from "@/lib/data";
 import type { Book } from '@/lib/types';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth-config";
 
 export default async function BooksPage({
   searchParams,
@@ -22,8 +24,12 @@ export default async function BooksPage({
     sortBy: typeof sortBy === 'string' ? sortBy as any : undefined,
   };
 
-  const { books, totalCount } = await getBooksForSale(filters);
-  const { genres, conditions } = await getAvailableBookFilters('sell');
+  const [{ books, totalCount }, { genres, conditions }, session] = await Promise.all([
+    getBooksForSale(filters),
+    getAvailableBookFilters('sell'),
+    getServerSession(authOptions),
+  ]);
+  const currentUserId = session?.user?.id ?? null;
 
   return (
     <div className="bg-secondary">
@@ -63,6 +69,7 @@ export default async function BooksPage({
                 key={String(book._id)} 
                 book={book} 
                 searchTerm={filters.searchQuery || ''}
+                isOwnListing={currentUserId !== null && String(book.sellerId) === currentUserId}
               />
             ))}
           </div>

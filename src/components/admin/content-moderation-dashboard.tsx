@@ -54,17 +54,28 @@ export default function ContentModerationDashboard() {
       setLoading(true);
       setError(null);
 
-      // Load moderation queue
-      const queueResponse = await apiFetch('/api/moderation?action=moderationQueue&limit=50&filter=flagged');
+      // Load moderation queue and security stats in parallel
+      const [queueResponse, statsResponse] = await Promise.all([
+        apiFetch('/api/moderation?action=moderationQueue&limit=50&filter=flagged'),
+        apiFetch('/api/admin/security?action=securityStats')
+      ]);
+
       if (!queueResponse.ok) throw new Error('Failed to load moderation queue');
+      
       const queue = await queueResponse.json();
       setModerationQueue(queue);
+
+      let bannedCount = 0;
+      if (statsResponse.ok) {
+        const stats = await statsResponse.json();
+        bannedCount = stats.contentModeration?.bannedUsers || 0;
+      }
 
       // Calculate system health metrics
       const health: SystemHealth = {
         moderationQueue: queue.length,
         flaggedContent: queue.filter((item: ModerationAction) => item.action === 'flag').length,
-        bannedUsers: 0, // This would come from a separate API call
+        bannedUsers: bannedCount,
         activeWarnings: queue.filter((item: ModerationAction) => item.flags.length > 0).length
       };
       setSystemHealth(health);

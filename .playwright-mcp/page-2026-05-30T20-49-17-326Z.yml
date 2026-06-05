@@ -1,0 +1,228 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "BookEx" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e9]: BookEx
+        - navigation [ref=e10]:
+          - link "Buy" [ref=e11] [cursor=pointer]:
+            - /url: /books
+          - link "Exchange" [ref=e12] [cursor=pointer]:
+            - /url: /exchange
+          - link "Community" [ref=e13] [cursor=pointer]:
+            - /url: /community
+          - link "Chat" [ref=e14] [cursor=pointer]:
+            - /url: /messages
+          - link "Donate" [ref=e15] [cursor=pointer]:
+            - /url: /donate
+        - generic [ref=e17]:
+          - searchbox "Search books..." [ref=e18]
+          - img [ref=e19]
+    - main [ref=e23]:
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - heading "Give Your Books a New Chapter" [level=1] [ref=e27]
+          - paragraph [ref=e28]: Join a community of book lovers to buy, sell, and exchange stories. Discover hidden gems and share your own literary treasures.
+          - generic [ref=e29]:
+            - link "Explore Collection" [ref=e30] [cursor=pointer]:
+              - /url: /books
+              - text: Explore Collection
+              - img [ref=e31]
+            - link "List a Book" [ref=e33] [cursor=pointer]:
+              - /url: /books/sell
+        - generic [ref=e34]:
+          - img "Book cover collage" [ref=e35]
+          - img "Book cover collage" [ref=e36]
+          - img "Book cover collage" [ref=e37]
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - heading "Freshly Listed" [level=2] [ref=e41]
+          - paragraph [ref=e42]: These stories just hit our shelves. Be the first to discover a new adventure.
+        - generic [ref=e43]:
+          - link "Cover of 1984 sell 1984 by George Orwell Karachi View Seller PKR 700 used" [ref=e45] [cursor=pointer]:
+            - /url: /books/699f190dc397439b6362b46b
+            - generic [ref=e47]:
+              - generic [ref=e48]:
+                - img "Cover of 1984" [ref=e49]
+                - generic [ref=e51]: sell
+              - generic [ref=e52]:
+                - generic [ref=e53]:
+                  - generic [ref=e54]: "1984"
+                  - generic [ref=e55]: by George Orwell
+                  - generic [ref=e56]:
+                    - generic [ref=e57]:
+                      - img [ref=e58]
+                      - generic [ref=e61]: Karachi
+                    - button "View Seller" [ref=e62]
+                - generic [ref=e63]:
+                  - paragraph [ref=e64]: PKR 700
+                  - generic [ref=e65]: used
+          - link "Cover of The Hitchhiker's Guide to the Galaxy exchange The Hitchhiker's Guide to the Galaxy by Douglas Adams Karachi View Seller Exchange like new" [ref=e67] [cursor=pointer]:
+            - /url: /books/699f190dc397439b6362b46a
+            - generic [ref=e69]:
+              - generic [ref=e70]:
+                - img "Cover of The Hitchhiker's Guide to the Galaxy" [ref=e71]
+                - generic [ref=e73]: exchange
+              - generic [ref=e74]:
+                - generic [ref=e75]:
+                  - generic [ref=e76]: The Hitchhiker's Guide to the Galaxy
+                  - generic [ref=e77]: by Douglas Adams
+                  - generic [ref=e78]:
+                    - generic [ref=e79]:
+                      - img [ref=e80]
+                      - generic [ref=e83]: Karachi
+                    - button "View Seller" [ref=e84]
+                - generic [ref=e85]:
+                  - paragraph [ref=e86]: Exchange
+                  - generic [ref=e87]: like new
+          - 'link "Cover of Sherlock Holmes: Complete Collection exchange Sherlock Holmes: Complete Collection by Arthur Conan Doyle Lahore View Seller Exchange used" [ref=e89] [cursor=pointer]':
+            - /url: /books/699f190dc397439b6362b46d
+            - generic [ref=e91]:
+              - generic [ref=e92]:
+                - 'img "Cover of Sherlock Holmes: Complete Collection" [ref=e93]'
+                - generic [ref=e95]: exchange
+              - generic [ref=e96]:
+                - generic [ref=e97]:
+                  - generic [ref=e98]: "Sherlock Holmes: Complete Collection"
+                  - generic [ref=e99]: by Arthur Conan Doyle
+                  - generic [ref=e100]:
+                    - generic [ref=e101]:
+                      - img [ref=e102]
+                      - generic [ref=e105]: Lahore
+                    - button "View Seller" [ref=e106]
+                - generic [ref=e107]:
+                  - paragraph [ref=e108]: Exchange
+                  - generic [ref=e109]: used
+          - link "Cover of The Alchemist exchange The Alchemist by Paulo Coelho Karachi View Seller Exchange like new" [ref=e111] [cursor=pointer]:
+            - /url: /books/699f190dc397439b6362b46c
+            - generic [ref=e113]:
+              - generic [ref=e114]:
+                - img "Cover of The Alchemist" [ref=e115]
+                - generic [ref=e117]: exchange
+              - generic [ref=e118]:
+                - generic [ref=e119]:
+                  - generic [ref=e120]: The Alchemist
+                  - generic [ref=e121]: by Paulo Coelho
+                  - generic [ref=e122]:
+                    - generic [ref=e123]:
+                      - img [ref=e124]
+                      - generic [ref=e127]: Karachi
+                    - button "View Seller" [ref=e128]
+                - generic [ref=e129]:
+                  - paragraph [ref=e130]: Exchange
+                  - generic [ref=e131]: like new
+          - link "Cover of Pride and Prejudice exchange Pride and Prejudice by Jane Austen Lahore View Seller Exchange worn" [ref=e133] [cursor=pointer]:
+            - /url: /books/699f190dc397439b6362b469
+            - generic [ref=e135]:
+              - generic [ref=e136]:
+                - img "Cover of Pride and Prejudice" [ref=e137]
+                - generic [ref=e139]: exchange
+              - generic [ref=e140]:
+                - generic [ref=e141]:
+                  - generic [ref=e142]: Pride and Prejudice
+                  - generic [ref=e143]: by Jane Austen
+                  - generic [ref=e144]:
+                    - generic [ref=e145]:
+                      - img [ref=e146]
+                      - generic [ref=e149]: Lahore
+                    - button "View Seller" [ref=e150]
+                - generic [ref=e151]:
+                  - paragraph [ref=e152]: Exchange
+                  - generic [ref=e153]: worn
+        - link "Browse All Listings" [ref=e155] [cursor=pointer]:
+          - /url: /books
+          - text: Browse All Listings
+          - img [ref=e156]
+      - generic [ref=e159]:
+        - generic [ref=e160]:
+          - heading "A World of Stories Awaits" [level=2] [ref=e161]
+          - paragraph [ref=e162]: Engage with our community in three simple ways.
+        - generic [ref=e163]:
+          - generic [ref=e164]:
+            - generic [ref=e165]:
+              - img [ref=e167]
+              - heading "Buy & Sell" [level=3] [ref=e170]
+            - paragraph [ref=e172]: Find incredible deals on second-hand books or list your own to declutter and earn.
+          - generic [ref=e173]:
+            - generic [ref=e174]:
+              - img [ref=e176]
+              - heading "Exchange" [level=3] [ref=e181]
+            - paragraph [ref=e183]: Swap books with fellow readers in your city. A cost-effective way to refresh your reading list.
+          - generic [ref=e184]:
+            - generic [ref=e185]:
+              - img [ref=e187]
+              - heading "Join the Community" [level=3] [ref=e192]
+            - paragraph [ref=e194]: Connect with like-minded readers, discuss your favorite genres, and get amazing recommendations.
+      - generic [ref=e196]:
+        - generic [ref=e197]:
+          - heading "Find Your Niche" [level=2] [ref=e198]
+          - paragraph [ref=e199]: From sci-fi fanatics to history buffs, there's a group for everyone.
+        - generic [ref=e200]:
+          - link "BookEx Readers Lounge BookEx Readers Lounge The official BookEx community for book lovers! Share recommendations, discuss your favourites, and find your next great read. 3 members Join Now" [ref=e202] [cursor=pointer]:
+            - /url: /community/699f190dc397439b6362b46e
+            - img "BookEx Readers Lounge" [ref=e204]
+            - generic [ref=e205]:
+              - heading "BookEx Readers Lounge" [level=3] [ref=e206]
+              - paragraph [ref=e207]: The official BookEx community for book lovers! Share recommendations, discuss your favourites, and find your next great read.
+              - generic [ref=e208]:
+                - generic [ref=e209]:
+                  - img [ref=e210]
+                  - generic [ref=e215]: 3 members
+                - generic [ref=e216]:
+                  - text: Join Now
+                  - img [ref=e217]
+          - link "Lahori Book Lahori Book Lahore community 1 members Join Now" [ref=e220] [cursor=pointer]:
+            - /url: /community/69afcdb52c8d27125663abc7
+            - img "Lahori Book" [ref=e222]
+            - generic [ref=e223]:
+              - heading "Lahori Book" [level=3] [ref=e224]
+              - paragraph [ref=e225]: Lahore community
+              - generic [ref=e226]:
+                - generic [ref=e227]:
+                  - img [ref=e228]
+                  - generic [ref=e233]: 1 members
+                - generic [ref=e234]:
+                  - text: Join Now
+                  - img [ref=e235]
+    - contentinfo [ref=e237]:
+      - generic [ref=e238]:
+        - generic [ref=e239]:
+          - generic [ref=e240]:
+            - link "BookEx" [ref=e241] [cursor=pointer]:
+              - /url: /
+              - img [ref=e242]
+              - generic [ref=e244]: BookEx
+            - paragraph [ref=e245]: Your community for buying, selling, and exchanging pre-loved books. Give your stories a new home.
+          - generic [ref=e246]:
+            - heading "BookEx" [level=3] [ref=e247]
+            - list [ref=e248]:
+              - listitem [ref=e249]:
+                - link "Buy" [ref=e250] [cursor=pointer]:
+                  - /url: /books
+              - listitem [ref=e251]:
+                - link "Exchange" [ref=e252] [cursor=pointer]:
+                  - /url: /exchange
+              - listitem [ref=e253]:
+                - link "Donate" [ref=e254] [cursor=pointer]:
+                  - /url: /donate
+          - generic [ref=e255]:
+            - heading "Community" [level=3] [ref=e256]
+            - list [ref=e257]:
+              - listitem [ref=e258]:
+                - link "Discussions" [ref=e259] [cursor=pointer]:
+                  - /url: /community
+              - listitem [ref=e260]:
+                - link "My Profile" [ref=e261] [cursor=pointer]:
+                  - /url: /profile/me
+          - generic [ref=e262]:
+            - heading "Join Our Newsletter" [level=3] [ref=e263]
+            - paragraph [ref=e264]: Get the latest updates on new listings and community events.
+            - generic [ref=e265]:
+              - textbox "Email" [ref=e266]
+              - button "Subscribe" [ref=e267] [cursor=pointer]
+        - paragraph [ref=e269]: © 2026 BookEx. All rights reserved.
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=e270]

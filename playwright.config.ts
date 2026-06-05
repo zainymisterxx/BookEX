@@ -46,7 +46,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         channel: 'chrome',
       },
-      testMatch: ['**/public.spec.ts', '**/auth.spec.ts'],
+      testMatch: ['**/public.spec.ts', '**/auth.spec.ts', '**/guest-audit.spec.ts'],
     },
   ],
   webServer: {

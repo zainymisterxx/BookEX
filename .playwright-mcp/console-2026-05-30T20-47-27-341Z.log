@@ -1,0 +1,5 @@
+[     307ms] [LOG] No session, skipping socket connection @ https://book-ex-nine.vercel.app/_next/static/chunks/5127-7eb7f4ca2d030f85.js:0
+[     320ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://book-ex-nine.vercel.app/_next/image?url=https%3A%2F%2Fpicsum.photos%2Fseed%2Fbook1%2F400%2F600&w=640&q=75:0
+[     325ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://book-ex-nine.vercel.app/_next/image?url=https%3A%2F%2Fpicsum.photos%2Fseed%2Fbook3%2F400%2F600&w=640&q=75:0
+[     327ms] [ERROR] Failed to load resource: the server responded with a status of 400 () @ https://book-ex-nine.vercel.app/_next/image?url=https%3A%2F%2Fpicsum.photos%2Fseed%2Fbook2%2F400%2F600&w=640&q=75:0
+[    1176ms] [LOG] No session, skipping socket connection @ https://book-ex-nine.vercel.app/_next/static/chunks/5127-7eb7f4ca2d030f85.js:0

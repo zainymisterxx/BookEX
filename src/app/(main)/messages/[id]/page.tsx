@@ -110,23 +110,20 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     socketRef.current = io(socketUrl);
 
     socketRef.current.on('connect', () => {
-      console.log('Connected to socket server');
+      // Authenticate the socket so joinChat is accepted
+      socketRef.current?.emit('joinUserRoom', { userId: user.id });
       socketRef.current?.emit('joinChat', id);
     });
 
     socketRef.current.on('receiveMessage', (message: Message) => {
-        // Add message with deduplication check to prevent duplicates
         setMessages(prev => {
-            // Check if message already exists (by ID or temporary optimistic ID)
-            const messageExists = prev.some(msg => 
+            const body = message.content ?? message.text;
+            const messageExists = prev.some(msg =>
                 String(msg._id) === String(message._id) ||
-                (msg._id === message.createdAt && msg.senderId === message.senderId && msg.text === message.text)
+                (msg._id === message.createdAt && msg.senderId === message.senderId &&
+                 (msg.content ?? msg.text) === body)
             );
-            
-            if (messageExists) {
-                return prev;
-            }
-            
+            if (messageExists) return prev;
             return [...prev, message];
         });
     });
@@ -154,11 +151,11 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
 
     // Optimistic UI update for the sender
     const tempTimestamp = new Date().toISOString();
-    const optimisticMessage: Message = { 
-        _id: tempTimestamp, // Use timestamp as temp ID for deduplication
-        senderId: user.id, 
-        text: currentMessage, 
-        createdAt: tempTimestamp 
+    const optimisticMessage: Message = {
+        _id: tempTimestamp,
+        senderId: user.id,
+        content: currentMessage,
+        createdAt: tempTimestamp,
     };
     setMessages(prev => [...prev, optimisticMessage]);
 
@@ -223,7 +220,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
             </Button>
             <Avatar className="h-12 w-12 border-2">
                 <AvatarImage src={chat.otherParticipant?.avatarUrl} alt={chat.otherParticipant?.name} />
-                <AvatarFallback>{chat.otherParticipant?.name.charAt(0)}</AvatarFallback>
+                <AvatarFallback>{chat.otherParticipant?.name?.charAt(0) ?? '?'}</AvatarFallback>
             </Avatar>
             <div className="flex-1">
                 <p className="font-bold text-lg">{chat.otherParticipant?.name}</p>
@@ -269,11 +266,11 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
                 {message.senderId !== user.id && (
                     <Avatar className="h-8 w-8 border-2 self-start">
                         <AvatarImage src={chat.otherParticipant?.avatarUrl} />
-                        <AvatarFallback>{chat.otherParticipant?.name.charAt(0)}</AvatarFallback>
+                        <AvatarFallback>{chat.otherParticipant?.name?.charAt(0) ?? '?'}</AvatarFallback>
                     </Avatar>
                 )}
                 <div className={cn("max-w-xs md:max-w-md p-3 rounded-2xl", message.senderId === user.id ? "bg-primary text-primary-foreground rounded-br-none" : "bg-background rounded-bl-none border-2")}>
-                    <p className="text-base">{message.text}</p>
+                    <p className="text-base">{message.content ?? message.text}</p>
                 </div>
                 </div>
             ))}

@@ -37,16 +37,44 @@ export function ExchangeProposalModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [invalidReason, setInvalidReason] = useState<string | null>(null);
   const [currentUserCity, setCurrentUserCity] = useState<string | null>(null);
+  const [selectedTone, setSelectedTone] = useState<'friendly' | 'direct' | 'enthusiastic'>('friendly');
+  const [isEdited, setIsEdited] = useState(false);
   
   const { toast } = useToast();
   const router = useRouter();
 
+  const getTemplateMessage = (tone: 'friendly' | 'direct' | 'enthusiastic', bookOfferTitle?: string) => {
+    const offerTitle = bookOfferTitle || 'one of my books';
+    const targetTitle = targetBook.title;
+    
+    switch (tone) {
+      case 'friendly':
+        return `Hi! I'd love to swap my copy of "${offerTitle}" for your "${targetTitle}". I've been hoping to read it and would be thrilled if we could make this exchange. Let me know if that works for you!`;
+      case 'direct':
+        return `Hi! Would you be interested in exchanging your "${targetTitle}" for my copy of "${offerTitle}"? Let me know if you're open to the swap.`;
+      case 'enthusiastic':
+        return `Hi there! I saw you have "${targetTitle}" available for exchange. I have a copy of "${offerTitle}" that I'd love to trade. Let's make this swap happen!`;
+      default:
+        return '';
+    }
+  };
+
   useEffect(() => {
     if (isOpen && currentUserId) {
       fetchMyExchangeBooks();
+      setIsEdited(false);
+      setSelectedTone('friendly');
+      setSelectedBookId('');
       setProposalMessage(`Hi! I'm interested in your book "${targetBook.title}". Would you like to exchange it for one of my books?`);
     }
   }, [isOpen, currentUserId, targetBook.title]);
+
+  useEffect(() => {
+    if (!isEdited && isOpen) {
+      const selectedBook = myBooks.find(b => String(b._id) === selectedBookId);
+      setProposalMessage(getTemplateMessage(selectedTone, selectedBook?.title));
+    }
+  }, [selectedBookId, selectedTone, myBooks, isOpen]);
 
   const fetchMyExchangeBooks = async () => {
     setIsLoading(true);
@@ -124,14 +152,14 @@ export function ExchangeProposalModal({
       if (result.success && result.data?.chatId) {
         toast({
           title: "Exchange Proposed!",
-          description: "Your exchange proposal has been sent. You can continue the conversation in the chat.",
+          description: "Your proposal has been sent. Continue the conversation in the chat.",
         });
         onClose();
-        router.push(`/messages/${result.data.chatId}`);
+        router.push(`/messages?chatId=${result.data.chatId}&userId=${targetUserId}`);
       } else {
         toast({
-          title: "Error",
-          description: "Failed to propose exchange",
+          title: "Could not propose exchange",
+          description: (!result.success && result.message) || "Please try again.",
           variant: "destructive",
         });
       }
@@ -139,7 +167,7 @@ export function ExchangeProposalModal({
       console.error('Error proposing exchange:', error);
       toast({
         title: "Error",
-        description: "Failed to propose exchange",
+        description: (error as Error)?.message || "Failed to propose exchange",
         variant: "destructive",
       });
     } finally {
@@ -259,20 +287,60 @@ export function ExchangeProposalModal({
           </div>
 
           {/* Proposal Message */}
-          <div className="space-y-2">
-            <Label htmlFor="proposal-message">Proposal Message</Label>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="proposal-message">Proposal Message</Label>
+              {selectedBookId && (
+                <div className="flex gap-1.5">
+                  {(['friendly', 'direct', 'enthusiastic'] as const).map((tone) => (
+                    <Button
+                      key={tone}
+                      type="button"
+                      variant={selectedTone === tone ? "default" : "outline"}
+                      size="sm"
+                      className="text-xs px-2.5 py-1 h-7 capitalize transition-all duration-200"
+                      onClick={() => {
+                        setSelectedTone(tone);
+                        const selectedBook = myBooks.find(b => String(b._id) === selectedBookId);
+                        setProposalMessage(getTemplateMessage(tone, selectedBook?.title));
+                        setIsEdited(false);
+                      }}
+                    >
+                      {tone}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </div>
+            
             <Textarea
               id="proposal-message"
               placeholder="Introduce yourself and explain why you'd like to make this exchange..."
               value={proposalMessage}
-              onChange={(e) => setProposalMessage(e.target.value)}
+              onChange={(e) => {
+                setProposalMessage(e.target.value);
+                setIsEdited(true);
+              }}
               rows={4}
               required
-              className="resize-none"
+              className="resize-none focus-visible:ring-primary focus-visible:ring-offset-2 transition-all"
             />
-            <p className="text-xs text-muted-foreground">
-              This message will be sent to the book owner along with your exchange proposal.
-            </p>
+            <div className="flex justify-between items-center text-xs text-muted-foreground">
+              <span>This message will be sent to the book owner along with your exchange proposal.</span>
+              {isEdited && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEdited(false);
+                    const selectedBook = myBooks.find(b => String(b._id) === selectedBookId);
+                    setProposalMessage(getTemplateMessage(selectedTone, selectedBook?.title));
+                  }}
+                  className="text-primary hover:underline font-medium focus:outline-none"
+                >
+                  Reset Template
+                </button>
+              )}
+            </div>
           </div>
 
                 {/* Action Buttons */}

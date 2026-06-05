@@ -45,7 +45,7 @@ interface AdminDashboardClientProps {
 export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps) {
     const [data, setData] = useState<AdminData>(initialData);
     const [isLoading, setIsLoading] = useState(false);
-    const [activeTab, setActiveTab] = useState('overview');
+    const [activeTab, setActiveTab] = useState('comprehensive');
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
     // Reports tab state
@@ -301,7 +301,6 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
 
     const sidebarItems = [
         { id: 'comprehensive', label: 'Dashboard', icon: Shield },
-        { id: 'overview', label: 'Overview', icon: Users },
         { 
             id: 'organizations', 
             label: 'Organizations', 
@@ -450,35 +449,6 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                         </h1>
                     </div>
                     {activeTab === 'comprehensive' && <SimpleComprehensiveDashboard />}
-                    
-                    {activeTab === 'overview' && (
-                        <div className="space-y-6 h-full">
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle className="font-headline text-2xl">Platform Activity</CardTitle>
-                                    <CardDescription>Overview of key metrics.</CardDescription>
-                                </CardHeader>
-                                <CardContent className="grid md:grid-cols-4 gap-6">
-                                    <div className="p-6 bg-background rounded-lg border">
-                                        <h3 className="text-sm font-medium text-muted-foreground">Total Users</h3>
-                                        <p className="text-3xl font-bold">{userCount}</p>
-                                    </div>
-                                    <div className="p-6 bg-background rounded-lg border">
-                                        <h3 className="text-sm font-medium text-muted-foreground">Active Listings</h3>
-                                        <p className="text-3xl font-bold">{listingCount}</p>
-                                    </div>
-                                    <div className="p-6 bg-background rounded-lg border">
-                                        <h3 className="text-sm font-medium text-muted-foreground">Organizations</h3>
-                                        <p className="text-3xl font-bold">{organizations?.length || 0}</p>
-                                    </div>
-                                    <div className="p-6 bg-background rounded-lg border">
-                                        <h3 className="text-sm font-medium text-muted-foreground">Pending Reports</h3>
-                                        <p className="text-3xl font-bold text-yellow-600">{dashboardReports?.filter(r => r.status === 'pending').length || 0}</p>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </div>
-                    )}
 
                     {activeTab === 'organizations' && (
                         <div className="space-y-6 h-full">

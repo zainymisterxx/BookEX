@@ -8,6 +8,8 @@ import { ProfileCompletionProvider } from '@/components/profile-completion-provi
 import { SocketProvider } from '@/components/socket-provider';
 import { NotificationProvider } from '@/components/notification-provider';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-config';
 
 export const metadata: Metadata = {
   title: 'BookEX — Exchange, Buy & Donate Books',
@@ -39,16 +41,18 @@ const fontHeadline = Merriweather({
   weight: ['400', '700'],
 });
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await getServerSession(authOptions);
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={cn('font-body antialiased', fontBody.variable, fontHeadline.variable)} suppressHydrationWarning>
         <ErrorBoundary>
-          <AuthProvider>
+          <AuthProvider session={session}>
             <ProfileCompletionProvider>
               <SocketProvider>
                 <NotificationProvider>

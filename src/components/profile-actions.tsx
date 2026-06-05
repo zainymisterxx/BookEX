@@ -31,7 +31,7 @@ export function ProfileActions({ profileUser }: ProfileActionsProps) {
         startTransition(async () => {
             const result = await startChat(String(profileUser._id));
             if (result.success && result.data?.chatId) {
-                router.push(`/messages/${result.data.chatId}`);
+                router.push(`/messages?chatId=${result.data.chatId}&userId=${profileUser._id}`);
             } else {
                 toast({ variant: 'destructive', title: 'Could not start conversation.' });
             }

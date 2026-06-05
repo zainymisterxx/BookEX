@@ -37,29 +37,22 @@ if (process.env.NODE_ENV === 'development') {
   if (!globalWithMongo._mongoClientPromise) {
     client = new MongoClient(uri, options);
     globalWithMongo._mongoClientPromise = client.connect();
+    // Suppress unhandled rejection — callers handle errors when they await
+    globalWithMongo._mongoClientPromise.catch(() => {});
   }
   clientPromise = globalWithMongo._mongoClientPromise;
 } else {
   // In production mode, it's best to not use a global variable.
   client = new MongoClient(uri, options);
   clientPromise = client.connect();
+  // Suppress unhandled rejection — callers handle errors when they await
+  clientPromise.catch(() => {});
 }
 
-// Initialize Redis connection with better error handling
-let redisConnected = false;
-redisCache.connect()
-  .then(() => {
-    redisConnected = true;
-    console.log('Redis connected successfully');
-  })
-  .catch((error) => {
-    console.error('Failed to connect to Redis:', error);
-    console.log('Application will continue without caching');
-    redisConnected = false;
-  });
-
-// Export Redis connection status for other modules to check
-export { redisConnected };
+// Attempt Redis connection at startup; failures are non-fatal (app works without caching)
+redisCache.connect().catch((error) => {
+  console.warn('Redis unavailable, continuing without caching:', (error as Error).message);
+});
 
 export default clientPromise;
 

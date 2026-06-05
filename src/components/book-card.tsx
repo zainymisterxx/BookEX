@@ -19,10 +19,11 @@ interface BookCardProps {
   book: Book;
   className?: string;
   searchTerm?: string;
-  showManageOptions?: boolean; // New prop for showing edit/delete
+  showManageOptions?: boolean;
+  isOwnListing?: boolean;
 }
 
-export function BookCard({ book, className, searchTerm = '', showManageOptions = false }: BookCardProps) {
+export function BookCard({ book, className, searchTerm = '', showManageOptions = false, isOwnListing = false }: BookCardProps) {
   const bookId = String(book._id);
   const [isDeleting, setIsDeleting] = useState(false);
   const { toast } = useToast();
@@ -71,9 +72,14 @@ export function BookCard({ book, className, searchTerm = '', showManageOptions =
                 placeholder="blur"
                 blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAIAAoDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAhEAACAQMDBQAAAAAAAAAAAAABAgMABAUGIWGRkrHB0f/EABUBAQEAAAAAAAAAAAAAAAAAAAMF/8QAGhEAAgIDAAAAAAAAAAAAAAAAAAECEgMRkf/aAAwDAQACEQMRAD8AltJagyeH0AthI5xdrLcNM91BF5pX2HaH9bcfaSXWGaRmknyJckliyjqTzSlT54b6bk+h0R//2Q=="
               />
-               <div className="absolute top-2 right-2 transition-transform duration-200 group-hover:scale-105">
+              <div className="absolute top-2 right-2 transition-transform duration-200 group-hover:scale-105">
                 <Badge variant={book.type === 'sell' ? 'default' : 'secondary'} className="capitalize shadow-md text-sm">{book.type}</Badge>
               </div>
+              {isOwnListing && (
+                <div className="absolute top-2 left-2">
+                  <Badge className="bg-amber-500 hover:bg-amber-500 text-white text-xs shadow-md">Your Listing</Badge>
+                </div>
+              )}
             </div>
             <div className="p-4 space-y-1 flex flex-col flex-grow">
               <div className="flex-grow space-y-2">
@@ -92,16 +98,23 @@ export function BookCard({ book, className, searchTerm = '', showManageOptions =
                     <MapPin className="h-3 w-3 sm:h-4 sm:w-4 mr-1.5 flex-shrink-0" />
                     <span className="truncate">{(book as any).cityName || (book as any).city || ''}</span>
                   </div>
-                  <button
-                    type="button"
-                    className="text-primary hover:text-primary/80 transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      router.push(`/profile/${book.sellerId}`);
-                    }}
-                  >
-                    View Seller
-                  </button>
+                  {isOwnListing ? (
+                    <button
+                      type="button"
+                      className="text-amber-600 hover:text-amber-500 transition-colors font-medium"
+                      onClick={(e) => { e.stopPropagation(); router.push(`/books/sell?edit=${bookId}`); }}
+                    >
+                      Edit listing
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="text-primary hover:text-primary/80 transition-colors"
+                      onClick={(e) => { e.stopPropagation(); router.push(`/profile/${book.sellerId}`); }}
+                    >
+                      View Seller
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="flex items-center justify-between pt-2 mt-auto">

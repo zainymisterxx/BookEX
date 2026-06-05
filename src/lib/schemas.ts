@@ -236,7 +236,7 @@ export const userProfileSchema = z.object({
     .min(1, 'City is required')
     .max(100, 'City name must be 100 characters or less')
     .trim(),
-  avatarUrl: optionalPublicImageUrlSchema,
+  avatarUrl: optionalPublicImageUrlSchema.or(z.literal('')),
   phone: z.string()
     .max(20, 'Phone number must be 20 characters or less')
     .optional(),

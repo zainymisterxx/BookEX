@@ -1,0 +1,3 @@
+[     355ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://book-ex-nine.vercel.app/auth/login:0
+[     371ms] [LOG] No session, skipping socket connection @ https://book-ex-nine.vercel.app/_next/static/chunks/5127-7eb7f4ca2d030f85.js:0
+[     667ms] [LOG] No session, skipping socket connection @ https://book-ex-nine.vercel.app/_next/static/chunks/5127-7eb7f4ca2d030f85.js:0

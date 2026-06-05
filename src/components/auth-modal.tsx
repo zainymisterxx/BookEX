@@ -213,6 +213,36 @@ function AuthTabs({ initialTab, closeModal }: { initialTab: "login" | "signup", 
             {isLoginLoading ? <Loader2 className="animate-spin" /> : 'Login'}
           </Button>
         </form>
+        <div className="mt-6 pt-5 border-t border-muted/60">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="h-px bg-muted flex-grow" />
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Quick Demo Login</span>
+            <span className="h-px bg-muted flex-grow" />
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            {[
+              { label: 'Admin', email: 'admin@bookex.com', password: 'Admin@1234', role: 'System Owner', color: 'hover:border-amber-400 hover:bg-amber-500/5 hover:text-amber-700 dark:hover:text-amber-300' },
+              { label: 'Alice', email: 'alice@bookex.com', password: 'User@1234', role: 'Top Seller', color: 'hover:border-sky-400 hover:bg-sky-500/5 hover:text-sky-700 dark:hover:text-sky-300' },
+              { label: 'Bob',   email: 'bob@bookex.com',   password: 'User@1234', role: 'Exchanger', color: 'hover:border-indigo-400 hover:bg-indigo-500/5 hover:text-indigo-700 dark:hover:text-indigo-300' },
+              { label: 'Dan',   email: 'dan@bookex.com',   password: 'User@1234', role: 'Active Member', color: 'hover:border-emerald-400 hover:bg-emerald-500/5 hover:text-emerald-700 dark:hover:text-emerald-300' },
+            ].map(({ label, email, password, role, color }) => (
+              <button
+                key={email}
+                type="button"
+                onClick={() => { setLoginEmail(email); setLoginPassword(password); }}
+                className={`text-left text-xs border bg-background/50 rounded-lg p-2.5 hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 border-muted flex flex-col justify-between h-[68px] ${color}`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="font-bold">
+                    {label}
+                  </span>
+                  <span className="text-[9px] font-semibold tracking-wide uppercase px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">{role}</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground truncate w-full mt-1.5">{email}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </TabsContent>
       <TabsContent value="signup">
         <DialogHeader className="text-left mb-4">

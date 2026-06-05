@@ -217,6 +217,11 @@ io.on('connection', (socket) => {
       return;
     }
 
+    if (!chatId || !ObjectId.isValid(chatId) || chatId.length !== 24) {
+      socket.emit('error', { message: 'Invalid chat ID' });
+      return;
+    }
+
     try {
       const client = await clientPromise;
       const db = client.db('bookex');
@@ -276,6 +281,11 @@ io.on('connection', (socket) => {
     if (socket.authToken && isTokenExpired(socket.authToken)) {
         socket.emit('session_expired', { event: 'session_expired' });
         socket.disconnect(true);
+        return;
+    }
+
+    if (!chatId || !ObjectId.isValid(chatId) || chatId.length !== 24) {
+        socket.emit('error', { message: 'Invalid chat ID' });
         return;
     }
 

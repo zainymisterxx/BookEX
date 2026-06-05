@@ -5,8 +5,13 @@ import { ArrowRight, BookCheck, Repeat, Users } from 'lucide-react';
 import { getPopularCommunities, getRecentListings } from '@/lib/data';
 import { BookCard } from '@/components/book-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-config';
 
 export default async function HomePage() {
+  const session = await getServerSession(authOptions);
+  const currentUserId = session?.user?.id;
+  
   const recentListings = await getRecentListings(5);
   const popularCommunities = await getPopularCommunities(3);
 
@@ -74,7 +79,11 @@ export default async function HomePage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 md:gap-8">
             {recentListings.map((book) => (
-              <BookCard key={String(book._id)} book={book} />
+              <BookCard 
+                key={String(book._id)} 
+                book={book} 
+                isOwnListing={currentUserId === book.sellerId}
+              />
             ))}
           </div>
            <div className="text-center mt-12">

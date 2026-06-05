@@ -548,7 +548,7 @@ export async function updateUserProfile(profileData: { userId: string, name: str
             updatedUser: {
                 name: updateData.name,
                 username: updateData.username || currentUser.username,
-                image: updateData.avatarUrl || currentUser.avatarUrl,
+                image: updateData.avatarUrl !== undefined ? updateData.avatarUrl : currentUser.avatarUrl,
             }
         };
     });
@@ -1881,13 +1881,13 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
         const participantIds = [user.id, validatedOtherUserId.toString()].sort();
         const now = new Date().toISOString();
 
-        // Atomic find-or-create: prevents duplicate chats under concurrent calls (TOCTOU fix)
+        // Atomic find-or-create: prevents duplicate chats under concurrent calls (TOCTOU fix).
+        // Find ANY existing chat between these two users to prevent duplicates in sidebar
         const upsertResult = await db.collection("chats").findOneAndUpdate(
-            { participantIds: { $all: participantIds }, bookId: validatedBookId ?? null },
+            { participantIds },
             {
                 $setOnInsert: {
-                    participantIds,
-                    bookId: validatedBookId,
+                    bookId: validatedBookId ?? null,
                     messages: [],
                     updatedAt: now,
                     createdAt: now,
@@ -2097,9 +2097,8 @@ export async function isBookWishlisted(bookId: string): Promise<boolean> {
             return !!userWithWishlistItem;
         });
         
-        // Handle the wrapper's return type
-        if (typeof result === 'boolean') {
-            return result;
+        if (result.success) {
+            return result.data as boolean;
         }
         return false;
     } catch (error) {
@@ -2132,18 +2131,24 @@ export async function toggleWishlist(bookId: string, isWishlisted: boolean): Pro
             throw createAppError(ErrorType.NOT_FOUND, "Book not found");
         }
 
-        // Use consistent schema operations for add/remove
-        const updateOperation = isWishlisted
-            ? ConsistentWishlistOperations.createRemoveOperation(bookId)
-            : ConsistentWishlistOperations.createAddOperation(bookId);
-
-        const result = await db.collection("users").updateOne(
-            { _id: new ObjectId(user.id) },
-            updateOperation as any
-        );
-
-        if (result.modifiedCount === 0) {
-            throw createAppError(ErrorType.DATABASE, "Failed to update wishlist");
+        if (isWishlisted) {
+            // Remove by bookId
+            await db.collection("users").updateOne(
+                { _id: new ObjectId(user.id) },
+                ConsistentWishlistOperations.createRemoveOperation(bookId) as any
+            );
+        } else {
+            // Only add if not already present — avoids duplicate entries caused by
+            // $addToSet comparing the full object (including addedAt timestamp)
+            const alreadyExists = await db.collection("users").findOne(
+                ConsistentWishlistOperations.createExistsQuery(user.id, bookId)
+            );
+            if (!alreadyExists) {
+                await db.collection("users").updateOne(
+                    { _id: new ObjectId(user.id) },
+                    ConsistentWishlistOperations.createAddOperation(bookId) as any
+                );
+            }
         }
 
         // Notify book owner when their book is wishlisted (not when removed)
@@ -5875,8 +5880,8 @@ export async function proposeExchange(
                 // Centralized eligibility and location checks
                 const { default: locationUtils } = await import('@/lib/location/location-utils');
                 const eligibility = locationUtils.canUserExchange({
-                    proposer: { id: String(proposer._id), cityNormalized: proposer.cityNormalized, avatarUrl: proposer.avatarUrl, bio: proposer.bio },
-                    responder: { id: String(responder._id), cityNormalized: responder.cityNormalized, avatarUrl: responder.avatarUrl, bio: responder.bio },
+                    proposer: { ...proposer, id: String(proposer._id), listingsCount: 1 } as any,
+                    responder: { ...responder, id: String(responder._id), listingsCount: 1 } as any,
                     proposerBook: { sellerId: proposerBook.sellerId, status: proposerBook.status },
                     responderBook: { sellerId: responderBook.sellerId, status: responderBook.status }
                 });
@@ -5922,10 +5927,13 @@ export async function proposeExchange(
         
         // Find or create chat for communication
         const participantIds = [user.id, responderUserId].sort();
-        let chat = await db.collection("chats").findOne({
-            participantIds: { $all: participantIds },
-            bookId: validatedResponderBookId
-        });
+        
+        // Find ANY existing chat between these two users (including DM chats, 
+        // contact-seller chats for any book, etc) to prevent duplicates in sidebar
+        let chat = await db.collection("chats").findOne(
+            { participantIds },
+            { sort: { updatedAt: -1 } }
+        );
         
         if (!chat) {
             // Create new chat for this exchange
@@ -5995,16 +6003,20 @@ export async function proposeExchange(
         const systemMessage = {
             _id: new ObjectId(),
             senderId: 'system',
-            text: `📚 Exchange Proposed: "${proposerBook.title}" for "${responderBook.title}"${proposalMessage ? `\n\nMessage: ${proposalMessage}` : ''}`,
+            content: `📚 Exchange Proposed: "${proposerBook.title}" for "${responderBook.title}"${proposalMessage ? `\n\nMessage: ${proposalMessage}` : ''}`,
             createdAt: now
         };
-        
+
         await db.collection("chats").updateOne(
             { _id: new ObjectId(chat._id) },
-            { 
+            {
                 $push: { messages: systemMessage } as any,
-                $set: { 
-                    lastMessage: systemMessage.text,
+                $set: {
+                    lastMessage: {
+                        _id: systemMessage._id,
+                        content: systemMessage.content,
+                        createdAt: systemMessage.createdAt
+                    },
                     updatedAt: now
                 }
             }

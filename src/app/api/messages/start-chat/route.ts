@@ -34,44 +34,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Check if a conversation already exists between these users
-    const existingMessage = await db.collection('personalMessages')
-      .findOne({
-        $or: [
-          { senderId: session.user.id, receiverId: userId },
-          { senderId: userId, receiverId: session.user.id }
-        ]
-      });
+    const otherParticipant = {
+      _id: String(targetUser._id),
+      name: targetUser.name,
+      username: targetUser.username,
+      avatarUrl: targetUser.avatarUrl || targetUser.image,
+    };
 
-    if (existingMessage) {
-      // Return existing chat ID (we'll use a consistent format)
-      const chatId = [session.user.id, userId].sort().join('_');
-      return NextResponse.json({ 
-        chatId,
-        otherParticipant: {
-          _id: targetUser._id,
-          name: targetUser.name,
-          username: targetUser.username,
-          avatarUrl: targetUser.avatarUrl || targetUser.image
-        },
-        existing: true
-      });
+    // 1. Check the new chats collection first (ObjectId-based, no specific book)
+    const sortedIds = [session.user.id, userId].sort();
+    const existingChat = await db.collection('chats').findOne({
+      participantIds: sortedIds,
+      bookId: null,
+    });
+
+    if (existingChat) {
+      return NextResponse.json({ chatId: String(existingChat._id), otherParticipant, existing: true });
     }
 
-    // Create a new chat by creating an initial system message or placeholder
-    // This ensures the chat appears in the list
-    const chatId = [session.user.id, userId].sort().join('_');
-    
-    return NextResponse.json({ 
-      chatId,
-      otherParticipant: {
-        _id: targetUser._id,
-        name: targetUser.name,
-        username: targetUser.username,
-        avatarUrl: targetUser.avatarUrl || targetUser.image
-      },
-      existing: false
+    // 2. Fall back to legacy personalMessages collection
+    const existingMessage = await db.collection('personalMessages').findOne({
+      $or: [
+        { senderId: session.user.id, receiverId: userId },
+        { senderId: userId, receiverId: session.user.id },
+      ],
     });
+
+    if (existingMessage) {
+      return NextResponse.json({ chatId: sortedIds.join('_'), otherParticipant, existing: true });
+    }
+
+    // 3. Create new chat in the chats collection
+    const now = new Date().toISOString();
+    const inserted = await db.collection('chats').insertOne({
+      participantIds: sortedIds,
+      bookId: null,
+      messages: [],
+      updatedAt: now,
+      createdAt: now,
+    });
+
+    return NextResponse.json({ chatId: String(inserted.insertedId), otherParticipant, existing: false });
 
   } catch (error) {
     console.error('Start chat error:', error);

@@ -7,6 +7,8 @@ import { getBooksForExchange, getAvailableBookFilters, type EnhancedBookFilters 
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth-config";
 
 export default async function ExchangePage({
   searchParams,
@@ -30,8 +32,12 @@ export default async function ExchangePage({
     limit: itemsPerPage,
   };
 
-  const { books, totalCount, hasMore } = await getBooksForExchange(filters);
-  const { genres, conditions, cities } = await getAvailableBookFilters('exchange');
+  const [{ books, totalCount, hasMore }, { genres, conditions, cities }, session] = await Promise.all([
+    getBooksForExchange(filters),
+    getAvailableBookFilters('exchange'),
+    getServerSession(authOptions),
+  ]);
+  const currentUserId = session?.user?.id ?? null;
 
   const totalPages = Math.ceil(totalCount / itemsPerPage);
   const showPagination = totalPages > 1;
@@ -85,10 +91,11 @@ export default async function ExchangePage({
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 md:gap-8 mt-8">
               {books.map((book) => (
-                <BookCard 
-                  key={String(book._id)} 
-                  book={book} 
+                <BookCard
+                  key={String(book._id)}
+                  book={book}
                   searchTerm={filters.searchQuery || ''}
+                  isOwnListing={currentUserId !== null && String(book.sellerId) === currentUserId}
                 />
               ))}
             </div>

@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
 
     // Format new chats with organization/user info
     const formattedNewChats = await Promise.all(newChats.map(async (chat: any) => {
-      const otherUserId = chat.participantIds.find((id: string) => id !== session.user.id);
+      const otherUserId = chat.participantIds.map((id: unknown) => String(id)).find((id: string) => id !== session.user.id);
       
       // Get other participant info
       let otherParticipant = null;
@@ -213,9 +213,9 @@ export async function GET(request: NextRequest) {
 
     // Combine both types of chats and sort by last message time
     const allChats = [...formattedNewChats, ...formattedPersonalChats].sort((a, b) => {
-      const aTime = (a as any).lastMessage?.createdAt || (a as any).updatedAt || '';
-      const bTime = (b as any).lastMessage?.createdAt || (b as any).updatedAt || '';
-      return bTime.localeCompare(aTime);
+      const aTime = new Date((a as any).lastMessage?.createdAt || (a as any).updatedAt || 0).getTime();
+      const bTime = new Date((b as any).lastMessage?.createdAt || (b as any).updatedAt || 0).getTime();
+      return bTime - aTime;
     });
 
     return NextResponse.json({ chats: allChats });
