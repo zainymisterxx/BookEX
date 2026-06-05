@@ -22,6 +22,7 @@ import type { ChatMessage, CommunityRole } from '@/lib/types';
 import type { Session } from 'next-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useSocket } from '@/components/socket-provider';
+import { toggleCommunityMembership } from '@/app/actions';
 
 interface ChatChannelProps {
   channelId: string;
@@ -58,6 +59,29 @@ export function ChatChannel({
     onChatMessage,
     offChatMessage
   } = useSocket();
+
+  const handleJoinCommunity = () => {
+    if (!currentUser) {
+      toast({ variant: 'destructive', title: 'You must be logged in to join.' });
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const result = await toggleCommunityMembership(communityId, false);
+        if (result.success) {
+          toast({ 
+            title: `Welcome to the community!`,
+            description: "You successfully joined the community!"
+          });
+          window.location.reload();
+        } else {
+          toast({ variant: 'destructive', title: 'Could not update membership.', description: result.message });
+        }
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Network error. Please try again.' });
+      }
+    });
+  };
 
   const messagesPerPage = 50;
 
@@ -330,9 +354,17 @@ export function ChatChannel({
           <CardContent className="pt-6 text-center">
             <User className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-semibold mb-2">Join to Chat</h3>
-            <p className="text-muted-foreground">
+            <p className="text-muted-foreground mb-4">
               You need to be a member of this community to participate in chat.
             </p>
+            <Button
+              className="w-full"
+              onClick={handleJoinCommunity}
+              disabled={isPending}
+            >
+              {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Join Community
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -386,7 +418,7 @@ export function ChatChannel({
             new Date(message.createdAt).getTime() - new Date(prevMessage.createdAt).getTime() > 300000; // 5 minutes
 
           return (
-            <div key={String(message._id)} className={cn("flex gap-3", showAvatar ? "items-start" : "items-center")}>
+            <div key={String(message._id)} className={cn("flex gap-3 group", showAvatar ? "items-start" : "items-center")}>
               {showAvatar ? (
                 <Avatar className="h-8 w-8 border-2 flex-shrink-0">
                   <AvatarImage src={message.author.avatarUrl} alt={message.author.name} />

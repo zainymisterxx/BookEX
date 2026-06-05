@@ -58,6 +58,39 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
         }
     }, [tabParam]);
 
+    // Hash listener for admin search result clicks
+    useEffect(() => {
+        const handleHashChange = () => {
+            const hash = window.location.hash;
+            if (hash.startsWith('#users-')) {
+                setActiveTab('users');
+                const id = hash.replace('#users-', '');
+                setTimeout(() => {
+                    const el = document.getElementById(`users-${id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            } else if (hash.startsWith('#organizations-')) {
+                setActiveTab('organizations');
+                const id = hash.replace('#organizations-', '');
+                setTimeout(() => {
+                    const el = document.getElementById(`organizations-${id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            } else if (hash.startsWith('#reports-')) {
+                setActiveTab('reports');
+                const id = hash.replace('#reports-', '');
+                setTimeout(() => {
+                    const el = document.getElementById(`reports-${id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            }
+        };
+
+        handleHashChange();
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
+
     // Reports tab state
     const [reports, setReports] = useState<ReportWithUsers[]>([]);
     const [reportsStatus, setReportsStatus] = useState<ReportStatus>('pending');
@@ -180,15 +213,25 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
 
     const handleResolveReport = (reportId: string) => {
         startReportAction(async () => {
-            await resolveReport(reportId);
-            await fetchReports(reportsStatus, reportsPagination.currentPage);
+            const result = await resolveReport(reportId);
+            if (result.success) {
+                toast({ title: 'Report resolved successfully' });
+                await fetchReports(reportsStatus, reportsPagination.currentPage);
+            } else {
+                toast({ variant: 'destructive', title: 'Failed to resolve report', description: result.message });
+            }
         });
     };
 
     const handleRemoveAndResolve = (reportId: string, contentId: string, contentType: Report['reportedContentType']) => {
         startReportAction(async () => {
-            await removeContentAndResolveReport(reportId, contentId, contentType);
-            await fetchReports(reportsStatus, reportsPagination.currentPage);
+            const result = await removeContentAndResolveReport(reportId, contentId, contentType);
+            if (result.success) {
+                toast({ title: 'Content removed and report resolved successfully' });
+                await fetchReports(reportsStatus, reportsPagination.currentPage);
+            } else {
+                toast({ variant: 'destructive', title: 'Failed to remove content', description: result.message });
+            }
         });
     };
 
@@ -318,9 +361,9 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                 fixed lg:sticky lg:top-20 lg:h-[calc(100vh-5rem)] w-64 bg-card border-r border-border z-40 flex flex-col justify-between overflow-y-auto
             `}>
                 <div className="flex-1">
-                    <div className="p-6 border-b border-border">
+                    <div className="px-6 py-5 border-b border-border">
                         <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-                            Platform Navigation
+                            Admin Console
                         </span>
                     </div>
                     <nav className="p-4 space-y-1">
@@ -397,7 +440,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                             </TableHeader>
                                             <TableBody>
                                                 {organizations?.map((org) => (
-                                                    <TableRow key={String(org._id)}>
+                                                    <TableRow key={String(org._id)} id={`organizations-${org._id}`}>
                                                         <TableCell className="font-medium">
                                                             <Link 
                                                                 href={`/admin/organizations/${String(org._id)}`}
@@ -530,7 +573,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                             </TableHeader>
                                             <TableBody>
                                                 {filteredUsers?.map((user) => (
-                                                    <TableRow key={String(user._id)}>
+                                                    <TableRow key={String(user._id)} id={`users-${user._id}`}>
                                                         <TableCell className="font-medium">{user.name}</TableCell>
                                                         <TableCell>{user.email}</TableCell>
                                                         <TableCell>
@@ -671,7 +714,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                     </TableHeader>
                                                     <TableBody>
                                                         {reports.map((report) => (
-                                                            <TableRow key={String(report._id)}>
+                                                            <TableRow key={String(report._id)} id={`reports-${report._id}`}>
                                                                 <TableCell className="font-medium">
                                                                     {report.reporter?.name ?? report.reporterId ?? '—'}
                                                                 </TableCell>
@@ -692,7 +735,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                                     </Badge>
                                                                 </TableCell>
                                                                 <TableCell>
-                                                                    {new Date(report.createdAt).toLocaleDateString()}
+                                                                    {report.createdAt ? (isNaN(new Date(report.createdAt).getTime()) ? 'N/A' : new Date(report.createdAt).toLocaleDateString()) : 'N/A'}
                                                                 </TableCell>
                                                                 <TableCell>
                                                                     {report.status === 'pending' && (
@@ -754,7 +797,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                                 <span className="text-sm text-muted-foreground">{report.reason}</span>
                                                             </div>
                                                             <p className="text-xs text-muted-foreground">
-                                                                {new Date(report.createdAt).toLocaleDateString()}
+                                                                {report.createdAt ? (isNaN(new Date(report.createdAt).getTime()) ? 'N/A' : new Date(report.createdAt).toLocaleDateString()) : 'N/A'}
                                                             </p>
                                                             {report.status === 'pending' && (
                                                                 <div className="flex gap-2 pt-1">
@@ -859,7 +902,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                                     {log.reason ?? '—'}
                                                                 </TableCell>
                                                                 <TableCell className="text-sm">
-                                                                    {new Date(log.timestamp).toLocaleString()}
+                                                                    {log.timestamp ? (isNaN(new Date(log.timestamp).getTime()) ? 'N/A' : new Date(log.timestamp).toLocaleString()) : 'N/A'}
                                                                 </TableCell>
                                                             </TableRow>
                                                         ))}
@@ -882,7 +925,7 @@ export function AdminDashboardSidebar({ initialData }: AdminDashboardClientProps
                                                             <div className="flex items-center justify-between">
                                                                 <Badge variant="secondary" className="font-mono text-xs">{log.action}</Badge>
                                                                 <span className="text-xs text-muted-foreground">
-                                                                    {new Date(log.timestamp).toLocaleDateString()}
+                                                                    {log.timestamp ? (isNaN(new Date(log.timestamp).getTime()) ? 'N/A' : new Date(log.timestamp).toLocaleDateString()) : 'N/A'}
                                                                 </span>
                                                             </div>
                                                             <p className="text-xs text-muted-foreground">By: {log.performedBy}</p>

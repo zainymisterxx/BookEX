@@ -3890,8 +3890,8 @@ export async function getAdminReports(status?: 'pending' | 'resolved' | 'dismiss
         }, 'admin');
         
         // Handle the wrapper's return type
-        if (result && typeof result === 'object' && 'reports' in result && 'pagination' in result) {
-            return result as any;
+        if (result && result.success && result.data) {
+            return result.data as any;
         }
         
         // Return empty result on error
@@ -4407,8 +4407,9 @@ export async function getAuditLogs(page: number = 1, limit: number = 50): Promis
  */
 export async function resolveReport(reportId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
-        const report = await db.collection("reports").findOne({ _id: new ObjectId(reportId) });
-        await db.collection("reports").updateOne({ _id: new ObjectId(reportId) }, { $set: { status: 'resolved', resolvedBy: user.id, resolvedAt: new Date().toISOString() } });
+        const reportIdQuery = ObjectId.isValid(reportId) ? new ObjectId(reportId) : reportId;
+        const report = await db.collection("reports").findOne({ _id: reportIdQuery as any });
+        await db.collection("reports").updateOne({ _id: reportIdQuery as any }, { $set: { status: 'resolved', resolvedBy: user.id, resolvedAt: new Date().toISOString() } });
         // Notify the reporter that their report was acted on
         if (report?.reporterId) {
             try {
@@ -4446,9 +4447,12 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
 
         try {
             await session.withTransaction(async () => {
+                const reportIdQuery = ObjectId.isValid(reportId) ? new ObjectId(reportId) : reportId;
+                const contentIdQuery = ObjectId.isValid(contentId) ? new ObjectId(contentId) : contentId;
+
                 // Fetch report before modifying, so we can notify reporter
                 const report = await db.collection('reports').findOne(
-                    { _id: new ObjectId(reportId) },
+                    { _id: reportIdQuery as any },
                     { session }
                 );
 
@@ -4456,10 +4460,10 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
                 let contentAuthorId: string | null = null;
                 switch (contentType) {
                     case 'book': {
-                        const removedBook = await db.collection('books').findOne({ _id: new ObjectId(contentId) }, { session, projection: { sellerId: 1 } });
+                        const removedBook = await db.collection('books').findOne({ _id: contentIdQuery as any }, { session, projection: { sellerId: 1 } });
                         contentAuthorId = removedBook?.sellerId || null;
                         await db.collection('books').deleteOne(
-                            { _id: new ObjectId(contentId) },
+                            { _id: contentIdQuery as any },
                             { session }
                         );
                         break;
@@ -4467,7 +4471,7 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
                     case 'user':
                         // Suspend user instead of deleting
                         await db.collection('users').updateOne(
-                            { _id: new ObjectId(contentId) },
+                            { _id: contentIdQuery as any },
                             {
                                 $set: {
                                     status: 'suspended',
@@ -4479,19 +4483,19 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
                         break;
                     case 'post':
                         await db.collection('posts').deleteOne(
-                            { _id: new ObjectId(contentId) },
+                            { _id: contentIdQuery as any },
                             { session }
                         );
                         break;
                     case 'comment':
                         await db.collection('comments').deleteOne(
-                            { _id: new ObjectId(contentId) },
+                            { _id: contentIdQuery as any },
                             { session }
                         );
                         break;
                     case 'community':
                         await db.collection('communities').deleteOne(
-                            { _id: new ObjectId(contentId) },
+                            { _id: contentIdQuery as any },
                             { session }
                         );
                         break;
@@ -4512,7 +4516,7 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
 
                 // Resolve the report
                 await db.collection('reports').updateOne(
-                    { _id: new ObjectId(reportId) },
+                    { _id: reportIdQuery as any },
                     {
                         $set: {
                             status: 'resolved',
@@ -4536,7 +4540,7 @@ export async function removeContentAndResolveReport(reportId: string, contentId:
                             read: false,
                             createdAt: new Date().toISOString(),
                             metadata: { reportId: String(report._id) }
-                        });
+                        }, { session });
                     } catch (e) { console.warn('Failed to notify reporter:', e); }
                 }
             });

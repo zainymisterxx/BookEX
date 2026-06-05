@@ -77,6 +77,12 @@ export async function ensureDatabaseIndexes() {
     // Communities - Performance indexes
     await createIndexSafely(
       db.collection('communities'),
+      { members: 1 }, 
+      { background: true, name: 'communities_members' }
+    );
+
+    await createIndexSafely(
+      db.collection('communities'),
       { "members.userId": 1, "members.role": 1 }, 
       { background: true, name: 'communities_members_role' }
     );
@@ -166,18 +172,21 @@ export async function ensureDatabaseIndexes() {
       { background: true, name: 'exchanges_proposer_status' }
     );
     
-    await db.collection('exchanges').createIndex(
+    await createIndexSafely(
+      db.collection('exchanges'),
       { receiverId: 1, status: 1 }, 
       { background: true, name: 'exchanges_receiver_status' }
     );
 
     // Activity Logs - Security and audit trail
-    await db.collection('activity_logs').createIndex(
+    await createIndexSafely(
+      db.collection('activity_logs'),
       { userId: 1, timestamp: -1 },
       { background: true, name: 'activity_logs_user_timestamp' }
     );
 
-    await db.collection('activity_logs').createIndex(
+    await createIndexSafely(
+      db.collection('activity_logs'),
       { activityType: 1, timestamp: -1 },
       { background: true, name: 'activity_logs_type_timestamp' }
     );

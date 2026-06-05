@@ -196,67 +196,75 @@ export default function ComprehensiveAdminDashboard() {
     <div className="space-y-6">
       {/* Overview Stats */}
       <div className="grid md:grid-cols-4 gap-6">
-        <Card>
+        <Card className="hover:shadow-md hover:-translate-y-1 transition-all duration-300 border border-border/50">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Users</p>
-                <p className="text-2xl font-bold">{stats?.users.total || 0}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-2xl font-bold tracking-tight">{stats?.users.total || 0}</p>
+                <p className="text-xs text-muted-foreground mt-1">
                   +{stats?.users.weeklyGrowth || 0}% this week
                 </p>
               </div>
-              <Users className="h-8 w-8 text-primary" />
+              <div className="p-2.5 rounded-lg bg-blue-50 text-blue-600">
+                <Users className="h-6 w-6" />
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md hover:-translate-y-1 transition-all duration-300 border border-border/50">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Active Books</p>
-                <p className="text-2xl font-bold">{stats?.books.active || 0}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-2xl font-bold tracking-tight">{stats?.books.active || 0}</p>
+                <p className="text-xs text-muted-foreground mt-1">
                   {stats?.books.total || 0} total books
                 </p>
               </div>
-              <BookOpen className="h-8 w-8 text-primary" />
+              <div className="p-2.5 rounded-lg bg-green-50 text-green-600">
+                <BookOpen className="h-6 w-6" />
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md hover:-translate-y-1 transition-all duration-300 border border-border/50">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Daily Activity</p>
-                <p className="text-2xl font-bold">{stats?.activity.messages || 0}</p>
-                <p className="text-xs text-muted-foreground">Messages today</p>
+                <p className="text-2xl font-bold tracking-tight">{stats?.activity.messages || 0}</p>
+                <p className="text-xs text-muted-foreground mt-1">Messages today</p>
               </div>
-              <MessageSquare className="h-8 w-8 text-primary" />
+              <div className="p-2.5 rounded-lg bg-indigo-50 text-indigo-600">
+                <MessageSquare className="h-6 w-6" />
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md hover:-translate-y-1 transition-all duration-300 border border-border/50">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Security Score</p>
-                <p className="text-2xl font-bold">{stats?.security.healthScore || 0}%</p>
+                <p className="text-2xl font-bold tracking-tight">{stats?.security.healthScore || 0}%</p>
                 <div className="flex items-center mt-1">
                   {(stats?.security.healthScore || 0) > 90 ? (
-                    <CheckCircle className="h-4 w-4 text-green-500 mr-1" />
+                    <CheckCircle className="h-3.5 w-3.5 text-green-500 mr-1" />
                   ) : (
-                    <AlertTriangle className="h-4 w-4 text-yellow-500 mr-1" />
+                    <AlertTriangle className="h-3.5 w-3.5 text-yellow-500 mr-1" />
                   )}
                   <span className="text-xs text-muted-foreground">
                     {(stats?.security.healthScore || 0) > 90 ? 'Excellent' : 'Needs attention'}
                   </span>
                 </div>
               </div>
-              <Shield className="h-8 w-8 text-primary" />
+              <div className="p-2.5 rounded-lg bg-amber-50 text-amber-600">
+                <Shield className="h-6 w-6" />
+              </div>
             </div>
           </CardContent>
         </Card>

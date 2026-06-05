@@ -78,9 +78,11 @@ export function Header() {
     <header suppressHydrationWarning className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-20 items-center">
         <div className="mr-4 hidden md:flex">
-          <Link href="/" className="flex items-center gap-2">
-            <BookOpen className="h-7 w-7 text-primary" />
-            <span className="font-bold font-headline text-xl text-primary">BookEx</span>
+          <Link href="/" className="flex items-center gap-2.5 group transition-all duration-300">
+            <div className="p-1.5 rounded-lg bg-primary/5 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-300">
+              <BookOpen className="h-6 w-6" />
+            </div>
+            <span className="font-extrabold font-headline text-xl tracking-tight text-primary">BookEx</span>
           </Link>
         </div>
 
@@ -94,9 +96,11 @@ export function Header() {
             </SheetTrigger>
             <SheetContent side="left">
               <div className="flex flex-col gap-4 p-4">
-                <Link href="/" className="flex items-center gap-2 mb-4">
-                  <BookOpen className="h-7 w-7 text-primary" />
-                  <span className="font-bold font-headline text-xl text-primary">BookEx</span>
+                <Link href="/" className="flex items-center gap-2.5 mb-4 group transition-all duration-300">
+                  <div className="p-1.5 rounded-lg bg-primary/5 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-300">
+                    <BookOpen className="h-6 w-6" />
+                  </div>
+                  <span className="font-extrabold font-headline text-xl tracking-tight text-primary">BookEx</span>
                 </Link>
                 <nav className="flex flex-col gap-2">
                   {navLinks.map((link) => (

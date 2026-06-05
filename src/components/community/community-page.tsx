@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useTransition } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,8 @@ import {
   Settings,
   Plus,
   X,
-  Menu
+  Menu,
+  Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Community, CommunityRole, ChatMessage } from '@/lib/types';
@@ -27,6 +28,12 @@ import { ForumChannel } from './forum-channel';
 import { ChatChannel } from './chat-channel';
 import { MemberSidebar } from './member-sidebar';
 import { isMember, getMemberInfo } from '@/lib/community-permissions-client';
+import { useToast } from '@/hooks/use-toast';
+import { toggleCommunityMembership, createChannel } from '@/app/actions';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface CommunityPageProps {
   community: Community;
@@ -39,6 +46,67 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
   const [userRole, setUserRole] = useState<CommunityRole | null>(null);
   const [showChannelSidebar, setShowChannelSidebar] = useState(false);
   const [showMemberSidebar, setShowMemberSidebar] = useState(false);
+
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
+
+  // Add Channel Modal states
+  const [addChannelOpen, setAddChannelOpen] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelType, setNewChannelType] = useState<'forum' | 'chat'>('forum');
+  const [newChannelDesc, setNewChannelDesc] = useState('');
+
+  const handleToggleMembership = () => {
+    if (!currentUser || !community) {
+      toast({ variant: 'destructive', title: 'You must be logged in to join.' });
+      return;
+    }
+    const communityId = String(community._id);
+    startTransition(async () => {
+      try {
+        const result = await toggleCommunityMembership(communityId, isMember);
+        if (result.success) {
+          setIsMember(!isMember);
+          toast({ 
+            title: isMember ? `You left ${community.name}` : `Welcome to ${community.name}!`,
+            description: isMember ? "You are no longer a member." : "You successfully joined the community!"
+          });
+          window.location.reload();
+        } else {
+          toast({ variant: 'destructive', title: 'Could not update membership.', description: result.message });
+        }
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Network error. Please try again.' });
+      }
+    });
+  };
+
+  const handleCreateChannelSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newChannelName.trim();
+    if (!name) return;
+    const communityId = String(community._id);
+    startTransition(async () => {
+      try {
+        const result = await createChannel(communityId, {
+          name,
+          type: newChannelType,
+          description: newChannelDesc.trim() || undefined
+        });
+        if (result.success) {
+          toast({ title: 'Channel created successfully!' });
+          setAddChannelOpen(false);
+          setNewChannelName('');
+          setNewChannelDesc('');
+          window.location.reload();
+        } else {
+          toast({ variant: 'destructive', title: 'Failed to create channel', description: result.message });
+        }
+      } catch {
+        toast({ variant: 'destructive', title: 'Network error. Please try again.' });
+      }
+    });
+  };
 
   // Get user membership status and role
   useEffect(() => {
@@ -119,7 +187,7 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
           <div className="absolute left-0 top-0 w-64 h-full bg-background border-r border-border flex flex-col">
             {/* Mobile Channel Content - Same as desktop but with close button */}
             <div className="p-4 border-b border-border">
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <Avatar className="h-10 w-10">
                     <AvatarImage src={community.imageUrl} alt={community.name} />
@@ -134,6 +202,16 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
+              <Button
+                variant={isMember ? "outline" : "default"}
+                size="sm"
+                className="w-full mt-2"
+                onClick={handleToggleMembership}
+                disabled={isPending}
+              >
+                {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isMember ? "Leave Community" : "Join Community"}
+              </Button>
             </div>
             {/* Channel List - Same as desktop */}
             <div className="flex-1 overflow-y-auto">
@@ -213,6 +291,16 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
               </Button>
             )}
           </div>
+          <Button
+            variant={isMember ? "outline" : "default"}
+            size="sm"
+            className="w-full mt-3"
+            onClick={handleToggleMembership}
+            disabled={isPending}
+          >
+            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isMember ? "Leave Community" : "Join Community"}
+          </Button>
         </div>
 
         {/* Channels List */}
@@ -268,10 +356,77 @@ export function CommunityPage({ community, currentUser }: CommunityPageProps) {
           {/* Add Channel Button (Admin/Moderator only) */}
           {userRole && (userRole === 'admin' || userRole === 'moderator') && (
             <div className="p-2">
-              <Button variant="ghost" size="sm" className="w-full justify-start gap-2 h-8 px-2 text-sm text-muted-foreground hover:text-foreground">
-                <Plus className="h-3 w-3" />
-                Add Channel
-              </Button>
+              <Dialog open={addChannelOpen} onOpenChange={setAddChannelOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-start gap-2 h-8 px-2 text-sm text-muted-foreground hover:text-foreground">
+                    <Plus className="h-3 w-3" />
+                    Add Channel
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[425px]">
+                  <form onSubmit={handleCreateChannelSubmit}>
+                    <DialogHeader>
+                      <DialogTitle>Add New Channel</DialogTitle>
+                      <DialogDescription>
+                        Create a new channel in this community.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="name" className="text-right">
+                          Name
+                        </Label>
+                        <Input
+                          id="name"
+                          value={newChannelName}
+                          onChange={(e) => setNewChannelName(e.target.value)}
+                          placeholder="general"
+                          className="col-span-3"
+                          required
+                        />
+                      </div>
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="type" className="text-right">
+                          Type
+                        </Label>
+                        <Select
+                          value={newChannelType}
+                          onValueChange={(value) => setNewChannelType(value as 'forum' | 'chat')}
+                        >
+                          <SelectTrigger id="type" className="col-span-3">
+                            <SelectValue placeholder="Select type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="forum">Forum</SelectItem>
+                            <SelectItem value="chat">Chat</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="description" className="text-right">
+                          Description
+                        </Label>
+                        <Input
+                          id="description"
+                          value={newChannelDesc}
+                          onChange={(e) => setNewChannelDesc(e.target.value)}
+                          placeholder="Channel description"
+                          className="col-span-3"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button type="button" variant="outline" onClick={() => setAddChannelOpen(false)} disabled={isPending}>
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={isPending || !newChannelName.trim()}>
+                        {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Create Channel
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </div>
           )}
         </div>
