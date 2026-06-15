@@ -672,7 +672,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
   }, [socket, isConnected]);
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !selectedChat) return;
+    if ((!newMessage.trim() && attachments.length === 0) || !selectedChat) return;
 
     const messageData = {
       receiverId: selectedChat.otherParticipant?._id,
@@ -682,7 +682,7 @@ export function MessagesPage({ currentUser }: MessagesPageProps) {
 
     try {
       const trimmedMessage = newMessage.trim();
-      if (!trimmedMessage || !selectedChat) return;
+      if ((!trimmedMessage && attachments.length === 0) || !selectedChat) return;
 
       // Create optimistic message
       if (!selectedChat.otherParticipant?._id) {

@@ -178,8 +178,8 @@ export default function SettingsPage() {
       if (avatarFile) {
         try {
           newAvatarUrl = (await uploadImageFile(avatarFile, 'userAvatar', 'user', user.id)).url;
-        } catch {
-          toast({ variant: 'destructive', title: 'Image upload failed', description: 'Could not upload profile picture. Please ensure MEDIA_API_SECRET is configured or try again.' });
+        } catch (uploadErr) {
+          toast({ variant: 'destructive', title: 'Image upload failed', description: uploadErr instanceof Error ? uploadErr.message : 'Could not upload profile picture. Please try again.' });
           setIsSaving(false);
           return;
         }

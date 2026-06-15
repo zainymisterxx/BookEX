@@ -2,8 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Paperclip, Image, FileText, File, X, Upload } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Paperclip, Image, FileText, File, X, Loader2 } from 'lucide-react';
 import type { MessageAttachment } from '@/lib/types';
 
 interface FileAttachmentUploadProps {
@@ -22,7 +21,7 @@ export function FileAttachmentUpload({
     maxFileSize = 10
 }: FileAttachmentUploadProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [isProcessing, setIsProcessing] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
 
     const getFileIcon = (mimeType: string) => {
         if (mimeType.startsWith('image/')) {
@@ -60,22 +59,33 @@ export function FileAttachmentUpload({
             return;
         }
 
-        setIsProcessing(true);
+        setIsUploading(true);
         const newAttachments: MessageAttachment[] = [];
 
         try {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                
-                // Check file size
-                const fileSizeMB = file.size / (1024 * 1024);
-                if (fileSizeMB > maxFileSize) {
+
+                if (file.size / (1024 * 1024) > maxFileSize) {
                     alert(`File "${file.name}" exceeds ${maxFileSize}MB limit`);
                     continue;
                 }
 
-                // Convert to data URI for preview/storage
-                const dataUrl = await readFileAsDataURL(file);
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('uploadType', 'temp');
+
+                const res = await fetch('/api/media/upload', {
+                    method: 'POST',
+                    credentials: 'include',
+                    body: formData,
+                });
+
+                const payload = await res.json().catch(() => null);
+                if (!res.ok || !payload?.success) {
+                    alert(`Failed to upload "${file.name}": ${payload?.message || 'Unknown error'}`);
+                    continue;
+                }
 
                 const attachment: MessageAttachment = {
                     id: `${Date.now()}-${i}`,
@@ -83,13 +93,12 @@ export function FileAttachmentUpload({
                     fileName: file.name,
                     fileSize: file.size,
                     mimeType: file.type,
-                    url: dataUrl,
-                    uploadedAt: new Date().toISOString()
+                    url: payload.data.url,
+                    uploadedAt: new Date().toISOString(),
                 };
 
-                // Generate thumbnail for images
                 if (file.type.startsWith('image/')) {
-                    attachment.thumbnailUrl = dataUrl; // Use same URL for now
+                    attachment.thumbnailUrl = payload.data.url;
                 }
 
                 newAttachments.push(attachment);
@@ -99,24 +108,12 @@ export function FileAttachmentUpload({
                 onFilesSelected(newAttachments);
             }
         } catch (error) {
-            console.error('Error processing files:', error);
-            alert('Failed to process some files');
+            console.error('Error uploading files:', error);
+            alert('Failed to upload some files');
         } finally {
-            setIsProcessing(false);
-            // Reset input
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
+            setIsUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
-    };
-
-    const readFileAsDataURL = (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
     };
 
     return (
@@ -128,11 +125,11 @@ export function FileAttachmentUpload({
                     variant="outline"
                     size="sm"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isProcessing || attachments.length >= maxFiles}
+                    disabled={isUploading || attachments.length >= maxFiles}
                     className="gap-2"
                 >
-                    <Paperclip className="w-4 h-4" />
-                    {isProcessing ? 'Processing...' : 'Attach Files'}
+                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                    {isUploading ? 'Uploading...' : 'Attach Files'}
                 </Button>
                 <span className="text-xs text-gray-500">
                     {attachments.length}/{maxFiles} files • Max {maxFileSize}MB each

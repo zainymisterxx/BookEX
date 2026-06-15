@@ -19,7 +19,7 @@ export function normalizeMediaUrl(value: string): string {
   }
 
   if (value.startsWith('/uploads/')) {
-    return `${getMediaPublicBaseUrl()}${value}`;
+    return value;
   }
 
   if (isMediaPublicUrl(value)) {

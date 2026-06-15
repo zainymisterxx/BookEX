@@ -60,7 +60,7 @@ export function CreateCommunityModal({ children }: { children: React.ReactNode }
       const result = await createCommunity({
         name,
         description,
-        imageUrl,
+        imageUrl: imageUrl || undefined,
         createdBy: user.id,
       });
 

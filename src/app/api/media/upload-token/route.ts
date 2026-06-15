@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       success: true,
       data: {
         token,
-        uploadUrl: `${(process.env.NEXT_PUBLIC_MEDIA_API_URL || 'https://media.farya.pk').replace(/\/+$/, '')}/api/uploads`,
+        uploadUrl: '/api/media/upload',
         publicBaseUrl: (process.env.NEXT_PUBLIC_MEDIA_PUBLIC_URL || 'https://media.farya.pk').replace(/\/+$/, ''),
         expiresInSeconds: 300,
       },

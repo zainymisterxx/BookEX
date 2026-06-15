@@ -182,9 +182,10 @@ export async function POST(
     }
 
     const { content, attachments } = await request.json();
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
 
-    if (!content) {
-      return NextResponse.json({ error: 'Message content is required' }, { status: 400 });
+    if (!content && !hasAttachments) {
+      return NextResponse.json({ error: 'Message content or attachment is required' }, { status: 400 });
     }
 
     const { db, client } = await connectToMongoDB();

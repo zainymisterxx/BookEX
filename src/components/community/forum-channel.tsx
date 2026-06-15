@@ -7,20 +7,19 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownEditor } from '@/components/ui/markdown-editor';
 import { MarkdownContent } from '@/components/ui/markdown-content';
-import { 
-  Heart, 
-  MessageCircle, 
-  MoreHorizontal, 
-  Send, 
-  Loader2, 
-  ChevronLeft, 
+import {
+  Heart,
+  MessageCircle,
+  MoreHorizontal,
+  Send,
+  Loader2,
+  ChevronLeft,
   ChevronRight,
   AlertTriangle,
   Crown,
   Shield,
-  User,
+  Users,
   Trash2,
-  Edit,
   Flag
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -189,10 +188,12 @@ export function ForumChannel({
     };
   }, [channelId, onNewPost, onNewComment, onPostLikeUpdate, offNewPost, offNewComment, offPostLikeUpdate, currentPage]);
 
-  // Load initial posts
+  // Load initial posts — only when the user is a member
   useEffect(() => {
-    loadPosts(1);
-  }, [channelId]);
+    if (isMember) {
+      loadPosts(1);
+    }
+  }, [channelId, isMember]);
 
   const handleCreatePost = async () => {
     if (!currentUser || !isMember) {
@@ -446,8 +447,21 @@ export function ForumChannel({
         </div>
       )}
 
+      {/* Non-member gate */}
+      {!isMember && (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <Card className="w-full max-w-md text-center">
+            <CardContent className="pt-8 pb-6">
+              <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Members-only channel</h3>
+              <p className="text-muted-foreground text-sm">Join this community to read and post in this channel.</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Posts Feed */}
-      <div className="flex-1 overflow-y-auto">
+      {isMember && <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-4">
           {error && (
             <Card className="border-destructive/50 bg-destructive/5">
@@ -637,7 +651,7 @@ export function ForumChannel({
             </div>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

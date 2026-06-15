@@ -187,10 +187,12 @@ export function ChatChannel({
     };
   }, [channelId, onChatMessage, offChatMessage]);
 
-  // Load initial messages
+  // Load initial messages — only when the user is a member
   useEffect(() => {
-    loadMessages(1);
-  }, [channelId]);
+    if (isMember) {
+      loadMessages(1);
+    }
+  }, [channelId, isMember]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {

@@ -830,7 +830,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                 }
 
                 if (community.visibility === 'private' && !isMember) {
-                    return { success: false, message: 'This community requires approval to join. Please send a join request.', requiresApproval: true };
+                    throw createAppError(ErrorType.AUTHORIZATION, 'This community requires approval to join. Please send a join request.');
                 }
 
                 if (isMember) {
@@ -1599,7 +1599,7 @@ export async function searchCommunities(searchQuery: string) {
  * @param communityData The data for the new community.
  * @returns An object with the result of the operation.
  */
-export async function createCommunity(communityData: { name: string, description: string, imageUrl: string, createdBy: string }) {
+export async function createCommunity(communityData: { name: string, description: string, imageUrl?: string, createdBy: string }) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== communityData.createdBy) throw new Error("Unauthorized");
 
@@ -1613,13 +1613,13 @@ export async function createCommunity(communityData: { name: string, description
         const newCommunity: Omit<Community, '_id'> = {
             name: sanitizeInput(validatedData.name),
             description: sanitizeInput(validatedData.description),
-            imageUrl: normalizeMediaUrl(communityData.imageUrl),
+            imageUrl: communityData.imageUrl ? normalizeMediaUrl(communityData.imageUrl) : '',
             createdBy: user.id,
             visibility: 'public',
             postingPermissions: 'anyone',
             commentPermissions: 'anyone',
             invitePermissions: 'anyone',
-            members: [{ userId: user.id, role: 'admin', joinedAt: new Date().toISOString() }] as any,
+            members: [{ userId: user.id, role: 'creator', joinedAt: new Date().toISOString() }] as any,
             memberCount: 1,
             posts: [],
             channels: [

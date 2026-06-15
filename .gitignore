@@ -57,3 +57,7 @@ CLAUDE.local.md
 playwright-report/
 playwright-results.*
 tests/e2e/.auth/
+
+# Mobile app (excluded)
+Mobile/
+Mobile.zip
