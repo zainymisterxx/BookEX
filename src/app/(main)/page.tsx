@@ -8,6 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-config';
 
+const getCommunityCoverImage = (community: any) => {
+  const url = community.imageUrl;
+  if (url && typeof url === 'string' && url.trim().length > 0) {
+    return url;
+  }
+  return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400"><rect width="800" height="400" fill="%23edf2f7"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-weight="bold" font-size="32" fill="%234a5568">${encodeURIComponent(community.name)}</text></svg>`;
+};
+
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
   const currentUserId = session?.user?.id;
@@ -38,7 +46,7 @@ export default async function HomePage() {
           </div>
           <div className="relative hidden md:block h-96 w-full max-w-lg mx-auto overflow-visible">
             <Image 
-              src="https://picsum.photos/seed/book1/400/600" 
+              src="https://covers.openlibrary.org/b/id/8258661-L.jpg" 
               alt="Book cover collage" 
               width={220} 
               height={330} 
@@ -47,7 +55,7 @@ export default async function HomePage() {
               priority
             />
             <Image 
-              src="https://picsum.photos/seed/book2/400/600" 
+              src="https://covers.openlibrary.org/b/id/8259439-L.jpg" 
               alt="Book cover collage" 
               width={220} 
               height={330} 
@@ -56,7 +64,7 @@ export default async function HomePage() {
               priority
             />
             <Image 
-              src="https://picsum.photos/seed/book3/400/600" 
+              src="https://covers.openlibrary.org/b/id/8258664-L.jpg" 
               alt="Book cover collage" 
               width={220} 
               height={330} 
@@ -156,7 +164,7 @@ export default async function HomePage() {
                  <Link href={`/community/${community._id}`} className="block">
                     <div className="relative h-48 w-full overflow-hidden">
                         <Image 
-                          src={community.imageUrl} 
+                          src={getCommunityCoverImage(community)} 
                           alt={community.name} 
                           fill 
                           className="object-cover group-hover:scale-105 transition-transform duration-300" 

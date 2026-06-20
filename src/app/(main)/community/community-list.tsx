@@ -11,9 +11,18 @@ import Link from 'next/link';
 import type { Community } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { toggleCommunityMembership, searchCommunities } from '@/app/actions';
+import { requestToJoinCommunity } from '@/app/community-admin-actions';
 import { useSession } from 'next-auth/react';
 import { AuthModal } from '@/components/auth-modal';
 import { isUserMember as checkUserMembership, addMember, removeMember, updateMemberCount } from '@/lib/community-utils';
+
+const getCommunityCoverImage = (community: Community) => {
+  const url = community.imageUrl;
+  if (url && typeof url === 'string' && url.trim().length > 0) {
+    return url;
+  }
+  return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400"><rect width="800" height="400" fill="%23edf2f7"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-weight="bold" font-size="32" fill="%234a5568">${encodeURIComponent(community.name)}</text></svg>`;
+};
 
 export function CommunityList({ initialCommunities }: { initialCommunities: Community[] }) {
   const [communities, setCommunities] = useState(initialCommunities);
@@ -90,12 +99,54 @@ export function CommunityList({ initialCommunities }: { initialCommunities: Comm
             } else {
                 // Revert to previous state instead of initial state
                 setCommunities(currentCommunities);
-                toast({ variant: 'destructive', title: 'Could not update membership.' });
+                toast({ variant: 'destructive', title: 'Could not update membership.', description: result.message });
             }
         } catch (error) {
             // Revert to previous state on error
             setCommunities(currentCommunities);
             console.error('Error toggling membership:', error);
+            toast({ variant: 'destructive', title: 'Network error. Please try again.' });
+        }
+    });
+  }
+
+  const handleRequestJoin = (communityId: string, communityName: string) => {
+    if (!user) {
+        toast({ variant: 'destructive', title: 'You must be logged in to request to join.' });
+        return;
+    }
+    
+    startTransition(async () => {
+        try {
+            const result = await requestToJoinCommunity(communityId);
+            if (result.success) {
+                toast({ title: 'Request Sent', description: `Your request to join ${communityName} has been submitted.` });
+                
+                // Optimistically update pendingRequests so state updates immediately
+                setCommunities(prev => prev.map(c => {
+                    if (String(c._id) === communityId) {
+                        const pendingRequests = c.pendingRequests || [];
+                        return {
+                            ...c,
+                            pendingRequests: [
+                                ...pendingRequests,
+                                {
+                                    userId: user.id,
+                                    userName: user.name || '',
+                                    communityId,
+                                    status: 'pending',
+                                    requestedAt: new Date().toISOString()
+                                }
+                            ]
+                        };
+                    }
+                    return c;
+                }));
+            } else {
+                toast({ variant: 'destructive', title: 'Could not send join request.', description: result.message });
+            }
+        } catch (error) {
+            console.error('Error requesting to join:', error);
             toast({ variant: 'destructive', title: 'Network error. Please try again.' });
         }
     });
@@ -138,11 +189,15 @@ export function CommunityList({ initialCommunities }: { initialCommunities: Comm
         {communities.map((community) => {
           const isMember = isUserMember(community);
           const communityId = String(community._id);
+          const isPendingRequest = (community.pendingRequests || []).some(
+            r => r.userId === user?.id && r.status === 'pending'
+          );
+
           return (
             <Card key={communityId} className="flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-2 group">
                 <div className="relative h-48 w-full overflow-hidden">
                   <Link href={`/community/${communityId}`} className="block h-full w-full">
-                    <Image src={community.imageUrl} alt={community.name} fill className="object-cover group-hover:scale-105 transition-transform duration-300" data-ai-hint="community group" />
+                    <Image src={getCommunityCoverImage(community)} alt={community.name} fill className="object-cover group-hover:scale-105 transition-transform duration-300" data-ai-hint="community group" />
                   </Link>
                 </div>
                 <div className="flex flex-col flex-1 p-6 bg-card">
@@ -164,6 +219,16 @@ export function CommunityList({ initialCommunities }: { initialCommunities: Comm
                                 <Button asChild variant="secondary">
                                     <Link href={`/community/${communityId}`}>View</Link>
                                 </Button>
+                            ) : community.visibility === 'private' ? (
+                                isPendingRequest ? (
+                                    <Button disabled variant="outline">
+                                        Request Pending
+                                    </Button>
+                                ) : (
+                                    <Button onClick={() => handleRequestJoin(communityId, community.name)} disabled={isPending} variant="outline">
+                                        Request to Join
+                                    </Button>
+                                )
                             ) : (
                                 <Button onClick={() => handleToggleMembership(communityId, community.name, false)} disabled={isPending}>
                                     Join

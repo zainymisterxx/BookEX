@@ -10,17 +10,27 @@ export interface UploadImageResponse {
 
 export async function uploadImageFile(
   file: File,
-  _uploadType?: UploadImageType,
-  _resourceType?: string,
-  _resourceId?: string,
-  _accessLevel?: string
+  uploadType: UploadImageType,
+  resourceType?: 'book' | 'user' | 'community',
+  resourceId?: string,
+  accessLevel: 'public' | 'private' | 'restricted' = 'public'
 ): Promise<UploadImageResponse> {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('uploadType', uploadType);
+
+  if (resourceType) {
+    formData.append('resourceType', resourceType);
+  }
+
+  if (resourceId) {
+    formData.append('resourceId', resourceId);
+  }
+
+  formData.append('accessLevel', accessLevel);
 
   const response = await fetch('/api/media/upload', {
     method: 'POST',
-    credentials: 'include',
     body: formData,
   });
 

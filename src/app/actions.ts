@@ -26,18 +26,18 @@ function validateDonationStatusTransition(
     };
 
     const allowedTransitions = validTransitions[currentStatus];
-    
+
     if (!allowedTransitions) {
         return { isValid: false, error: `Invalid current status: ${currentStatus}` };
     }
-    
+
     if (!allowedTransitions.includes(newStatus)) {
-        return { 
-            isValid: false, 
-            error: `Cannot transition from ${currentStatus} to ${newStatus}. Allowed: ${allowedTransitions.join(', ')}` 
+        return {
+            isValid: false,
+            error: `Cannot transition from ${currentStatus} to ${newStatus}. Allowed: ${allowedTransitions.join(', ')}`
         };
     }
-    
+
     return { isValid: true };
 }
 import { hash } from 'bcryptjs';
@@ -59,18 +59,18 @@ import { withAuthenticatedAction, withAuthenticatedUserFull } from '@/lib/action
 import { bookSchema, communitySchema, postSchema, commentSchema, organizationSchema, reportSchema, reviewSchema, userProfileSchema, exchangeSchema, chatMessageSchema, paginationSchema, searchQuerySchema, donationStatusUpdateSchema, validateWithSchema } from '@/lib/schemas';
 import crypto from 'crypto';
 import { normalizeMediaUrl } from '@/lib/media-url';
-import { 
-  createCommunityMemberAddOperation, 
-  createCommunityMemberRemoveOperation,
-  createPostAddOperation,
-  createPostLikeToggleOperation,
-  createCommentAddOperation,
-  createWishlistAddOperation,
-  createWishlistRemoveOperation,
-  type UserDocument,
-  type CommunityDocument,
-  type PostDocument,
-  type CommentDocument
+import {
+    createCommunityMemberAddOperation,
+    createCommunityMemberRemoveOperation,
+    createPostAddOperation,
+    createPostLikeToggleOperation,
+    createCommentAddOperation,
+    createWishlistAddOperation,
+    createWishlistRemoveOperation,
+    type UserDocument,
+    type CommunityDocument,
+    type PostDocument,
+    type CommentDocument
 } from '@/lib/mongodb-types';
 
 
@@ -80,129 +80,129 @@ import {
  * @returns An object with the result of the operation.
  */
 export async function signUpUser(userData: Pick<User, 'name' | 'email' | 'password'>) {
-  try {
-    // Check signup rate limiting
-    const rateLimitCheck = await checkAuthRateLimit('SIGNUP', userData.email);
-    if (!rateLimitCheck.allowed) {
-      recordAuthResult('SIGNUP', false, userData.email);
-      return { success: false, message: rateLimitCheck.error || 'Too many signup attempts. Please try again later.' };
-    }
-
-    const client = await clientPromise;
-    const db = client.db("bookex");
-    const usersCollection = db.collection("users");
-
-    // Validate email format
-    const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
-    if (!emailRegex.test(userData.email)) {
-      recordAuthResult('SIGNUP', false, userData.email.toLowerCase());
-      return { success: false, message: "Please enter a valid email address." };
-    }
-
-    // Normalize email to lowercase for consistent storage and lookup
-    const normalizedEmail = userData.email.toLowerCase();
-
-    const existingUser = await usersCollection.findOne({ email: normalizedEmail });
-    if (existingUser) {
-      recordAuthResult('SIGNUP', false, normalizedEmail);
-      return { success: false, message: "A user with this email already exists." };
-    }
-
-    if (!userData.password) {
-      recordAuthResult('SIGNUP', false, normalizedEmail);
-      return { success: false, message: "Password is required." };
-    }
-
-    // Validate password strength
-    if (!isPasswordStrong(userData.password)) {
-      recordAuthResult('SIGNUP', false, normalizedEmail);
-      return {
-        success: false,
-        message: getPasswordRequirementsMessage()
-      };
-    }
-
-    // Check if this is the first user
-    const userCount = await usersCollection.countDocuments();
-    const role = userCount === 0 ? 'admin' : 'user';
-
-    const hashedPassword = await hash(userData.password, 10);
-    
-    const newUser: Omit<User, '_id'> = {
-      name: userData.name,
-      email: normalizedEmail, // Use normalized email
-      password: hashedPassword,
-      avatarUrl: `https://placehold.co/100x100/EFEFEF/4A4A4A?text=${userData.name.charAt(0)}`,
-      reviews: 0,
-      totalRatingPoints: 0,
-      role: role,
-      status: 'active',
-      wishlist: [],
-      createdAt: new Date().toISOString(),
-    };
-
-    const result = await usersCollection.insertOne(newUser);
-
-    // Record successful signup
-    recordAuthResult('SIGNUP', true, normalizedEmail);
-
-    // Log successful user signup
-    await logActivity(
-      result.insertedId.toString(),
-      'user_signup',
-      'low',
-      `New user account created: ${userData.name}`,
-      { email: normalizedEmail, role }
-    );
-
-    // Send welcome email (optional - won't block signup if it fails)
     try {
-      await sendWelcomeEmail(normalizedEmail, userData.name);
-    } catch (error) {
-      console.warn('Welcome email failed to send, but signup was successful');
-    }
+        // Check signup rate limiting
+        const rateLimitCheck = await checkAuthRateLimit('SIGNUP', userData.email);
+        if (!rateLimitCheck.allowed) {
+            recordAuthResult('SIGNUP', false, userData.email);
+            return { success: false, message: rateLimitCheck.error || 'Too many signup attempts. Please try again later.' };
+        }
 
-    // Generate and store email verification token
-    try {
-      const verificationToken = crypto.randomBytes(32).toString('hex');
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h from now
-      const tokenData: Omit<EmailVerificationToken, '_id'> = {
-        userId: result.insertedId.toString(),
-        email: normalizedEmail,
-        token: verificationToken,
-        expiresAt: expiresAt.toISOString(),
-        createdAt: now.toISOString(),
-      };
-      const tokensCollection = db.collection<EmailVerificationToken>('email_verification_tokens');
-      await tokensCollection.insertOne(tokenData);
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
-      const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
-      await sendEmailVerificationEmail(normalizedEmail, userData.name, verificationUrl);
-    } catch (error) {
-      console.warn('Email verification setup failed, but signup was successful:', error);
-    }
+        const client = await clientPromise;
+        const db = client.db("bookex");
+        const usersCollection = db.collection("users");
 
-    // Create admin notification for new user registration (except for first admin)
-    if (role !== 'admin') {
-      try {
-        const { notifyNewUser } = await import('@/lib/admin-notifications');
-        await notifyNewUser(
-          result.insertedId.toString(),
-          normalizedEmail,
-          userData.name
+        // Validate email format
+        const emailRegex = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+        if (!emailRegex.test(userData.email)) {
+            recordAuthResult('SIGNUP', false, userData.email.toLowerCase());
+            return { success: false, message: "Please enter a valid email address." };
+        }
+
+        // Normalize email to lowercase for consistent storage and lookup
+        const normalizedEmail = userData.email.toLowerCase();
+
+        const existingUser = await usersCollection.findOne({ email: normalizedEmail });
+        if (existingUser) {
+            recordAuthResult('SIGNUP', false, normalizedEmail);
+            return { success: false, message: "A user with this email already exists." };
+        }
+
+        if (!userData.password) {
+            recordAuthResult('SIGNUP', false, normalizedEmail);
+            return { success: false, message: "Password is required." };
+        }
+
+        // Validate password strength
+        if (!isPasswordStrong(userData.password)) {
+            recordAuthResult('SIGNUP', false, normalizedEmail);
+            return {
+                success: false,
+                message: getPasswordRequirementsMessage()
+            };
+        }
+
+        // Check if this is the first user
+        const userCount = await usersCollection.countDocuments();
+        const role = userCount === 0 ? 'admin' : 'user';
+
+        const hashedPassword = await hash(userData.password, 10);
+
+        const newUser: Omit<User, '_id'> = {
+            name: userData.name,
+            email: normalizedEmail, // Use normalized email
+            password: hashedPassword,
+            avatarUrl: `https://placehold.co/100x100/EFEFEF/4A4A4A?text=${userData.name.charAt(0)}`,
+            reviews: 0,
+            totalRatingPoints: 0,
+            role: role,
+            status: 'active',
+            wishlist: [],
+            createdAt: new Date().toISOString(),
+        };
+
+        const result = await usersCollection.insertOne(newUser);
+
+        // Record successful signup
+        recordAuthResult('SIGNUP', true, normalizedEmail);
+
+        // Log successful user signup
+        await logActivity(
+            result.insertedId.toString(),
+            'user_signup',
+            'low',
+            `New user account created: ${userData.name}`,
+            { email: normalizedEmail, role }
         );
-      } catch (error) {
-        console.warn('Failed to create admin notification for new user:', error);
-      }
-    }
 
-    return { success: true, userId: result.insertedId.toString() };
-  } catch (error) {
-    console.error("Error in signUpUser server action:", error);
-    recordAuthResult('SIGNUP', false, userData.email.toLowerCase());
-    return { success: false, message: 'Failed to sign up.' };
-  }
+        // Send welcome email (optional - won't block signup if it fails)
+        try {
+            await sendWelcomeEmail(normalizedEmail, userData.name);
+        } catch (error) {
+            console.warn('Welcome email failed to send, but signup was successful');
+        }
+
+        // Generate and store email verification token
+        try {
+            const verificationToken = crypto.randomBytes(32).toString('hex');
+            const now = new Date();
+            const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h from now
+            const tokenData: Omit<EmailVerificationToken, '_id'> = {
+                userId: result.insertedId.toString(),
+                email: normalizedEmail,
+                token: verificationToken,
+                expiresAt: expiresAt.toISOString(),
+                createdAt: now.toISOString(),
+            };
+            const tokensCollection = db.collection<EmailVerificationToken>('email_verification_tokens');
+            await tokensCollection.insertOne(tokenData);
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
+            const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
+            await sendEmailVerificationEmail(normalizedEmail, userData.name, verificationUrl);
+        } catch (error) {
+            console.warn('Email verification setup failed, but signup was successful:', error);
+        }
+
+        // Create admin notification for new user registration (except for first admin)
+        if (role !== 'admin') {
+            try {
+                const { notifyNewUser } = await import('@/lib/admin-notifications');
+                await notifyNewUser(
+                    result.insertedId.toString(),
+                    normalizedEmail,
+                    userData.name
+                );
+            } catch (error) {
+                console.warn('Failed to create admin notification for new user:', error);
+            }
+        }
+
+        return { success: true, userId: result.insertedId.toString() };
+    } catch (error) {
+        console.error("Error in signUpUser server action:", error);
+        recordAuthResult('SIGNUP', false, userData.email.toLowerCase());
+        return { success: false, message: 'Failed to sign up.' };
+    }
 }
 
 /**
@@ -211,67 +211,67 @@ export async function signUpUser(userData: Pick<User, 'name' | 'email' | 'passwo
  * @returns An object with the result of the operation.
  */
 export async function requestPasswordReset(email: string) {
-  try {
-    // Check password reset rate limiting
-    const rateLimitCheck = await checkAuthRateLimit('PASSWORD_RESET', email);
-    if (!rateLimitCheck.allowed) {
-      recordAuthResult('PASSWORD_RESET', false, email);
-      return { success: false, message: rateLimitCheck.error || 'Too many reset requests. Please try again later.' };
+    try {
+        // Check password reset rate limiting
+        const rateLimitCheck = await checkAuthRateLimit('PASSWORD_RESET', email);
+        if (!rateLimitCheck.allowed) {
+            recordAuthResult('PASSWORD_RESET', false, email);
+            return { success: false, message: rateLimitCheck.error || 'Too many reset requests. Please try again later.' };
+        }
+
+        const client = await clientPromise;
+        const db = client.db("bookex");
+        const usersCollection = db.collection<User>("users");
+        const tokensCollection = db.collection<PasswordResetToken>("passwordResetTokens");
+
+        // Find user by email (normalize to lowercase for consistent lookup)
+        const user = await usersCollection.findOne({ email: email.toLowerCase() });
+        if (!user) {
+            // Record failed attempt but return success message (security best practice)
+            recordAuthResult('PASSWORD_RESET', false, email);
+            return { success: true, message: 'If an account with that email exists, a reset link has been sent.' };
+        }
+
+        // Check for suspicious activity
+        await detectSuspiciousActivity(String(user._id), 'password_reset_request', { email });
+
+        // Generate secure reset token
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex'); // Hash the token before storage
+        const expiresAt = addHours(getCurrentTimestamp(), 1); // 1 hour from now
+
+        // Store reset token in database
+        const tokenData: Omit<PasswordResetToken, '_id'> = {
+            userId: String(user._id),
+            token: hashedToken, // Store hashed token instead of plain text
+            expiresAt: formatForDatabase(expiresAt),
+            used: false,
+            createdAt: getCurrentTimestamp(),
+        };
+
+        await tokensCollection.insertOne(tokenData as any);
+
+        // Log password reset request
+        await logActivity(
+            String(user._id),
+            'password_reset_request',
+            'medium',
+            'Password reset requested',
+            { email: email.toLowerCase() }
+        );
+
+        // Send reset email
+        const emailResult = await sendPasswordResetEmail(email, user.name, resetToken);
+        if (!emailResult.success) {
+            console.error('Failed to send password reset email:', emailResult.error);
+            return { success: false, message: 'Failed to send reset email. Please try again.' };
+        }
+
+        return { success: true, message: 'If an account with that email exists, a reset link has been sent.' };
+    } catch (error) {
+        console.error("Error in requestPasswordReset:", error);
+        return { success: false, message: 'Failed to process password reset request.' };
     }
-
-    const client = await clientPromise;
-    const db = client.db("bookex");
-    const usersCollection = db.collection<User>("users");
-    const tokensCollection = db.collection<PasswordResetToken>("passwordResetTokens");
-
-    // Find user by email (normalize to lowercase for consistent lookup)
-    const user = await usersCollection.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      // Record failed attempt but return success message (security best practice)
-      recordAuthResult('PASSWORD_RESET', false, email);
-      return { success: true, message: 'If an account with that email exists, a reset link has been sent.' };
-    }
-
-    // Check for suspicious activity
-    await detectSuspiciousActivity(String(user._id), 'password_reset_request', { email });
-
-    // Generate secure reset token
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex'); // Hash the token before storage
-    const expiresAt = addHours(getCurrentTimestamp(), 1); // 1 hour from now
-
-    // Store reset token in database
-    const tokenData: Omit<PasswordResetToken, '_id'> = {
-      userId: String(user._id),
-      token: hashedToken, // Store hashed token instead of plain text
-      expiresAt: formatForDatabase(expiresAt),
-      used: false,
-      createdAt: getCurrentTimestamp(),
-    };
-
-    await tokensCollection.insertOne(tokenData as any);
-
-    // Log password reset request
-    await logActivity(
-      String(user._id),
-      'password_reset_request',
-      'medium',
-      'Password reset requested',
-      { email: email.toLowerCase() }
-    );
-
-    // Send reset email
-    const emailResult = await sendPasswordResetEmail(email, user.name, resetToken);
-    if (!emailResult.success) {
-      console.error('Failed to send password reset email:', emailResult.error);
-      return { success: false, message: 'Failed to send reset email. Please try again.' };
-    }
-
-    return { success: true, message: 'If an account with that email exists, a reset link has been sent.' };
-  } catch (error) {
-    console.error("Error in requestPasswordReset:", error);
-    return { success: false, message: 'Failed to process password reset request.' };
-  }
 }
 
 /**
@@ -281,122 +281,122 @@ export async function requestPasswordReset(email: string) {
  * @returns An object with the result of the operation.
  */
 export async function resetPassword(token: string, newPassword: string) {
-  try {
-    const rateLimitResult = await checkAuthRateLimit('PASSWORD_RESET', token.slice(0, 8));
-    if (!rateLimitResult.allowed) {
-      return { success: false, message: 'Too many attempts. Please wait before trying again.' };
-    }
-
-    const client = await clientPromise;
-    const db = client.db("bookex");
-    const usersCollection = db.collection<User>("users");
-    const tokensCollection = db.collection<PasswordResetToken>("passwordResetTokens");
-
-    // Hash the input token to compare with stored hashed tokens
-    const hashedInputToken = crypto.createHash('sha256').update(token).digest('hex');
-
-    // Find and validate the reset token
-    const resetTokenData = await tokensCollection.findOne({ 
-      token: hashedInputToken, // Compare with hashed token
-      used: false,
-      expiresAt: { $gt: new Date().toISOString() }
-    });
-
-    if (!resetTokenData) {
-      return { success: false, message: 'Invalid or expired reset token.' };
-    }
-
-    // Validate new password strength
-    if (!isPasswordStrong(newPassword)) {
-      return {
-        success: false,
-        message: getPasswordRequirementsMessage()
-      };
-    }
-
-    // Hash the new password
-    const hashedPassword = await hash(newPassword, 10);
-
-    // Atomically update password and mark token used so a partial failure
-    // cannot leave the token consumed but the password unchanged.
-    const session = client.startSession();
     try {
-      await session.withTransaction(async () => {
-        await usersCollection.updateOne(
-          { _id: new ObjectId(resetTokenData.userId) },
-          { $set: { password: hashedPassword } },
-          { session }
+        const rateLimitResult = await checkAuthRateLimit('PASSWORD_RESET', token.slice(0, 8));
+        if (!rateLimitResult.allowed) {
+            return { success: false, message: 'Too many attempts. Please wait before trying again.' };
+        }
+
+        const client = await clientPromise;
+        const db = client.db("bookex");
+        const usersCollection = db.collection<User>("users");
+        const tokensCollection = db.collection<PasswordResetToken>("passwordResetTokens");
+
+        // Hash the input token to compare with stored hashed tokens
+        const hashedInputToken = crypto.createHash('sha256').update(token).digest('hex');
+
+        // Find and validate the reset token
+        const resetTokenData = await tokensCollection.findOne({
+            token: hashedInputToken, // Compare with hashed token
+            used: false,
+            expiresAt: { $gt: new Date().toISOString() }
+        });
+
+        if (!resetTokenData) {
+            return { success: false, message: 'Invalid or expired reset token.' };
+        }
+
+        // Validate new password strength
+        if (!isPasswordStrong(newPassword)) {
+            return {
+                success: false,
+                message: getPasswordRequirementsMessage()
+            };
+        }
+
+        // Hash the new password
+        const hashedPassword = await hash(newPassword, 10);
+
+        // Atomically update password and mark token used so a partial failure
+        // cannot leave the token consumed but the password unchanged.
+        const session = client.startSession();
+        try {
+            await session.withTransaction(async () => {
+                await usersCollection.updateOne(
+                    { _id: new ObjectId(resetTokenData.userId) },
+                    { $set: { password: hashedPassword } },
+                    { session }
+                );
+
+                await tokensCollection.updateOne(
+                    { _id: resetTokenData._id },
+                    { $set: { used: true } },
+                    { session }
+                );
+            });
+        } finally {
+            await session.endSession();
+        }
+
+        // Log successful password reset
+        await logActivity(
+            resetTokenData.userId,
+            'password_reset_complete',
+            'medium',
+            'Password reset completed successfully'
         );
 
-        await tokensCollection.updateOne(
-          { _id: resetTokenData._id },
-          { $set: { used: true } },
-          { session }
-        );
-      });
-    } finally {
-      await session.endSession();
+        return { success: true, message: 'Password has been reset successfully.' };
+    } catch (error) {
+        console.error("Error in resetPassword:", error);
+        return { success: false, message: 'Failed to reset password.' };
     }
-
-    // Log successful password reset
-    await logActivity(
-      resetTokenData.userId,
-      'password_reset_complete',
-      'medium',
-      'Password reset completed successfully'
-    );
-
-    return { success: true, message: 'Password has been reset successfully.' };
-  } catch (error) {
-    console.error("Error in resetPassword:", error);
-    return { success: false, message: 'Failed to reset password.' };
-  }
 }
 
 /**
  * Verifies a user's email address using a one-time token.
  */
 export async function verifyEmail(token: string): Promise<{ success: boolean; message: string }> {
-  if (!token || typeof token !== 'string') {
-    return { success: false, message: 'Invalid verification link.' };
-  }
-  try {
-    const client = await clientPromise;
-    const db = client.db('bookex');
-    const tokensCollection = db.collection<EmailVerificationToken>('email_verification_tokens');
-
-    const tokenDoc = await tokensCollection.findOne({ token });
-    if (!tokenDoc) {
-      return { success: false, message: 'Invalid or expired verification link.' };
+    if (!token || typeof token !== 'string') {
+        return { success: false, message: 'Invalid verification link.' };
     }
-    if (tokenDoc.usedAt) {
-      return { success: false, message: 'This verification link has already been used.' };
-    }
-    if (new Date(tokenDoc.expiresAt) < new Date()) {
-      return { success: false, message: 'This verification link has expired.' };
-    }
-
-    const now = new Date().toISOString();
-    const usersCollection = db.collection('users');
-    const session = client.startSession();
     try {
-      await session.withTransaction(async () => {
-        await usersCollection.updateOne(
-          { _id: new ObjectId(tokenDoc.userId) },
-          { $set: { emailVerified: true, emailVerifiedAt: now } },
-          { session }
-        );
-        await tokensCollection.updateOne({ token }, { $set: { usedAt: now } }, { session });
-      });
-    } finally {
-      await session.endSession();
-    }
+        const client = await clientPromise;
+        const db = client.db('bookex');
+        const tokensCollection = db.collection<EmailVerificationToken>('email_verification_tokens');
 
-    return { success: true, message: 'Your email has been verified successfully!' };
-  } catch (error) {
-    console.error('Error in verifyEmail:', error);
-    return { success: false, message: 'Failed to verify email. Please try again.' };
-  }
+        const tokenDoc = await tokensCollection.findOne({ token });
+        if (!tokenDoc) {
+            return { success: false, message: 'Invalid or expired verification link.' };
+        }
+        if (tokenDoc.usedAt) {
+            return { success: false, message: 'This verification link has already been used.' };
+        }
+        if (new Date(tokenDoc.expiresAt) < new Date()) {
+            return { success: false, message: 'This verification link has expired.' };
+        }
+
+        const now = new Date().toISOString();
+        const usersCollection = db.collection('users');
+        const session = client.startSession();
+        try {
+            await session.withTransaction(async () => {
+                await usersCollection.updateOne(
+                    { _id: new ObjectId(tokenDoc.userId) },
+                    { $set: { emailVerified: true, emailVerifiedAt: now } },
+                    { session }
+                );
+                await tokensCollection.updateOne({ token }, { $set: { usedAt: now } }, { session });
+            });
+        } finally {
+            await session.endSession();
+        }
+
+        return { success: true, message: 'Your email has been verified successfully!' };
+    } catch (error) {
+        console.error('Error in verifyEmail:', error);
+        return { success: false, message: 'Failed to verify email. Please try again.' };
+    }
 }
 
 /**
@@ -406,7 +406,7 @@ export async function verifyEmail(token: string): Promise<{ success: boolean; me
 export async function getUserForUpdate(userId: string) {
     return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         if (user.id !== userId) throw new Error("Unauthorized");
-        
+
         const userData = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!userData) return null;
         const { findCanonicalCity } = await import('@/lib/location/location-utils');
@@ -430,7 +430,7 @@ export async function checkUsernameAvailability(username: string) {
     return withAuthenticatedAction(async ({ db, user }) => {
         // Import username validation
         const { validateUsername } = await import('@/lib/username-utils');
-        
+
         const validation = validateUsername(username);
         if (!validation.valid) {
             return {
@@ -439,13 +439,13 @@ export async function checkUsernameAvailability(username: string) {
                 error: validation.error
             };
         }
-        
+
         // Check if username exists (excluding current user)
-        const existingUser = await db.collection("users").findOne({ 
+        const existingUser = await db.collection("users").findOne({
             username: username,
             _id: { $ne: new ObjectId(user.id) }
         });
-        
+
         return {
             success: true,
             available: !existingUser,
@@ -487,30 +487,30 @@ export async function updateUserProfile(profileData: { userId: string, name: str
             // If city validation fails, propagate a validation error
             throw createAppError(ErrorType.VALIDATION, (cityErr as Error).message || 'Invalid city');
         }
-        
+
         // Handle username update
         if (profileData.username !== undefined && profileData.username !== currentUser.username) {
             // Import username validation
             const { validateUsername } = await import('@/lib/username-utils');
-            
+
             const usernameValidation = validateUsername(profileData.username);
             if (!usernameValidation.valid) {
                 throw createAppError(ErrorType.VALIDATION, usernameValidation.error || 'Invalid username');
             }
-            
+
             // Check if username is already taken
-            const existingUser = await db.collection("users").findOne({ 
+            const existingUser = await db.collection("users").findOne({
                 username: profileData.username,
                 _id: { $ne: new ObjectId(user.id) }
             });
-            
+
             if (existingUser) {
                 throw createAppError(ErrorType.VALIDATION, 'Username is already taken');
             }
-            
+
             updateData.username = profileData.username;
         }
-        
+
         // Handle avatar update — empty string means explicit removal
         if (profileData.avatarUrl === '') {
             updateData.avatarUrl = '';
@@ -525,14 +525,14 @@ export async function updateUserProfile(profileData: { userId: string, name: str
 
         // Log profile update
         await logActivity(
-          user.id,
-          'profile_update',
-          'low',
-          'User profile updated',
-          {
-            updatedFields: Object.keys(updateData),
-            hasAvatarUpdate: !!profileData.avatarUrl
-          }
+            user.id,
+            'profile_update',
+            'low',
+            'User profile updated',
+            {
+                updatedFields: Object.keys(updateData),
+                hasAvatarUpdate: !!profileData.avatarUrl
+            }
         );
 
         // Invalidate user cache
@@ -541,9 +541,9 @@ export async function updateUserProfile(profileData: { userId: string, name: str
 
         revalidatePath('/profile/me');
         revalidatePath('/profile/settings');
-        
+
         // Return the new data so the client can update the session
-        return { 
+        return {
             success: true,
             updatedUser: {
                 name: updateData.name,
@@ -561,12 +561,12 @@ export async function updateUserProfile(profileData: { userId: string, name: str
  * @returns An object with the result of the operation.
  */
 export async function listBook(bookData: { title: string, author: string, description: string, genre: BookGenre, condition: 'new' | 'like-new' | 'used' | 'worn', type: 'sell' | 'exchange', price?: number, imageUrl: string, city: string }) {
-  return withAuthenticatedAction(async ({ db, user, userId }) => {
-    // Check rate limit
-    const rateLimitResult = await checkUserRateLimit(user.id, 'LIST_BOOK', RATE_LIMITS.LIST_BOOK);
-    if (!rateLimitResult.allowed) {
-      throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || "Rate limit exceeded");
-    }
+    return withAuthenticatedAction(async ({ db, user, userId }) => {
+        // Check rate limit
+        const rateLimitResult = await checkUserRateLimit(user.id, 'LIST_BOOK', RATE_LIMITS.LIST_BOOK);
+        if (!rateLimitResult.allowed) {
+            throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.error || "Rate limit exceeded");
+        }
 
         // Enforce profile completion before listing
         const actingUser = await db.collection('users').findOne({ _id: new ObjectId(user.id) }, { projection: { name: 1, city: 1, bio: 1 } });
@@ -574,205 +574,205 @@ export async function listBook(bookData: { title: string, author: string, descri
             throw createAppError(ErrorType.VALIDATION, 'Please complete your profile (name, city, bio) before proceeding.');
         }
 
-            // Validate input data with Zod schema
-    const validation = validateWithSchema(bookSchema, bookData);
-    if (!validation.success) {
-      throw createAppError(ErrorType.VALIDATION, validation.message);
-    }
-    const validatedBookData = validation.data;
-
-    // Create deduplication fields
-    const titleNormalized = normalizeForDeduplication(bookData.title);
-    const authorNormalized = normalizeForDeduplication(bookData.author);
-    const duplicateHash = createBookDuplicateHash(bookData.title, bookData.author, user.id);
-
-    // Check for existing duplicates from the same user
-    const existingBook = await db.collection("books").findOne({
-      duplicateHash,
-      sellerId: user.id,
-      status: { $in: ['active', 'inactive'] } // Don't consider sold/exchanged books as duplicates
-    });
-
-    if (existingBook) {
-      // Perform additional similarity check
-      const similarity = checkBookSimilarity(
-        { title: bookData.title, author: bookData.author, sellerId: user.id },
-        { title: existingBook.title, author: existingBook.author, sellerId: existingBook.sellerId }
-      );
-
-      if (similarity.isDuplicate) {
-        throw createAppError(
-          ErrorType.VALIDATION, 
-          `You have already listed a similar book: "${existingBook.title}" by ${existingBook.author}. Please update your existing listing instead of creating a duplicate.`
-        );
-      }
-    }
-
-    // Moderate listing content before going live
-    try {
-        const { ContentModerationSystem } = await import('@/lib/content-moderation');
-        const moderationResult = await ContentModerationSystem.analyzeContent(
-            `${validatedBookData.title} ${validatedBookData.description}`,
-            'book',
-            user.id
-        );
-        if (moderationResult.action === 'reject') {
-            throw createAppError(ErrorType.VALIDATION, 'Your listing contains content that violates our guidelines. Please review and resubmit.');
+        // Validate input data with Zod schema
+        const validation = validateWithSchema(bookSchema, bookData);
+        if (!validation.success) {
+            throw createAppError(ErrorType.VALIDATION, validation.message);
         }
-    } catch (err: unknown) {
-        if ((err as { code?: string }).code === ErrorType.VALIDATION) throw err;
-        console.warn('Content moderation check failed, proceeding:', err);
-    }
+        const validatedBookData = validation.data;
 
-    // Note: Bypassing transactions to ensure compatibility with local standalone MongoDB instances
-    let insertedId: any;
+        // Create deduplication fields
+        const titleNormalized = normalizeForDeduplication(bookData.title);
+        const authorNormalized = normalizeForDeduplication(bookData.author);
+        const duplicateHash = createBookDuplicateHash(bookData.title, bookData.author, user.id);
 
-    try {
-        const now = getCurrentTimestamp();
+        // Check for existing duplicates from the same user
+        const existingBook = await db.collection("books").findOne({
+            duplicateHash,
+            sellerId: user.id,
+            status: { $in: ['active', 'inactive'] } // Don't consider sold/exchanged books as duplicates
+        });
 
-                const newBook: Omit<Book, '_id'> = {
-          title: validatedBookData.title,
-          author: validatedBookData.author,
-          description: validatedBookData.description || '',
-          genre: validatedBookData.genre || 'other',
-          condition: validatedBookData.condition,
-          type: validatedBookData.type,
-          price: bookData.price, // Price not validated by schema
-          imageUrl: normalizeMediaUrl(bookData.imageUrl),
-          sellerId: user.id,
+        if (existingBook) {
+            // Perform additional similarity check
+            const similarity = checkBookSimilarity(
+                { title: bookData.title, author: bookData.author, sellerId: user.id },
+                { title: existingBook.title, author: existingBook.author, sellerId: existingBook.sellerId }
+            );
+
+            if (similarity.isDuplicate) {
+                throw createAppError(
+                    ErrorType.VALIDATION,
+                    `You have already listed a similar book: "${existingBook.title}" by ${existingBook.author}. Please update your existing listing instead of creating a duplicate.`
+                );
+            }
+        }
+
+        // Moderate listing content before going live
+        try {
+            const { ContentModerationSystem } = await import('@/lib/content-moderation');
+            const moderationResult = await ContentModerationSystem.analyzeContent(
+                `${validatedBookData.title} ${validatedBookData.description}`,
+                'book',
+                user.id
+            );
+            if (moderationResult.action === 'reject') {
+                throw createAppError(ErrorType.VALIDATION, 'Your listing contains content that violates our guidelines. Please review and resubmit.');
+            }
+        } catch (err: unknown) {
+            if ((err as { code?: string }).code === ErrorType.VALIDATION) throw err;
+            console.warn('Content moderation check failed, proceeding:', err);
+        }
+
+        // Note: Bypassing transactions to ensure compatibility with local standalone MongoDB instances
+        let insertedId: any;
+
+        try {
+            const now = getCurrentTimestamp();
+
+            const newBook: Omit<Book, '_id'> = {
+                title: validatedBookData.title,
+                author: validatedBookData.author,
+                description: validatedBookData.description || '',
+                genre: validatedBookData.genre || 'other',
+                condition: validatedBookData.condition,
+                type: validatedBookData.type,
+                price: bookData.price, // Price not validated by schema
+                imageUrl: normalizeMediaUrl(bookData.imageUrl) || '',
+                sellerId: user.id,
                 city: validatedBookData.city,
-                    cityNormalized: validatedBookData.city,
-          status: 'active',
-          createdAt: now,
-          updatedAt: now,
-          expiresAt: calculateExpirationDate(validatedBookData.type),
-          titleNormalized,
-          authorNormalized,
-          duplicateHash,
-        };
+                cityNormalized: validatedBookData.city,
+                status: 'active',
+                createdAt: now,
+                updatedAt: now,
+                expiresAt: calculateExpirationDate(validatedBookData.type),
+                titleNormalized,
+                authorNormalized,
+                duplicateHash,
+            };
 
-        const result = await db.collection("books").insertOne(newBook);
+            const result = await db.collection("books").insertOne(newBook);
 
-        if (!result.insertedId) {
-          throw new Error('Failed to insert book.');
+            if (!result.insertedId) {
+                throw new Error('Failed to insert book.');
+            }
+
+            insertedId = result.insertedId;
+
+            // Fire-and-forget AI summary enrichment — must never block listing
+            (async () => {
+                try {
+                    const { generateBookSummary } = await import('@/ai/flows/generate-book-summary');
+                    const bookIdentifier = `${validatedBookData.title} by ${validatedBookData.author}`;
+                    const { summary } = await generateBookSummary({ bookIdentifier, userId: user.id });
+                    await db.collection('books').updateOne(
+                        { _id: result.insertedId },
+                        { $set: { aiSummary: summary } }
+                    );
+                } catch (aiErr) {
+                    console.warn('AI summary generation failed (non-blocking):', aiErr);
+                }
+            })();
+
+            // Check for wishlist matches with optimized query and deduplication
+            const usersWithBookOnWishlist = await OptimizedQueries.findWishlistMatches(
+                String(result.insertedId)
+            );
+
+            if (usersWithBookOnWishlist.length > 0) {
+                // Create deduplication keys to prevent duplicate notifications
+                const notificationPromises = usersWithBookOnWishlist.map(async (u) => {
+                    const deduplicationKey = createNotificationDeduplicationKey(
+                        String(u._id),
+                        'wishlist_match',
+                        String(result.insertedId)
+                    );
+
+                    // Check if notification already exists
+                    const existingNotification = await db.collection("notifications").findOne({
+                        userId: String(u._id),
+                        "metadata.deduplicationKey": deduplicationKey
+                    });
+
+                    if (!existingNotification) {
+                        return {
+                            userId: String(u._id),
+                            type: 'wishlist_match' as const,
+                            title: 'Wishlist Match Found!',
+                            message: `A book on your wishlist, "${sanitizeInput(bookData.title)}", has been listed!`,
+                            link: `/books/${result.insertedId}`,
+                            read: false,
+                            createdAt: now,
+                            metadata: {
+                                bookId: String(result.insertedId),
+                                bookTitle: sanitizeInput(bookData.title),
+                                bookAuthor: sanitizeInput(bookData.author),
+                                deduplicationKey
+                            }
+                        };
+                    }
+                    return null;
+                });
+
+                const notifications = (await Promise.all(notificationPromises)).filter(Boolean);
+
+                if (notifications.length > 0) {
+                    await db.collection("notifications").insertMany(notifications as any[]);
+
+                    // Emit real-time notifications for wishlist matches
+                    const { emitUserNotification } = await import('../../server');
+                    for (const notification of notifications) {
+                        if (notification) {
+                            try {
+                                await emitUserNotification(notification.userId, notification);
+                            } catch (error) {
+                                console.error('Failed to emit wishlist match notification:', error);
+                            }
+                        }
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error('Failed to list book:', error);
+            throw error;
         }
 
-        insertedId = result.insertedId;
+        // Invalidate user profile cache since listings have changed
+        const { default: redisCache } = await import('@/lib/redis-cache');
+        await redisCache.invalidateUserCache(user.id);
 
-        // Fire-and-forget AI summary enrichment — must never block listing
-        (async () => {
-          try {
-            const { generateBookSummary } = await import('@/ai/flows/generate-book-summary');
-            const bookIdentifier = `${validatedBookData.title} by ${validatedBookData.author}`;
-            const { summary } = await generateBookSummary({ bookIdentifier, userId: user.id });
-            await db.collection('books').updateOne(
-              { _id: result.insertedId },
-              { $set: { aiSummary: summary } }
-            );
-          } catch (aiErr) {
-            console.warn('AI summary generation failed (non-blocking):', aiErr);
-          }
-        })();
-
-        // Check for wishlist matches with optimized query and deduplication
-        const usersWithBookOnWishlist = await OptimizedQueries.findWishlistMatches(
-          String(result.insertedId)
+        // Log successful book listing
+        await logActivity(
+            user.id,
+            'book_listing_create',
+            'low',
+            `Book listed: "${validatedBookData.title}" by ${validatedBookData.author}`,
+            {
+                bookId: insertedId?.toString(),
+                type: validatedBookData.type,
+                condition: validatedBookData.condition,
+                price: bookData.price
+            }
         );
 
-        if (usersWithBookOnWishlist.length > 0) {
-          // Create deduplication keys to prevent duplicate notifications
-          const notificationPromises = usersWithBookOnWishlist.map(async (u) => {
-            const deduplicationKey = createNotificationDeduplicationKey(
-              String(u._id), 
-              'wishlist_match', 
-              String(result.insertedId)
-            );
-
-            // Check if notification already exists
-            const existingNotification = await db.collection("notifications").findOne({
-              userId: String(u._id),
-              "metadata.deduplicationKey": deduplicationKey
-            });
-
-            if (!existingNotification) {
-              return {
-                userId: String(u._id),
-                type: 'wishlist_match' as const,
-                title: 'Wishlist Match Found!',
-                message: `A book on your wishlist, "${sanitizeInput(bookData.title)}", has been listed!`,
-                link: `/books/${result.insertedId}`,
-                read: false,
-                createdAt: now,
-                metadata: {
-                  bookId: String(result.insertedId),
-                  bookTitle: sanitizeInput(bookData.title),
-                  bookAuthor: sanitizeInput(bookData.author),
-                  deduplicationKey
-                }
-              };
-            }
-            return null;
-          });
-
-          const notifications = (await Promise.all(notificationPromises)).filter(Boolean);
-          
-          if (notifications.length > 0) {
-            await db.collection("notifications").insertMany(notifications as any[]);
-            
-            // Emit real-time notifications for wishlist matches
-            const { emitUserNotification } = await import('../../server');
-            for (const notification of notifications) {
-              if (notification) {
-                try {
-                  await emitUserNotification(notification.userId, notification);
-                } catch (error) {
-                  console.error('Failed to emit wishlist match notification:', error);
-                }
-              }
-            }
-          }
+        revalidatePath('/');
+        revalidatePath(`/books/${insertedId}`);
+        if (bookData.type === 'sell') {
+            revalidatePath('/books');
+        } else {
+            revalidatePath('/exchange');
         }
-      
-    } catch (error) {
-      console.error('Failed to list book:', error);
-      throw error;
-    }
 
-    // Invalidate user profile cache since listings have changed
-    const { default: redisCache } = await import('@/lib/redis-cache');
-    await redisCache.invalidateUserCache(user.id);
+        try {
+            const { emitNewBook } = await import('../../server');
+            await emitNewBook(insertedId.toString(), user.id, { title: validatedBookData.title, type: validatedBookData.type });
+        } catch (emitError) {
+            console.warn('Failed to emit newBookListed socket event:', emitError);
+        }
 
-    // Log successful book listing
-    await logActivity(
-      user.id,
-      'book_listing_create',
-      'low',
-      `Book listed: "${validatedBookData.title}" by ${validatedBookData.author}`,
-      {
-        bookId: insertedId?.toString(),
-        type: validatedBookData.type,
-        condition: validatedBookData.condition,
-        price: bookData.price
-      }
-    );
-
-    revalidatePath('/');
-    revalidatePath(`/books/${insertedId}`);
-    if (bookData.type === 'sell') {
-      revalidatePath('/books');
-    } else {
-      revalidatePath('/exchange');
-    }
-
-    try {
-      const { emitNewBook } = await import('../../server');
-      await emitNewBook(insertedId.toString(), user.id, { title: validatedBookData.title, type: validatedBookData.type });
-    } catch (emitError) {
-      console.warn('Failed to emit newBookListed socket event:', emitError);
-    }
-
-    return { bookId: insertedId?.toString() };
-  });
+        return { bookId: insertedId?.toString() };
+    });
 }
 
 /**
@@ -812,6 +812,90 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
 
         const communityObjectId = new ObjectId(communityId);
 
+        const runMembershipLogic = async (useSessionObj?: any) => {
+            const opts = useSessionObj ? { session: useSessionObj } : {};
+
+            // Check community existence
+            const community = await db.collection("communities").findOne(
+                { _id: communityObjectId },
+                useSessionObj ? { session: useSessionObj, projection: { _id: 1, members: 1, visibility: 1 } } : { projection: { _id: 1, members: 1, visibility: 1 } }
+            );
+
+            if (!community) {
+                throw new Error("Community not found");
+            }
+
+            if (community.visibility === 'private' && !isMember) {
+                return { success: false, message: 'This community requires approval to join. Please send a join request.', requiresApproval: true };
+            }
+
+            const existingMember = community.members?.find((m: any) => m.userId === user.id);
+            if (existingMember?.banned && !isMember) {
+                return { success: false, message: 'You are banned from this community.', banned: true };
+            }
+
+            if (isMember) {
+                // User wants to leave - use atomic operation with conditional check
+                const leaveResult = await db.collection("communities").updateOne(
+                    {
+                        _id: communityObjectId,
+                        'members.userId': user.id  // Only update if user IS a member
+                    },
+                    {
+                        $pull: { members: { userId: user.id } } as any,
+                        $inc: { memberCount: -1 }
+                    },
+                    opts
+                );
+
+                if (leaveResult.modifiedCount === 0) {
+                    const stillExists = await db.collection("communities").findOne(
+                        { _id: communityObjectId },
+                        useSessionObj ? { session: useSessionObj, projection: { _id: 1 } } : { projection: { _id: 1 } }
+                    );
+                    if (!stillExists) {
+                        throw new Error("Community not found");
+                    }
+                    return { modifiedCount: 0, wasAlreadyInDesiredState: true };
+                }
+
+                return leaveResult;
+            } else {
+                // User wants to join - use atomic operation with conditional check
+                const joinResult = await db.collection("communities").updateOne(
+                    {
+                        _id: communityObjectId,
+                        'members.userId': { $ne: user.id }  // Only add if NOT already a member
+                    },
+                    {
+                        $addToSet: {
+                            members: {
+                                userId: user.id,
+                                role: 'member',
+                                joinedAt: new Date().toISOString(), // Keep consistent with string format
+                                banned: false
+                            }
+                        },
+                        $inc: { memberCount: 1 }
+                    },
+                    opts
+                );
+
+                if (joinResult.modifiedCount === 0) {
+                    const stillExists = await db.collection("communities").findOne(
+                        { _id: communityObjectId },
+                        useSessionObj ? { session: useSessionObj, projection: { _id: 1 } } : { projection: { _id: 1 } }
+                    );
+                    if (!stillExists) {
+                        throw new Error("Community not found");
+                    }
+                    return { modifiedCount: 0, wasAlreadyInDesiredState: true };
+                }
+
+                return joinResult;
+            }
+        };
+
         // Use MongoDB transaction for atomic operations
         const client = await clientPromise;
         const session = client.startSession();
@@ -819,12 +903,13 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
 
         try {
             result = await session.withTransaction(async () => {
+<<<<<<< Updated upstream
                 // FIXED: Check community existence inside transaction
                 const community = await db.collection("communities").findOne(
                     { _id: communityObjectId },
                     { session, projection: { _id: 1, members: 1, visibility: 1 } }
                 );
-                
+
                 if (!community) {
                     throw new Error("Community not found");
                 }
@@ -837,7 +922,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                     // User wants to leave - use atomic operation with conditional check
                     // Only remove if user is actually a member (prevents negative counts)
                     const leaveResult = await db.collection("communities").updateOne(
-                        { 
+                        {
                             _id: communityObjectId,
                             'members.userId': user.id  // Only update if user IS a member
                         },
@@ -847,7 +932,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                         },
                         { session }
                     );
-                    
+
                     // If no document was modified, user wasn't a member
                     if (leaveResult.modifiedCount === 0) {
                         // Check if it's because community doesn't exist or user not a member
@@ -861,30 +946,30 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                         // User wasn't a member, this is idempotent - return success
                         return { modifiedCount: 0, wasAlreadyInDesiredState: true };
                     }
-                    
+
                     return leaveResult;
                 } else {
                     // User wants to join - use atomic operation with conditional check
                     // $addToSet with object requires matching on userId field
                     const joinResult = await db.collection("communities").updateOne(
-                        { 
+                        {
                             _id: communityObjectId,
                             'members.userId': { $ne: user.id }  // Only add if NOT already a member
                         },
                         {
-                            $addToSet: { 
-                                members: { 
-                                    userId: user.id, 
-                                    role: 'member', 
+                            $addToSet: {
+                                members: {
+                                    userId: user.id,
+                                    role: 'member',
                                     joinedAt: new Date(),
                                     banned: false
-                                } 
+                                }
                             },
                             $inc: { memberCount: 1 }
                         },
                         { session }
                     );
-                    
+
                     // If no document was modified, user was already a member
                     if (joinResult.modifiedCount === 0) {
                         // Check if it's because community doesn't exist or user already a member
@@ -898,12 +983,28 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
                         // User was already a member, this is idempotent - return success
                         return { modifiedCount: 0, wasAlreadyInDesiredState: true };
                     }
-                    
+
                     return joinResult;
                 }
+=======
+                return await runMembershipLogic(session);
+>>>>>>> Stashed changes
             });
+        } catch (error: any) {
+            // Fallback for standalone MongoDB deployments where replica sets/transactions are not configured
+            if (error.message && (error.message.includes('replica set') || error.message.includes('Transaction numbers'))) {
+                console.log("Transaction not supported (standalone MongoDB). Executing membership action without transaction.");
+                result = await runMembershipLogic();
+            } else {
+                throw error;
+            }
         } finally {
             await session.endSession();
+        }
+
+        // Return error result directly if transaction logic failed/blocked the join
+        if (result && typeof result === 'object' && 'success' in result && result.success === false) {
+            return result;
         }
 
         // Check if the operation was idempotent (already in desired state)
@@ -913,7 +1014,7 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
         if (!wasIdempotent) {
             revalidatePath('/community');
             revalidatePath(`/community/${communityId}`);
-            
+
             // Emit real-time community update for member count change
             try {
                 const { emitCommunityUpdate } = await import('../../server');
@@ -960,9 +1061,9 @@ export async function toggleCommunityMembership(communityId: string, isMember: b
             }
         }
 
-        return { 
+        return {
             success: true,
-            message: wasIdempotent 
+            message: wasIdempotent
                 ? (isMember ? 'Already left' : 'Already a member')
                 : (isMember ? 'Left community' : 'Joined community')
         };
@@ -996,17 +1097,23 @@ export async function createPost(communityId: string, postData: { authorId: stri
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
-        
+
         // Check if user is a member of the community before allowing post creation
         const community = await db.collection("communities").findOne(
-            { _id: new ObjectId(communityId), "members.userId": user.id } as any
+            {
+                _id: new ObjectId(communityId),
+                $or: [
+                    { "members.userId": user.id },
+                    { "members": user.id }
+                ]
+            } as any
         );
-        
+
         if (!community) {
             throw new Error("You must be a member to create posts in this community");
         }
-        
-        const authorInfo = await db.collection('users').findOne({_id: new ObjectId(user.id)}, { projection: { name: 1, avatarUrl: 1 }});
+
+        const authorInfo = await db.collection('users').findOne({ _id: new ObjectId(user.id) }, { projection: { name: 1, avatarUrl: 1 } });
 
         const newPost = {
             _id: new ObjectId(), // Explicitly create ObjectId for the post
@@ -1137,7 +1244,7 @@ export async function togglePostLike(communityId: string, postId: string, isLike
         if (!ObjectId.isValid(postId)) {
             throw new Error("Invalid post ID format");
         }
-        
+
         const communityObjId = new ObjectId(communityId);
         const postObjectId = new ObjectId(postId);
 
@@ -1159,7 +1266,7 @@ export async function togglePostLike(communityId: string, postId: string, isLike
         if (member.banned) {
             throw new Error('You are banned from this community');
         }
-        
+
         // FIXED MAJOR-005: Removed redundant 'likes' field - only track likedBy array
         // The likes count should be calculated from likedBy.length when needed
         const updateOperation = isLiked
@@ -1167,18 +1274,18 @@ export async function togglePostLike(communityId: string, postId: string, isLike
             : { $addToSet: { likedBy: user.id } };
 
         const result = await db.collection("posts").updateOne(
-            { 
-                _id: postObjectId, 
+            {
+                _id: postObjectId,
                 communityId: communityObjId,
                 deletedAt: { $exists: false }
             },
             updateOperation as any
         );
-        
+
         if (!result.matchedCount) {
             throw new Error('Post not found');
         }
-        
+
         // Only send notification when liking (not unliking)
         if (!isLiked && result.modifiedCount > 0) {
             // Fetch post to get author info
@@ -1186,7 +1293,7 @@ export async function togglePostLike(communityId: string, postId: string, isLike
                 { _id: postObjectId },
                 { projection: { authorId: 1 } }
             );
-            
+
             if (postDoc && postDoc.authorId !== user.id) {
                 const notification: Omit<Notification, '_id'> = {
                     userId: postDoc.authorId,
@@ -1207,7 +1314,7 @@ export async function togglePostLike(communityId: string, postId: string, isLike
         }
 
         revalidatePath(`/community/${communityId}`);
-        
+
         // Emit real-time update only if state actually changed
         if (result.modifiedCount > 0) {
             try {
@@ -1217,7 +1324,7 @@ export async function togglePostLike(communityId: string, postId: string, isLike
                 console.warn('Failed to emit real-time update for like toggle:', emitError);
             }
         }
-        
+
         return { success: true };
     });
 }
@@ -1236,7 +1343,7 @@ export async function addComment(communityId: string, postId: string, content: s
         if (!rateLimitResult.allowed) {
             throw createAppError(ErrorType.RATE_LIMIT, rateLimitResult.feedback || 'Too many comments. Please try again later.');
         }
-        
+
         // Validate input data with Zod schema
         const validation = validateWithSchema(commentSchema, { content, postId, parentId });
         if (!validation.success) {
@@ -1248,7 +1355,13 @@ export async function addComment(communityId: string, postId: string, content: s
         if (!ObjectId.isValid(postId)) throw new Error('Invalid post ID format');
 
         // Ensure membership
-        const membership = await db.collection('communities').findOne({ _id: new ObjectId(communityId), "members.userId": user.id });
+        const membership = await db.collection('communities').findOne({
+            _id: new ObjectId(communityId),
+            $or: [
+                { "members.userId": user.id },
+                { "members": user.id }
+            ]
+        });
         if (!membership) throw new Error('You must be a member to comment in this community');
 
         // Moderate content
@@ -1368,7 +1481,7 @@ export async function deletePost(communityId: string, postId: string) {
         if (!ObjectId.isValid(communityId)) {
             throw new Error("Invalid community ID format");
         }
-        
+
         if (!ObjectId.isValid(postId)) {
             throw new Error("Invalid post ID format");
         }
@@ -1380,7 +1493,10 @@ export async function deletePost(communityId: string, postId: string) {
         const community = await db.collection<CommunityDocument>("communities").findOne(
             {
                 _id: communityObjId,
-                'members.userId': user.id  // Verify user is a member
+                $or: [
+                    { 'members.userId': user.id },
+                    { 'members': user.id }
+                ]
             },
             { projection: { _id: 1, createdBy: 1, members: 1 } }
         );
@@ -1489,9 +1605,12 @@ export async function editPost(communityId: string, postId: string, newContent: 
 
         // FIXED CRITICAL-003: Check membership BEFORE attempting to access post
         const community = await db.collection("communities").findOne(
-            { 
+            {
                 _id: communityObjId,
-                'members.userId': user.id  // Verify user is a member
+                $or: [
+                    { 'members.userId': user.id },
+                    { 'members': user.id }
+                ]
             },
             { projection: { _id: 1 } }
         );
@@ -1581,9 +1700,9 @@ export async function searchCommunities(searchQuery: string) {
 
         // Use optimized search from database-optimization.ts
         const result = await OptimizedQueries.searchCommunities(searchQuery, 1, 20);
-        
-        return { 
-            success: true, 
+
+        return {
+            success: true,
             communities: JSON.parse(JSON.stringify(result.communities)),
             pagination: result.pagination
         };
@@ -1646,7 +1765,7 @@ export async function createCommunity(communityData: { name: string, description
         const createdCommunity = { ...newCommunity, _id: result.insertedId };
 
         revalidatePath('/community');
-        
+
         // Emit real-time new community event
         try {
             const { emitNewCommunity } = await import('../../server');
@@ -1673,9 +1792,9 @@ export async function blockUser(userIdToBlock: string): Promise<{ success: true;
         }
 
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
-        
+
         const validatedBlockUserId = validateObjectId(userIdToBlock);
-        
+
         // Prevent self-blocking
         if (validatedBlockUserId.toString() === user.id) {
             throw new ValidationError("Cannot block yourself");
@@ -1685,7 +1804,7 @@ export async function blockUser(userIdToBlock: string): Promise<{ success: true;
         const userToBlock = await db.collection("users").findOne({
             _id: validatedBlockUserId
         });
-        
+
         if (!userToBlock) {
             throw new ValidationError("User not found");
         }
@@ -1704,8 +1823,8 @@ export async function blockUser(userIdToBlock: string): Promise<{ success: true;
 
         // Log activity
         await logActivity(
-            userId.toString(), 
-            'BLOCK_USER', 
+            userId.toString(),
+            'BLOCK_USER',
             'medium',
             `Blocked user ${userIdToBlock}`,
             {
@@ -1726,7 +1845,7 @@ export async function blockUser(userIdToBlock: string): Promise<{ success: true;
 export async function unblockUser(userIdToUnblock: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const { validateObjectId } = await import('@/lib/validation');
-        
+
         const validatedUnblockUserId = validateObjectId(userIdToUnblock);
 
         // Remove from both sides so the block is fully cleared
@@ -1743,8 +1862,8 @@ export async function unblockUser(userIdToUnblock: string): Promise<{ success: t
 
         // Log activity
         await logActivity(
-            userId.toString(), 
-            'UNBLOCK_USER', 
+            userId.toString(),
+            'UNBLOCK_USER',
             'low',
             `Unblocked user ${userIdToUnblock}`,
             {
@@ -1767,7 +1886,7 @@ export async function isUserBlocked(userId: string, targetUserId: string): Promi
     try {
         const client = await clientPromise;
         const db = client.db(process.env.MONGODB_DB);
-        
+
         if (!ObjectId.isValid(userId) || !ObjectId.isValid(targetUserId)) {
             return false;
         }
@@ -1808,9 +1927,9 @@ export async function getBlockedUsers(): Promise<{ success: true; data: any } | 
             .project({ password: 0, email: 0 })
             .toArray();
 
-        return { 
-            success: true, 
-            blockedUsers: JSON.parse(JSON.stringify(blockedUsers)) 
+        return {
+            success: true,
+            blockedUsers: JSON.parse(JSON.stringify(blockedUsers))
         };
     });
 }
@@ -1846,13 +1965,13 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
         if (validatedOtherUserId.toString() === user.id) {
             throw new ValidationError("Cannot start a conversation with yourself.");
         }
-        
+
         // Verify other user exists
         const otherUser = await db.collection("users").findOne({ _id: validatedOtherUserId });
         if (!otherUser) {
             throw new ValidationError("User not found.");
         }
-        
+
         // Check if users have blocked each other
         const [currentUserBlocksOther, otherBlocksCurrent] = await Promise.all([
             isUserBlocked(user.id, validatedOtherUserId.toString()),
@@ -1866,7 +1985,7 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
         if (otherBlocksCurrent) {
             throw new ValidationError("This user has blocked you. You cannot start a conversation.");
         }
-        
+
         // If bookId provided, verify book exists and is available for sale
         if (validatedBookId) {
             const book = await db.collection("books").findOne({ _id: validatedBookId });
@@ -1877,7 +1996,7 @@ export async function startChat(otherUserId: string, bookId?: string): Promise<{
                 throw new ValidationError("Cannot contact yourself about your own book.");
             }
         }
-        
+
         const participantIds = [user.id, validatedOtherUserId.toString()].sort();
         const now = new Date().toISOString();
 
@@ -1953,7 +2072,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string): Pr
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateChatParams, validateUserCity, ValidationError } = await import('@/lib/validation');
-        
+
         // Validate and sanitize input parameters
         const validatedParams = validateChatParams(otherUserId, bookId, user.id);
 
@@ -1968,15 +2087,15 @@ export async function startExchangeChat(otherUserId: string, bookId: string): Pr
         if (!currentUser) {
             throw new ValidationError("Current user not found");
         }
-        
+
         if (!targetBook) {
             throw new ValidationError("Book not found");
         }
-        
+
         if (!otherUser) {
             throw new ValidationError("Target user not found");
         }
-        
+
         // Check if users have blocked each other
         const [currentUserBlocksOther, otherBlocksCurrent] = await Promise.all([
             isUserBlocked(user.id, validatedParams.otherUserId.toString()),
@@ -1986,43 +2105,43 @@ export async function startExchangeChat(otherUserId: string, bookId: string): Pr
         if (currentUserBlocksOther || otherBlocksCurrent) {
             throw new ValidationError("Cannot start chat due to blocking restrictions");
         }
-        
+
         // Validate book is available for exchange
         if (targetBook.type !== 'exchange') {
             throw new ValidationError("This book is not available for exchange");
         }
-        
+
         if (targetBook.sellerId === user.id) {
             throw new ValidationError("Cannot start an exchange with your own book");
         }
 
         // Check if current user has any exchange books
-        const userExchangeBook = await db.collection("books").findOne({ 
-            sellerId: user.id, 
-            type: 'exchange' 
+        const userExchangeBook = await db.collection("books").findOne({
+            sellerId: user.id,
+            type: 'exchange'
         });
-        
+
         if (!userExchangeBook) {
             throw new Error("You must have at least one book listed for exchange to start a trade.");
         }
 
-                // Centralized eligibility check (server authoritative)
-                const { default: locationUtils } = await import('@/lib/location/location-utils');
-                const eligibility = locationUtils.canUserExchange({
-                    proposer: { id: user.id, cityNormalized: currentUser.cityNormalized, avatarUrl: currentUser.avatarUrl, bio: currentUser.bio },
-                    responder: { id: otherUser.id, cityNormalized: otherUser.cityNormalized, avatarUrl: otherUser.avatarUrl, bio: otherUser.bio },
-                    proposerBook: { sellerId: undefined, status: 'active' },
-                    responderBook: { sellerId: undefined, status: 'active' }
-                });
+        // Centralized eligibility check (server authoritative)
+        const { default: locationUtils } = await import('@/lib/location/location-utils');
+        const eligibility = locationUtils.canUserExchange({
+            proposer: { id: user.id, cityNormalized: currentUser.cityNormalized, avatarUrl: currentUser.avatarUrl, bio: currentUser.bio },
+            responder: { id: otherUser.id, cityNormalized: otherUser.cityNormalized, avatarUrl: otherUser.avatarUrl, bio: otherUser.bio },
+            proposerBook: { sellerId: undefined, status: 'active' },
+            responderBook: { sellerId: undefined, status: 'active' }
+        });
 
-                if (!eligibility.allowed) {
-                    throw new Error(eligibility.reason || 'Users are not eligible to exchange');
-                }
+        if (!eligibility.allowed) {
+            throw new Error(eligibility.reason || 'Users are not eligible to exchange');
+        }
 
         // Check if chat already exists
         const participantIds = [user.id, otherUserId].sort();
-        
-        let chat = await db.collection("chats").findOne({ 
+
+        let chat = await db.collection("chats").findOne({
             participantIds: { $all: participantIds },
             bookId: validatedParams.bookId
         });
@@ -2040,7 +2159,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string): Pr
             text: initialMessage,
             createdAt: new Date().toISOString(),
         };
-        
+
         const newChat: Omit<Chat, '_id'> = {
             participantIds,
             bookId: validatedParams.bookId,
@@ -2068,7 +2187,7 @@ export async function startExchangeChat(otherUserId: string, bookId: string): Pr
             // Log email error but don't fail the exchange creation
             console.warn('Failed to send book contact email for exchange:', emailError);
         }
-        
+
         // Log successful exchange initiation for monitoring
         console.log(`Exchange chat initiated: User ${user.id} -> User ${otherUserId} for book ${bookId}`);
 
@@ -2096,7 +2215,7 @@ export async function isBookWishlisted(bookId: string): Promise<boolean> {
 
             return !!userWithWishlistItem;
         });
-        
+
         if (result.success) {
             return result.data as boolean;
         }
@@ -2238,7 +2357,7 @@ export async function getApprovedOrganizationsCached(): Promise<Organization[]> 
 export async function applyForOrganization(orgData: Omit<Organization, '_id' | 'status' | 'createdAt'>) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         if (user.id !== orgData.submittedBy) throw new Error("Unauthorized");
-        
+
         // Log organization application attempt (non-fatal — don't block submission)
         try {
             await logActivity(
@@ -2255,7 +2374,7 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
         } catch (logErr) {
             console.warn('logActivity failed for org application:', logErr);
         }
-        
+
         // Validate organization data
         const validation = validateWithSchema(organizationSchema, {
             name: orgData.name,
@@ -2294,7 +2413,7 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
         };
 
         const result = await db.collection("organizations").insertOne(newOrg);
-        
+
         // Send admin notification email
         try {
             // Get admin email (you can configure this in environment variables)
@@ -2312,7 +2431,7 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
             // Don't fail the application if email fails, just log it
             console.error("Failed to send admin notification email:", emailError);
         }
-        
+
         // Create admin notification for new organization application
         try {
             const { notifyNewOrganization } = await import('@/lib/admin-notifications');
@@ -2324,14 +2443,14 @@ export async function applyForOrganization(orgData: Omit<Organization, '_id' | '
         } catch (error) {
             console.warn('Failed to create admin notification for organization application:', error);
         }
-        
+
         // Log successful organization application
         await logActivity(
             user.id,
             'organization_application',
             'low',
             `Successfully submitted organization application: ${orgData.name}`,
-            { 
+            {
                 organizationId: result.insertedId.toString(),
                 organizationName: orgData.name,
                 status: 'pending'
@@ -2356,7 +2475,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
         const contactEmail = formData.get('contactEmail') as string || undefined;
         const contactPhone = formData.get('contactPhone') as string || undefined;
         const website = formData.get('website') as string || undefined;
-        
+
         // Validate organization data
         const validation = validateOrganizationData({
             name,
@@ -2408,7 +2527,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
         };
 
         const result = await db.collection("organizations").insertOne(newOrg);
-        
+
         // Send admin notification email
         try {
             const adminEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_USER;
@@ -2424,7 +2543,7 @@ export async function applyForOrganizationWithFile(formData: FormData) {
         } catch (emailError) {
             console.error("Failed to send admin notification email:", emailError);
         }
-        
+
         return { success: true };
     });
 }
@@ -2453,33 +2572,33 @@ export async function initiateDonation(organizationId: string) {
             return { success: false, message: "Invalid organization ID." };
         }
 
-        const org = await db.collection("organizations").findOne({ 
+        const org = await db.collection("organizations").findOne({
             _id: new ObjectId(organizationId),
             status: 'approved',  // Only allow donations to approved organizations
             deleted: { $ne: true }  // Exclude soft-deleted organizations
         });
-        
+
         if (!org) {
             return { success: false, message: "Organization not found or not accepting donations." };
         }
-        
+
         // Prevent self-donation (primary contact)
         if (org.primaryContactId === user.id) {
-            return { 
-                success: false, 
-                message: "You cannot donate to your own organization." 
+            return {
+                success: false,
+                message: "You cannot donate to your own organization."
             };
         }
-        
+
         // Prevent representative donation
         const isRepresentative = org.representatives?.some(
             (rep: any) => rep.userId === user.id
         );
-        
+
         if (isRepresentative) {
-            return { 
-                success: false, 
-                message: "Organization representatives cannot donate to their own organization." 
+            return {
+                success: false,
+                message: "Organization representatives cannot donate to their own organization."
             };
         }
 
@@ -2488,8 +2607,8 @@ export async function initiateDonation(organizationId: string) {
             // Migration: If no primaryContactId, set it to the submitter
             await db.collection("organizations").updateOne(
                 { _id: new ObjectId(organizationId) },
-                { 
-                    $set: { 
+                {
+                    $set: {
                         primaryContactId: org.submittedBy,
                         representatives: [
                             {
@@ -2500,13 +2619,13 @@ export async function initiateDonation(organizationId: string) {
                             }
                         ],
                         updatedAt: new Date().toISOString()
-                    } 
+                    }
                 }
             );
-            
+
             // Update the org object for use in this function
             org.primaryContactId = org.submittedBy;
-            
+
             console.log(`Auto-assigned primaryContactId for organization ${organizationId}`);
         }
 
@@ -2514,21 +2633,21 @@ export async function initiateDonation(organizationId: string) {
         const participantIds = [user.id, org.primaryContactId].sort();
 
         // FIRST: Check if ANY chat exists between these participants (donation or regular)
-        let chat = await db.collection("chats").findOne({ 
+        let chat = await db.collection("chats").findOne({
             participantIds: { $all: participantIds }
         });
 
         let donation;
         let isNewChat = false;
-        
+
         // If chat exists, check if it already has this organization context
         if (chat) {
             // If the chat doesn't have an organizationId, add it
             if (!chat.organizationId) {
                 await db.collection("chats").updateOne(
                     { _id: chat._id },
-                    { 
-                        $set: { 
+                    {
+                        $set: {
                             organizationId: new ObjectId(organizationId),
                             updatedAt: new Date().toISOString()
                         }
@@ -2536,22 +2655,22 @@ export async function initiateDonation(organizationId: string) {
                 );
                 chat.organizationId = new ObjectId(organizationId);
             }
-            
+
             // If chat was previously deleted, restore it by removing BOTH users from deletedBy
             if (chat.deletedBy && Array.isArray(chat.deletedBy) && chat.deletedBy.length > 0) {
                 await db.collection("chats").updateOne(
                     { _id: chat._id },
-                    { 
-                        $set: { 
+                    {
+                        $set: {
                             deletedBy: [],
-                            updatedAt: new Date().toISOString() 
+                            updatedAt: new Date().toISOString()
                         }
                     }
                 );
                 chat.deletedBy = [];
             }
         }
-        
+
         if (!chat) {
             isNewChat = true;
 
@@ -2683,7 +2802,7 @@ export async function initiateDonation(organizationId: string) {
         } else {
             // Existing chat found - get the donation
             donation = await db.collection("donations").findOne({ chatId: chat._id });
-            
+
             if (!donation) {
                 // Edge case: chat exists but donation doesn't (data inconsistency)
                 // Create the donation record
@@ -2703,31 +2822,31 @@ export async function initiateDonation(organizationId: string) {
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                 };
-                
+
                 const donationResult = await db.collection("donations").insertOne(newDonation);
                 donation = { ...newDonation, _id: donationResult.insertedId };
             }
         }
-        
+
         // Ensure we have a donation
         if (!donation) {
             throw createAppError(ErrorType.INTERNAL, 'Failed to create or retrieve donation');
         }
-        
+
         // Log successful donation initiation
         await logActivity(
             user.id,
             'donation_initiate',
             'low',
             `Successfully initiated donation chat to ${org.name}`,
-            { 
+            {
                 organizationId,
                 organizationName: org.name,
                 chatId: chat._id.toString(),
                 donationId: donation._id.toString()
             }
         );
-        
+
         // Return just the data (wrapper adds { success: true, data: ... })
         return {
             chatId: chat._id.toString(),
@@ -2766,8 +2885,8 @@ export async function updateDonationBooks(
         }
 
         // Get the donation
-        const donation = await db.collection("donations").findOne({ 
-            _id: new ObjectId(donationId) 
+        const donation = await db.collection("donations").findOne({
+            _id: new ObjectId(donationId)
         });
 
         if (!donation) {
@@ -2824,12 +2943,12 @@ export async function updateDonationBooks(
         // Update donation with new books
         const result = await db.collection("donations").updateOne(
             { _id: new ObjectId(donationId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     books: books,
                     updatedAt: new Date().toISOString(),
                     lastUpdatedBy: user.id
-                } 
+                }
             }
         );
 
@@ -2839,7 +2958,7 @@ export async function updateDonationBooks(
 
         // Create notification for the other party
         const otherUserId = isDonor ? org.primaryContactId : donation.donorId;
-        
+
         await db.collection("notifications").insertOne({
             userId: otherUserId,
             type: 'donation_update',
@@ -2861,15 +2980,15 @@ export async function updateDonationBooks(
             'donation_status_update',
             'low',
             `Updated books for donation to ${org.name}`,
-            { 
+            {
                 donationId,
                 bookCount: books.length,
                 organizationId: donation.organizationId
             }
         );
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             data: {
                 donationId,
                 bookCount: books.length
@@ -2899,8 +3018,8 @@ export async function updateDonationStatus(
         const validatedData = donationStatusUpdateSchema.parse(updateData);
 
         // Get the donation
-        const donation = await db.collection("donations").findOne({ 
-            _id: new ObjectId(donationId) 
+        const donation = await db.collection("donations").findOne({
+            _id: new ObjectId(donationId)
         });
 
         if (!donation) {
@@ -2934,7 +3053,7 @@ export async function updateDonationStatus(
             donation.status,
             validatedData.status
         );
-        
+
         if (!validTransition.isValid) {
             throw createAppError(
                 ErrorType.VALIDATION,
@@ -2980,7 +3099,7 @@ export async function updateDonationStatus(
         // Update donation with both current status and history
         await db.collection("donations").updateOne(
             { _id: new ObjectId(donationId) },
-            { 
+            {
                 $set: updateDoc,
                 $push: { statusHistory: statusUpdate } as any
             }
@@ -3013,10 +3132,10 @@ export async function updateDonationStatus(
 
         // Send email notification
         try {
-            const otherUser = await db.collection("users").findOne({ 
-                _id: new ObjectId(otherUserId) 
+            const otherUser = await db.collection("users").findOne({
+                _id: new ObjectId(otherUserId)
             });
-            
+
             if (otherUser?.email) {
                 await sendDonationStatusUpdateEmail(
                     otherUser.email,
@@ -3040,7 +3159,7 @@ export async function updateDonationStatus(
             'donation_status_update',
             'low',
             `Updated donation status to ${validatedData.status}`,
-            { 
+            {
                 donationId,
                 oldStatus: donation.status,
                 newStatus: validatedData.status,
@@ -3048,8 +3167,8 @@ export async function updateDonationStatus(
             }
         );
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             data: {
                 ...donation,
                 ...updateDoc
@@ -3171,10 +3290,10 @@ export async function confirmDonationReceipt(
 
         // Send thank you email to donor
         try {
-            const donor = await db.collection("users").findOne({ 
-                _id: new ObjectId(donation.donorId) 
+            const donor = await db.collection("users").findOne({
+                _id: new ObjectId(donation.donorId)
             });
-            
+
             if (donor?.email) {
                 await sendDonationCompletionEmail(
                     donor.email,
@@ -3196,15 +3315,15 @@ export async function confirmDonationReceipt(
             'donation_confirmed',
             'medium',
             `Confirmed receipt of donation from ${donation.donorId}`,
-            { 
+            {
                 donationId,
                 organizationId: donation.organizationId,
                 receivedDate: receiptData.receivedDate
             }
         );
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             data: {
                 ...donation,
                 ...updateDoc
@@ -3316,7 +3435,7 @@ export async function submitReport(reportData: Omit<Report, '_id' | 'status' | '
         };
 
         const result = await db.collection("reports").insertOne(newReport);
-        
+
         // Create admin notification for content report
         try {
             const { notifyContentReport } = await import('@/lib/admin-notifications');
@@ -3329,7 +3448,7 @@ export async function submitReport(reportData: Omit<Report, '_id' | 'status' | '
         } catch (error) {
             console.warn('Failed to create admin notification for content report:', error);
         }
-        
+
         return { success: true };
     });
 }
@@ -3569,29 +3688,29 @@ export async function deleteReview(reviewId: string) {
         const client = await clientPromise;
         const session = client.startSession();
         try {
-          await session.withTransaction(async () => {
-            const deleteResult = await db.collection("reviews").deleteOne(
-              { _id: new ObjectId(reviewId) },
-              { session }
-            );
+            await session.withTransaction(async () => {
+                const deleteResult = await db.collection("reviews").deleteOne(
+                    { _id: new ObjectId(reviewId) },
+                    { session }
+                );
 
-            if (deleteResult.deletedCount === 0) {
-              throw new Error("Failed to delete review");
-            }
-
-            await db.collection("users").updateOne(
-              { _id: new ObjectId(review.revieweeId) },
-              {
-                $inc: {
-                  reviews: -1,
-                  totalRatingPoints: -review.rating
+                if (deleteResult.deletedCount === 0) {
+                    throw new Error("Failed to delete review");
                 }
-              },
-              { session }
-            );
-          });
+
+                await db.collection("users").updateOne(
+                    { _id: new ObjectId(review.revieweeId) },
+                    {
+                        $inc: {
+                            reviews: -1,
+                            totalRatingPoints: -review.rating
+                        }
+                    },
+                    { session }
+                );
+            });
         } finally {
-          await session.endSession();
+            await session.endSession();
         }
 
         revalidatePath(`/profile/${review.revieweeId}`);
@@ -3888,12 +4007,12 @@ export async function getAdminReports(status?: 'pending' | 'resolved' | 'dismiss
                 }
             };
         }, 'admin');
-        
+
         // Handle the wrapper's return type
         if (result && result.success && result.data) {
             return result.data as any;
         }
-        
+
         // Return empty result on error
         return {
             reports: [],
@@ -4044,12 +4163,12 @@ export async function getReviewAnalytics(): Promise<{
                 topRatedUsers
             };
         }, 'admin');
-        
+
         // Handle the wrapper's return type
         if (result && typeof result === 'object' && 'totalReviews' in result) {
             return result as any;
         }
-        
+
         // Return empty result on error
         return {
             totalReviews: 0,
@@ -4169,14 +4288,14 @@ export async function validateReviewData(reviewData: Omit<Review, '_id' | 'creat
 export async function getMyReviews(page: number = 1, limit: number = 10): Promise<{
     success: true;
     data: {
-    reviews: (Review & { reviewee?: { _id: string; name: string } })[];
-    pagination: {
-        currentPage: number;
-        totalPages: number;
-        totalCount: number;
-        hasNext: boolean;
-        hasPrev: boolean;
-    };
+        reviews: (Review & { reviewee?: { _id: string; name: string } })[];
+        pagination: {
+            currentPage: number;
+            totalPages: number;
+            totalCount: number;
+            hasNext: boolean;
+            hasPrev: boolean;
+        };
     };
 } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
@@ -4282,12 +4401,12 @@ export async function bulkResolveReports(reportIds: string[], resolutionNotes?: 
 export async function getReportAnalytics(): Promise<{
     success: true;
     data: {
-    totalReports: number;
-    pendingReports: number;
-    resolvedReports: number;
-    reportsByType: { [key: string]: number };
-    reportsByReason: { [key: string]: number };
-    reportsByMonth: { month: string; count: number }[];
+        totalReports: number;
+        pendingReports: number;
+        resolvedReports: number;
+        reportsByType: { [key: string]: number };
+        reportsByReason: { [key: string]: number };
+        reportsByMonth: { month: string; count: number }[];
     };
 } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
@@ -4567,32 +4686,32 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
         if (!org) {
             throw new Error("Organization not found.");
         }
-        
+
         // Ensure organization has submittedBy field to use as primary contact
         if (!org.submittedBy) {
             throw new Error("Organization is missing submittedBy information. Cannot approve without a contact person.");
         }
-        
+
         // Log organization approval attempt
         await logActivity(
             user.id,
             'organization_approval',
             'high',
             `Admin approved organization: ${org.name}`,
-            { 
+            {
                 organizationId,
                 organizationName: org.name,
                 submittedBy: org.submittedBy,
                 adminId: user.id
             }
         );
-        
+
         // Update organization status and set primaryContactId
         // The submitter becomes the primary contact by default
         await db.collection("organizations").updateOne(
             { _id: new ObjectId(organizationId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     status: 'approved',
                     primaryContactId: org.submittedBy, // Set submitter as primary contact
                     representatives: [
@@ -4604,10 +4723,10 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
                         }
                     ],
                     updatedAt: new Date().toISOString()
-                } 
+                }
             }
         );
-        
+
         // Send approval email notification
         try {
             if (org.contactEmail) {
@@ -4619,10 +4738,10 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
         } catch (emailError) {
             console.error("Failed to send organization approval email:", emailError);
         }
-        
+
         revalidatePath('/admin');
         revalidatePath('/donate');
-        
+
         // Invalidate cache
         try {
             const { default: redisCache } = await import('@/lib/redis-cache');
@@ -4631,14 +4750,14 @@ export async function approveOrganization(organizationId: string): Promise<{ suc
         } catch (cacheError) {
             console.warn('⚠️ Failed to invalidate cache:', cacheError);
         }
-        
+
         // Log successful organization approval
         await logActivity(
             user.id,
             'organization_approval',
             'medium',
             `Successfully approved organization: ${org.name}`,
-            { 
+            {
                 organizationId,
                 organizationName: org.name,
                 status: 'approved',
@@ -4662,26 +4781,26 @@ export async function rejectOrganization(organizationId: string): Promise<{ succ
         if (!org) {
             throw new Error("Organization not found.");
         }
-        
+
         // Log organization rejection attempt
         await logActivity(
             user.id,
             'organization_rejection',
             'high',
             `Admin rejected organization: ${org.name}`,
-            { 
+            {
                 organizationId,
                 organizationName: org.name,
                 submittedBy: org.submittedBy,
                 adminId: user.id
             }
         );
-        
+
         await db.collection("organizations").updateOne(
             { _id: new ObjectId(organizationId) },
             { $set: { status: 'rejected', updatedAt: new Date().toISOString() } }
         );
-        
+
         // Send rejection email notification
         try {
             if (org.contactEmail) {
@@ -4693,9 +4812,9 @@ export async function rejectOrganization(organizationId: string): Promise<{ succ
         } catch (emailError) {
             console.error("Failed to send organization rejection email:", emailError);
         }
-        
+
         revalidatePath('/admin');
-        
+
         // Invalidate cache
         try {
             const { default: redisCache } = await import('@/lib/redis-cache');
@@ -4704,14 +4823,14 @@ export async function rejectOrganization(organizationId: string): Promise<{ succ
         } catch (cacheError) {
             console.warn('⚠️ Failed to invalidate cache:', cacheError);
         }
-        
+
         // Log successful organization rejection
         await logActivity(
             user.id,
             'organization_rejection',
             'medium',
             `Successfully rejected organization: ${org.name}`,
-            { 
+            {
                 organizationId,
                 organizationName: org.name,
                 status: 'rejected'
@@ -4727,14 +4846,14 @@ export async function rejectOrganization(organizationId: string): Promise<{ succ
  * @param orgData The organization data.
  * @returns An object with the result of the operation.
  */
-export async function addOrganizationByAdmin(orgData: { 
-    name: string, 
-    description: string, 
-    location: string, 
+export async function addOrganizationByAdmin(orgData: {
+    name: string,
+    description: string,
+    location: string,
     imageUrl: string,
     contactEmail?: string,
     contactPhone?: string,
-    website?: string 
+    website?: string
 }): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Log admin organization addition attempt
@@ -4743,14 +4862,14 @@ export async function addOrganizationByAdmin(orgData: {
             'organization_admin_add',
             'high',
             `Admin adding new organization: ${orgData.name}`,
-            { 
+            {
                 organizationName: orgData.name,
                 location: orgData.location,
                 contactEmail: orgData.contactEmail,
                 adminId: user.id
             }
         );
-        
+
         // Validate organization data
         const validation = validateOrganizationData({
             name: orgData.name,
@@ -4797,7 +4916,7 @@ export async function addOrganizationByAdmin(orgData: {
         await db.collection("organizations").insertOne(newOrg);
         revalidatePath('/admin');
         revalidatePath('/donate');
-        
+
         // Invalidate cache
         try {
             const { default: redisCache } = await import('@/lib/redis-cache');
@@ -4806,14 +4925,14 @@ export async function addOrganizationByAdmin(orgData: {
         } catch (cacheError) {
             console.warn('⚠️ Failed to invalidate cache:', cacheError);
         }
-        
+
         // Log successful admin organization addition
         await logActivity(
             user.id,
             'organization_admin_add',
             'medium',
             `Successfully added organization by admin: ${orgData.name}`,
-            { 
+            {
                 organizationName: orgData.name,
                 status: 'approved',
                 adminId: user.id
@@ -4986,8 +5105,8 @@ export async function getOrganizationDetails(organizationId: string): Promise<{ 
         }
 
         // Get donation statistics
-        const donations = await db.collection("donations").find({ 
-            organizationId: organizationId 
+        const donations = await db.collection("donations").find({
+            organizationId: organizationId
         }).toArray() as Donation[];
 
         const stats = {
@@ -5001,7 +5120,7 @@ export async function getOrganizationDetails(organizationId: string): Promise<{ 
             totalBooksReceived: donations
                 .filter((d) => d.status === 'completed')
                 .reduce((sum, d) => sum + (d.books?.length || 0), 0),
-            acceptanceRate: donations.length > 0 
+            acceptanceRate: donations.length > 0
                 ? Math.round((donations.filter((d) => d.status === 'confirmed' || d.status === 'in_progress' || d.status === 'completed').length / donations.length) * 100)
                 : 0
         };
@@ -5030,7 +5149,7 @@ export async function getOrganizationDetails(organizationId: string): Promise<{ 
  * @returns An object with the result of the operation.
  */
 export async function updateOrganizationProfile(
-    organizationId: string, 
+    organizationId: string,
     updateData: {
         name?: string;
         description?: string;
@@ -5153,11 +5272,11 @@ export async function deleteOrganization(organizationId: string): Promise<{ succ
         // Mark related chats as organization deleted (soft delete)
         await db.collection("chats").updateMany(
             { organizationId: new ObjectId(organizationId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     organizationDeleted: true,
                     organizationDeletedAt: new Date().toISOString()
-                } 
+                }
             }
         );
 
@@ -5201,11 +5320,11 @@ export async function toggleOrganizationStatus(organizationId: string, active: b
 
         const result = await db.collection("organizations").updateOne(
             { _id: new ObjectId(organizationId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     isActive: active,
                     updatedAt: new Date().toISOString()
-                } 
+                }
             }
         );
 
@@ -5244,7 +5363,7 @@ export async function toggleOrganizationStatus(organizationId: string, active: b
  * @returns An object with the result of the operation.
  */
 export async function updateOrganizationStatus(
-    organizationId: string, 
+    organizationId: string,
     status: 'approved' | 'pending' | 'rejected'
 ): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
@@ -5258,11 +5377,11 @@ export async function updateOrganizationStatus(
 
         const result = await db.collection("organizations").updateOne(
             { _id: new ObjectId(organizationId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     status,
                     updatedAt: new Date().toISOString()
-                } 
+                }
             }
         );
 
@@ -5305,7 +5424,7 @@ export async function activateUser(userId: string): Promise<{ success: true; dat
             { _id: new ObjectId(userId) },
             { $set: { status: 'active' } }
         );
-        
+
         revalidatePath('/admin');
         return { success: true };
     }, 'admin');
@@ -5432,8 +5551,8 @@ export async function deleteUser(userId: string): Promise<{ success: true; data:
                 deletedCounts.exchanges = exchangesResult.modifiedCount;
 
                 // 8. Delete wishlist items
-                const pullWishlistUpdate: UpdateFilter<User> = { 
-                    $pull: { wishlist: { bookId: { $exists: true } } } 
+                const pullWishlistUpdate: UpdateFilter<User> = {
+                    $pull: { wishlist: { bookId: { $exists: true } } }
                 };
                 const wishlistResult = await db.collection("users").updateMany(
                     { 'wishlist.bookId': { $exists: true } },
@@ -5493,20 +5612,20 @@ export async function getMyProfileData(userId: string): Promise<{ success: true;
 
         const profileUser = await db.collection("users").findOne({ _id: new ObjectId(user.id) });
         if (!profileUser) throw new Error("User not found");
-        
+
         const userListings = await db.collection("books").find({ sellerId: user.id }).toArray();
-        
+
         const userCommunities = await db.collection<CommunityDocument>("communities").find({ "members.userId": user.id }).toArray();
 
         // Fetch wishlist books by their IDs
         const wishlistBooks: Book[] = [];
         if (profileUser.wishlist && profileUser.wishlist.length > 0) {
-            const wishlistBookIds = profileUser.wishlist.map((item: any) => 
+            const wishlistBookIds = profileUser.wishlist.map((item: any) =>
                 typeof item === 'string' ? item : item.bookId
             ).filter(Boolean);
-            
+
             if (wishlistBookIds.length > 0) {
-                const books = await db.collection("books").find({ 
+                const books = await db.collection("books").find({
                     _id: { $in: wishlistBookIds.map((id: any) => new ObjectId(id)) }
                 }).toArray() as Book[];
                 wishlistBooks.push(...books);
@@ -5550,11 +5669,11 @@ export async function getUserChats(userId: string): Promise<{ success: true; dat
             .find({ participantIds: user.id })
             .sort({ updatedAt: -1 })
             .toArray();
-        
+
         for (const chat of chats) {
             const otherId = chat.participantIds.find((id: any) => id !== user.id && !id.startsWith('org_'));
             if (otherId && ObjectId.isValid(otherId)) {
-                const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
+                const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, { projection: { password: 0 } });
                 chat.otherParticipant = otherUser || undefined;
             }
             if (chat.bookId && ObjectId.isValid(chat.bookId)) {
@@ -5564,7 +5683,7 @@ export async function getUserChats(userId: string): Promise<{ success: true; dat
             if (chat.organizationId && ObjectId.isValid(String(chat.organizationId))) {
                 const organization = await db.collection("organizations").findOne({ _id: new ObjectId(chat.organizationId) });
                 chat.organization = organization || undefined;
-                 if(chat.organization && !chat.otherParticipant) {
+                if (chat.organization && !chat.otherParticipant) {
                     chat.otherParticipant = {
                         _id: chat.organization._id,
                         name: chat.organization.name,
@@ -5589,25 +5708,25 @@ export async function getChatDetails(chatId: string, userId: string): Promise<{ 
         await validateResourceAccess(user, 'chat', chatId, 'read');
 
         // First try to find chat where user is a direct participant
-        let chat = await db.collection("chats").findOne({ 
-            _id: new ObjectId(chatId), 
-            participantIds: user.id 
+        let chat = await db.collection("chats").findOne({
+            _id: new ObjectId(chatId),
+            participantIds: user.id
         });
 
         // If not found and this might be a donation chat, check if user is an org representative
         if (!chat) {
             const potentialChat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
-            
+
             if (potentialChat?.organizationId) {
-                const organization = await db.collection("organizations").findOne({ 
-                    _id: new ObjectId(potentialChat.organizationId) 
+                const organization = await db.collection("organizations").findOne({
+                    _id: new ObjectId(potentialChat.organizationId)
                 });
-                
+
                 // Check if user is a representative of this organization
                 const isOrgRep = organization?.representatives?.some(
                     (rep: OrganizationRepresentative) => rep.userId === user.id
                 );
-                
+
                 if (isOrgRep) {
                     chat = potentialChat;
                 }
@@ -5620,7 +5739,7 @@ export async function getChatDetails(chatId: string, userId: string): Promise<{ 
         const otherId = chat.participantIds.find((id: any) => id !== user.id);
 
         if (otherId && ObjectId.isValid(otherId)) {
-            const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, {projection: { password: 0 }});
+            const otherUser = await db.collection("users").findOne({ _id: new ObjectId(otherId) }, { projection: { password: 0 } });
             chat.otherParticipant = otherUser || undefined;
         }
 
@@ -5655,14 +5774,14 @@ export async function getChatDetails(chatId: string, userId: string): Promise<{ 
 export async function getUserNotifications(page: number = 1, limit: number = 10): Promise<{
     success: true;
     data: {
-    notifications: Notification[];
-    pagination: {
-        currentPage: number;
-        totalPages: number;
-        totalCount: number;
-        hasNext: boolean;
-        hasPrev: boolean;
-    };
+        notifications: Notification[];
+        pagination: {
+            currentPage: number;
+            totalPages: number;
+            totalCount: number;
+            hasNext: boolean;
+            hasPrev: boolean;
+        };
     };
 } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
@@ -5670,9 +5789,9 @@ export async function getUserNotifications(page: number = 1, limit: number = 10)
         const sanitizedPage = Math.max(1, Math.floor(page));
         const sanitizedLimit = Math.min(50, Math.max(1, Math.floor(limit)));
         const skip = (sanitizedPage - 1) * sanitizedLimit;
-        
+
         const notificationCollection = db.collection("notifications");
-        
+
         // Get notifications with pagination - use a single query for better performance
         const notifications = await notificationCollection
             .find({ userId: user.id })
@@ -5680,15 +5799,15 @@ export async function getUserNotifications(page: number = 1, limit: number = 10)
             .skip(skip)
             .limit(sanitizedLimit + 1) // Get one extra to check if there are more
             .toArray();
-        
+
         // Check if there are more notifications
         const hasMore = notifications.length > sanitizedLimit;
         const actualNotifications = hasMore ? notifications.slice(0, -1) : notifications;
-        
+
         // Get total count efficiently
         const totalCount = await notificationCollection.countDocuments({ userId: user.id });
         const totalPages = Math.ceil(totalCount / sanitizedLimit);
-        
+
         return {
             notifications: JSON.parse(JSON.stringify(actualNotifications)),
             pagination: {
@@ -5727,7 +5846,7 @@ export async function markNotificationsAsRead(): Promise<{ success: true; data: 
             { userId: user.id, read: false },
             { $set: { read: true } }
         );
-        
+
         revalidatePath('/'); // Revalidate to update header
         return { modifiedCount: result.modifiedCount };
     });
@@ -5745,11 +5864,11 @@ export async function markNotificationAsRead(notificationId: string): Promise<{ 
             { _id: new ObjectId(notificationId), userId: user.id },
             { $set: { read: true } }
         );
-        
+
         if (result.matchedCount === 0) {
             throw new Error("Notification not found or access denied.");
         }
-        
+
         revalidatePath('/');
         return { success: true };
     });
@@ -5766,11 +5885,11 @@ export async function deleteNotification(notificationId: string): Promise<{ succ
         const result = await db.collection("notifications").deleteOne(
             { _id: new ObjectId(notificationId), userId: user.id }
         );
-        
+
         if (result.deletedCount === 0) {
             throw new Error("Notification not found or access denied.");
         }
-        
+
         revalidatePath('/');
         return { success: true };
     });
@@ -5799,18 +5918,18 @@ export async function completeUserProfile({
 }): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId: currentUserId }) => {
         if (user.id !== userId) throw new Error("Unauthorized");
-        
-        const updateData: any = {
-                        name: profileData.name,
-                        updatedAt: new Date()
-                };
 
-                // Normalize and store canonical city key
-                if (profileData.city) {
-                    const { validateUserCity } = await import('@/lib/validation');
-                    const normalized = await validateUserCity(profileData.city);
-                    updateData.cityNormalized = normalized;
-                }
+        const updateData: any = {
+            name: profileData.name,
+            updatedAt: new Date()
+        };
+
+        // Normalize and store canonical city key
+        if (profileData.city) {
+            const { validateUserCity } = await import('@/lib/validation');
+            const normalized = await validateUserCity(profileData.city);
+            updateData.cityNormalized = normalized;
+        }
 
         // Add optional fields if provided
         if (profileData.phone) updateData.phone = profileData.phone;
@@ -5823,7 +5942,7 @@ export async function completeUserProfile({
             { _id: new ObjectId(userId) },
             { $set: updateData }
         );
-        
+
         revalidatePath('/');
         return { success: true };
     });
@@ -5848,12 +5967,12 @@ export async function proposeExchange(
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         // Import validation utilities
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
-        
+
         // Validate input parameters
         const validatedResponderId = validateObjectId(responderUserId);
         const validatedProposerBookId = validateObjectId(proposerBookId);
         const validatedResponderBookId = validateObjectId(responderBookId);
-        
+
         // Fetch all required data with validation
         const [proposer, responder, proposerBook, responderBook] = await Promise.all([
             db.collection("users").findOne({ _id: new ObjectId(user.id) }),
@@ -5861,38 +5980,38 @@ export async function proposeExchange(
             db.collection("books").findOne({ _id: validatedProposerBookId }),
             db.collection("books").findOne({ _id: validatedResponderBookId })
         ]);
-        
+
         // Comprehensive validation
         if (!proposer || !responder || !proposerBook || !responderBook) {
             throw new ValidationError("Required data not found");
         }
-        
+
         // Validate book ownership
         if (proposerBook.sellerId !== user.id) {
             throw new ValidationError("You can only propose exchanges with your own books");
         }
-        
+
         if (responderBook.sellerId !== responderUserId) {
             throw new ValidationError("Invalid responder book");
         }
-        
+
         // Validate both books are exchange type
         if (proposerBook.type !== 'exchange' || responderBook.type !== 'exchange') {
             throw new ValidationError("Both books must be listed for exchange");
         }
-        
-                // Centralized eligibility and location checks
-                const { default: locationUtils } = await import('@/lib/location/location-utils');
-                const eligibility = locationUtils.canUserExchange({
-                    proposer: { ...proposer, id: String(proposer._id), listingsCount: 1 } as any,
-                    responder: { ...responder, id: String(responder._id), listingsCount: 1 } as any,
-                    proposerBook: { sellerId: proposerBook.sellerId, status: proposerBook.status },
-                    responderBook: { sellerId: responderBook.sellerId, status: responderBook.status }
-                });
 
-                if (!eligibility.allowed) {
-                    throw new ValidationError(eligibility.reason || 'Exchange not allowed');
-                }
+        // Centralized eligibility and location checks
+        const { default: locationUtils } = await import('@/lib/location/location-utils');
+        const eligibility = locationUtils.canUserExchange({
+            proposer: { ...proposer, id: String(proposer._id), listingsCount: 1 } as any,
+            responder: { ...responder, id: String(responder._id), listingsCount: 1 } as any,
+            proposerBook: { sellerId: proposerBook.sellerId, status: proposerBook.status },
+            responderBook: { sellerId: responderBook.sellerId, status: responderBook.status }
+        });
+
+        if (!eligibility.allowed) {
+            throw new ValidationError(eligibility.reason || 'Exchange not allowed');
+        }
 
         // Ensure the proposer's profile is complete before allowing an exchange
         if (!isProfileComplete(proposer as any)) {
@@ -5904,7 +6023,7 @@ export async function proposeExchange(
         if (!rl.allowed) {
             throw new ValidationError('You are proposing exchanges too quickly. Please try again later.');
         }
-        
+
         // Check if there's already an active exchange between these books
         const existingExchange = await db.collection("exchanges").findOne({
             $or: [
@@ -5924,21 +6043,21 @@ export async function proposeExchange(
                 }
             ]
         });
-        
+
         if (existingExchange) {
             throw new Error("There is already an active exchange proposal between these books.");
         }
-        
+
         // Find or create chat for communication
         const participantIds = [user.id, responderUserId].sort();
-        
+
         // Find ANY existing chat between these two users (including DM chats, 
         // contact-seller chats for any book, etc) to prevent duplicates in sidebar
         let chat = await db.collection("chats").findOne(
             { participantIds },
             { sort: { updatedAt: -1 } }
         );
-        
+
         if (!chat) {
             // Create new chat for this exchange
             const newChat: Omit<Chat, '_id'> = {
@@ -5947,15 +6066,15 @@ export async function proposeExchange(
                 messages: [],
                 updatedAt: new Date().toISOString(),
             };
-            
+
             const chatResult = await db.collection("chats").insertOne(newChat);
             chat = { _id: chatResult.insertedId, ...newChat };
         }
-        
+
         if (!chat) {
             throw new Error('Failed to create or find chat');
         }
-        
+
         // Create the exchange proposal
         const now = new Date().toISOString();
         const newExchange: Omit<Exchange, '_id'> = {
@@ -5975,7 +6094,7 @@ export async function proposeExchange(
             updatedAt: now,
             proposalMessage: proposalMessage
         };
-        
+
         // Lock books before inserting the exchange so no concurrent proposal can race in.
         await db.collection("books").updateMany(
             { _id: { $in: [validatedProposerBookId, validatedResponderBookId] } },
@@ -5995,14 +6114,14 @@ export async function proposeExchange(
         // Update chat to link to exchange
         await db.collection("chats").updateOne(
             { _id: new ObjectId(chat._id) },
-            { 
-                $set: { 
+            {
+                $set: {
                     exchangeId: exchangeResult.insertedId,
                     updatedAt: now
-                } 
+                }
             }
         );
-        
+
         // Add initial message to chat about the proposal
         const systemMessage = {
             _id: new ObjectId(),
@@ -6025,9 +6144,9 @@ export async function proposeExchange(
                 }
             }
         );
-        
+
         console.log(`Exchange proposed: ${user.id} -> ${responderUserId} (${proposerBookId} for ${responderBookId})`);
-        
+
         // Send email notification to responder (if they have email notifications enabled)
         try {
             const responderEmailPrefs = responder.emailPreferences;
@@ -6054,7 +6173,7 @@ export async function proposeExchange(
             // NOTE: email failure is non-fatal but must be visible in production logs
             console.error('[EMAIL_FAILURE] proposeExchange', (emailError as Error)?.message || emailError);
         }
-        
+
         // Emit real-time status update for new exchange
         try {
             const { emitExchangeStatusUpdate } = await import('../../server');
@@ -6094,26 +6213,26 @@ export async function proposeExchange(
 export async function acceptExchange(exchangeId: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedUserFull(async ({ db, user, userId }) => {
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
-        
+
         const validatedExchangeId = validateObjectId(exchangeId);
-        
+
         // Find the exchange
         const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
-        
+
         if (!exchange) {
             throw new ValidationError("Exchange not found");
         }
-        
+
         // Validate user is the responder
         if (exchange.responderId !== user.id) {
             throw new ValidationError("You can only accept exchanges proposed to you");
         }
-        
+
         // Validate exchange is in proposed status
         if (exchange.status !== 'proposed') {
             throw new Error(`Cannot accept exchange in ${exchange.status} status`);
         }
-        
+
         // Atomically update exchange status from 'proposed' -> 'accepted'
         const now = new Date().toISOString();
         const statusUpdate = {
@@ -6159,7 +6278,7 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
                 }
             }
         );
-        
+
         // Move both books to reserved inside a transaction so the exchange status change
         // and book lock cannot diverge if the process crashes between the two writes.
         {
@@ -6184,7 +6303,7 @@ export async function acceptExchange(exchangeId: string): Promise<{ success: tru
         try {
             const proposer = await db.collection("users").findOne({ _id: new ObjectId(exchange.proposerId) });
             const responderBook = await db.collection("books").findOne({ _id: new ObjectId(exchange.responderBookId) });
-            
+
             if (proposer && responderBook) {
                 const proposerEmailPrefs = proposer.emailPreferences;
                 if (!proposerEmailPrefs || proposerEmailPrefs.exchangeUpdates !== false) {
@@ -6353,26 +6472,26 @@ export async function rejectExchange(exchangeId: string, reason?: string): Promi
 export async function confirmExchangeCompletion(exchangeId: string): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
-        
+
         const validatedExchangeId = validateObjectId(exchangeId);
-        
+
         // Find the exchange
         const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
-        
+
         if (!exchange) {
             throw new ValidationError("Exchange not found");
         }
-        
+
         // Validate user is a participant
         if (exchange.proposerId !== user.id && exchange.responderId !== user.id) {
             throw new ValidationError("You are not a participant in this exchange");
         }
-        
+
         // Validate exchange is accepted or in progress
         if (!['accepted', 'in_progress'].includes(exchange.status)) {
             throw new Error(`Cannot confirm completion for exchange in ${exchange.status} status`);
         }
-        
+
         const now = new Date().toISOString();
         const isProposer = exchange.proposerId === user.id;
         const fieldToSet = isProposer ? 'proposerConfirmed' : 'responderConfirmed';
@@ -6525,14 +6644,14 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
             const otherUserRole = isProposer ? 'responder' : 'proposer';
             messageText = `✅ Exchange confirmation received. Waiting for the other user to confirm completion.`;
         }
-        
+
         const systemMessage = {
             _id: new ObjectId(),
             senderId: 'system',
             text: messageText,
             createdAt: now
         };
-        
+
         await db.collection("chats").updateOne(
             { _id: new ObjectId(exchange.chatId) },
             {
@@ -6543,9 +6662,9 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
                 }
             }
         );
-        
+
         console.log(`Exchange completion confirmed: ${exchangeId} by user ${user.id} (both confirmed: ${bothConfirmed})`);
-        
+
         // Emit real-time status update
         try {
             const { emitExchangeStatusUpdate } = await import('../../server');
@@ -6559,7 +6678,7 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
         } catch (emitError) {
             console.warn('Failed to emit real-time update:', emitError);
         }
-        
+
         return {
             success: true,
             data: {
@@ -6578,26 +6697,26 @@ export async function confirmExchangeCompletion(exchangeId: string): Promise<{ s
 export async function cancelExchange(exchangeId: string, reason?: string): Promise<{ success: true; data: { message: string } } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         const { validateObjectId, ValidationError } = await import('@/lib/validation');
-        
+
         const validatedExchangeId = validateObjectId(exchangeId);
-        
+
         // Find the exchange
         const exchange = await db.collection("exchanges").findOne({ _id: validatedExchangeId });
-        
+
         if (!exchange) {
             throw new ValidationError("Exchange not found");
         }
-        
+
         // Validate user is a participant
         if (exchange.proposerId !== user.id && exchange.responderId !== user.id) {
             throw new ValidationError("You are not a participant in this exchange");
         }
-        
+
         // Validate exchange can be cancelled
         if (['completed', 'cancelled'].includes(exchange.status)) {
             throw new Error(`Cannot cancel exchange in ${exchange.status} status`);
         }
-        
+
         const now = new Date().toISOString();
         const statusUpdate = {
             status: 'cancelled' as ExchangeStatus,
@@ -6605,7 +6724,7 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
             updatedBy: user.id,
             notes: reason
         };
-        
+
         const cancelResult = await db.collection("exchanges").updateOne(
             { _id: validatedExchangeId, status: { $nin: ['completed', 'cancelled'] } },
             {
@@ -6654,7 +6773,7 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
             text: `❌ Exchange Cancelled${reason ? `\n\nReason: ${reason}` : ''}`,
             createdAt: now
         };
-        
+
         await db.collection("chats").updateOne(
             { _id: new ObjectId(exchange.chatId) },
             {
@@ -6665,9 +6784,9 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
                 }
             }
         );
-        
+
         console.log(`Exchange cancelled: ${exchangeId} by user ${user.id}`);
-        
+
         // Emit real-time status update
         try {
             const { emitExchangeStatusUpdate } = await import('../../server');
@@ -6678,7 +6797,7 @@ export async function cancelExchange(exchangeId: string, reason?: string): Promi
         } catch (emitError) {
             console.warn('Failed to emit real-time update:', emitError);
         }
-        
+
         return {
             message: "Exchange cancelled successfully."
         };
@@ -6701,14 +6820,14 @@ export async function getUserExchanges(
                 { responderId: user.id }
             ]
         };
-        
+
         if (status) {
             query.status = status;
         }
-        
+
         // Calculate pagination
         const skip = (page - 1) * limit;
-        
+
         // Get exchanges with related data
         const pipeline = [
             { $match: query },
@@ -6729,7 +6848,7 @@ export async function getUserExchanges(
                         },
                         {
                             $lookup: {
-                                from: "users", 
+                                from: "users",
                                 localField: "responderId",
                                 foreignField: "_id",
                                 as: "responder",
@@ -6747,7 +6866,7 @@ export async function getUserExchanges(
                         {
                             $lookup: {
                                 from: "books",
-                                localField: "responderBookId", 
+                                localField: "responderBookId",
                                 foreignField: "_id",
                                 as: "responderBook"
                             }
@@ -6767,13 +6886,13 @@ export async function getUserExchanges(
                 }
             }
         ];
-        
+
         const [result] = await db.collection("exchanges").aggregate(pipeline).toArray();
-        
+
         const exchanges = result.exchanges || [];
         const totalCount = result.totalCount[0]?.count || 0;
         const hasMore = skip + exchanges.length < totalCount;
-        
+
         return {
             exchanges: JSON.parse(JSON.stringify(exchanges)),
             totalCount,
@@ -6790,7 +6909,7 @@ export async function getChatExchangeDetails(chatId: string): Promise<any> {
     try {
         const client = await clientPromise;
         const db = client.db("bookex");
-        
+
         const exchange = await db.collection("exchanges").aggregate([
             {
                 $match: { chatId: new ObjectId(chatId) }
@@ -6805,7 +6924,7 @@ export async function getChatExchangeDetails(chatId: string): Promise<any> {
             },
             {
                 $lookup: {
-                    from: "users", 
+                    from: "users",
                     localField: "responderId",
                     foreignField: "_id",
                     as: "responder"
@@ -6815,7 +6934,7 @@ export async function getChatExchangeDetails(chatId: string): Promise<any> {
                 $lookup: {
                     from: "books",
                     localField: "proposerBookId",
-                    foreignField: "_id", 
+                    foreignField: "_id",
                     as: "proposerBook"
                 }
             },
@@ -6836,9 +6955,9 @@ export async function getChatExchangeDetails(chatId: string): Promise<any> {
                 }
             }
         ]).toArray();
-        
+
         return exchange.length > 0 ? JSON.parse(JSON.stringify(exchange[0])) : null;
-        
+
     } catch (error) {
         console.error("Error fetching chat exchange details:", error);
         return null;
@@ -6854,7 +6973,7 @@ export async function getUserEmailPreferences(): Promise<{ success: true; data: 
             { _id: new ObjectId(user.id) },
             { projection: { emailPreferences: 1 } }
         );
-        
+
         // Return default preferences if none set
         const defaultPreferences = {
             exchangeProposals: true,
@@ -6862,7 +6981,7 @@ export async function getUserEmailPreferences(): Promise<{ success: true; data: 
             contactNotifications: true,
             weeklyDigest: false
         };
-        
+
         return userData?.emailPreferences || defaultPreferences;
     });
 }
@@ -6883,14 +7002,14 @@ export async function updateEmailPreferences(preferences: {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         await db.collection("users").updateOne(
             { _id: new ObjectId(user.id) },
-            { 
-                $set: { 
+            {
+                $set: {
                     emailPreferences: preferences,
                     updatedAt: new Date()
-                } 
+                }
             }
         );
-        
+
         revalidatePath('/profile/settings');
         return { success: true };
     });
@@ -6904,11 +7023,11 @@ export async function optimizeDatabasePerformance(): Promise<{ success: true; da
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log('🚀 Starting database optimization...');
         const result = await ensureDatabaseIndexes();
-        
+
         if (result.success) {
             console.log('✅ Database optimization completed successfully');
-            return { 
-                message: "Database performance optimization completed successfully!" 
+            return {
+                message: "Database performance optimization completed successfully!"
             };
         } else {
             throw new Error(result.error || 'Unknown error during optimization');
@@ -6923,14 +7042,14 @@ export async function optimizeDatabasePerformance(): Promise<{ success: true; da
 export async function checkDatabaseHealth(): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         const healthCheck = await checkIndexHealth();
-        
+
         return {
-                healthy: healthCheck.healthy,
-                missingIndexes: healthCheck.missingIndexes || [],
-                totalChecked: healthCheck.totalChecked || 0,
-                message: healthCheck.healthy 
-                    ? "Database indexes are healthy and optimized!" 
-                    : `Found ${healthCheck.missingIndexes?.length || 0} missing indexes that need attention.`
+            healthy: healthCheck.healthy,
+            missingIndexes: healthCheck.missingIndexes || [],
+            totalChecked: healthCheck.totalChecked || 0,
+            message: healthCheck.healthy
+                ? "Database indexes are healthy and optimized!"
+                : `Found ${healthCheck.missingIndexes?.length || 0} missing indexes that need attention.`
         };
     }, 'admin');
 }
@@ -6943,10 +7062,10 @@ export async function createMissingDatabaseIndexes(): Promise<{ success: true; d
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log('🔧 Creating missing database indexes...');
         const result = await createMissingIndexes();
-        
+
         if (result.success) {
             console.log('✅ Missing indexes created successfully');
-            return { 
+            return {
                 message: result.message || "Missing indexes created successfully!",
                 createdCount: result.createdCount || 0
             };
@@ -6974,16 +7093,16 @@ export async function initializeDatabaseMaintenance(mode: 'full' | 'indexes' | '
                     DatabaseMaintenance.performPeriodicCleanup()
                 ]);
                 break;
-                
+
             case 'indexes':
                 await DatabaseMaintenance.createCriticalIndexes();
                 await DatabaseMaintenance.validateIndexHealth();
                 break;
-                
+
             case 'cleanup':
                 await DatabaseMaintenance.performPeriodicCleanup();
                 break;
-                
+
             case 'migration':
                 await SchemaMigration.fixAllSchemaInconsistencies();
                 await SchemaMigration.validateDataIntegrity();
@@ -6991,8 +7110,8 @@ export async function initializeDatabaseMaintenance(mode: 'full' | 'indexes' | '
         }
 
         console.log(`✅ Database maintenance (${mode}) completed successfully`);
-        
-        return { 
+
+        return {
             message: `Database maintenance (${mode} mode) completed successfully!`,
             mode,
             timestamp: new Date().toISOString()
@@ -7007,12 +7126,12 @@ export async function initializeDatabaseMaintenance(mode: 'full' | 'indexes' | '
 export async function emergencyDatabaseCleanup(): Promise<{ success: true; data: any } | { success: false; message: string }> {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         console.log('🚨 Starting emergency database cleanup...');
-        
+
         await DatabaseMaintenance.emergencyCleanup();
-        
+
         console.log('✅ Emergency cleanup completed');
-        
-        return { 
+
+        return {
             message: "Emergency database cleanup completed successfully!",
             timestamp: new Date().toISOString()
         };
@@ -7101,8 +7220,8 @@ export async function resolveSecurityAlert(alertId: string): Promise<{ success: 
     return withAuthenticatedAction(async ({ db, user, userId }) => {
         await db.collection("securityAlerts").updateOne(
             { _id: new ObjectId(alertId) },
-            { 
-                $set: { 
+            {
+                $set: {
                     resolved: true,
                     resolvedAt: new Date().toISOString(),
                     resolvedBy: user.id
@@ -7154,7 +7273,7 @@ export async function deleteBookListing(bookId: string): Promise<{ success: true
         // Use transaction for data consistency
         const client = await clientPromise;
         const session = client.startSession();
-        
+
         try {
             await session.withTransaction(async () => {
                 // Check if book exists and user is the owner
@@ -7171,18 +7290,18 @@ export async function deleteBookListing(bookId: string): Promise<{ success: true
                     throw createAppError(ErrorType.AUTHORIZATION, "You can only delete your own listings");
                 }
 
-                    // Prevent deletion if there are active exchanges involving this book
-                    const activeExchange = await db.collection("exchanges").findOne({
-                        $or: [
-                            { proposerBookId: new ObjectId(bookId) },
-                            { responderBookId: new ObjectId(bookId) }
-                        ],
-                        status: { $in: ['proposed', 'accepted', 'in_progress'] }
-                    }, { session });
+                // Prevent deletion if there are active exchanges involving this book
+                const activeExchange = await db.collection("exchanges").findOne({
+                    $or: [
+                        { proposerBookId: new ObjectId(bookId) },
+                        { responderBookId: new ObjectId(bookId) }
+                    ],
+                    status: { $in: ['proposed', 'accepted', 'in_progress'] }
+                }, { session });
 
-                    if (activeExchange) {
-                        throw createAppError(ErrorType.VALIDATION, "Cannot delete listing while an active exchange is in progress or proposed for this book.");
-                    }
+                if (activeExchange) {
+                    throw createAppError(ErrorType.VALIDATION, "Cannot delete listing while an active exchange is in progress or proposed for this book.");
+                }
 
                 // Soft delete the book
                 await db.collection("books").updateOne(
@@ -7213,22 +7332,24 @@ export async function deleteBookListing(bookId: string): Promise<{ success: true
 
                     // Delete related notifications (handle string or ObjectId in metadata)
                     db.collection("notifications").deleteMany(
-                        { $or: [ { "metadata.bookId": bookId }, { "metadata.bookId": new ObjectId(bookId) } ] },
+                        { $or: [{ "metadata.bookId": bookId }, { "metadata.bookId": new ObjectId(bookId) }] },
                         { session }
                     ),
 
                     // Delete related exchanges (use correct field names)
                     db.collection("exchanges").deleteMany(
-                        { $or: [
-                            { proposerBookId: new ObjectId(bookId) },
-                            { responderBookId: new ObjectId(bookId) }
-                        ] },
+                        {
+                            $or: [
+                                { proposerBookId: new ObjectId(bookId) },
+                                { responderBookId: new ObjectId(bookId) }
+                            ]
+                        },
                         { session }
                     ),
 
                     // Delete related reports referencing this book
                     db.collection("reports").deleteMany(
-                        { $and: [ { reportedContentType: 'book' }, { $or: [ { reportedContentId: bookId }, { reportedContentId: new ObjectId(bookId) } ] } ] },
+                        { $and: [{ reportedContentType: 'book' }, { $or: [{ reportedContentId: bookId }, { reportedContentId: new ObjectId(bookId) }] }] },
                         { session }
                     )
                 ]);
@@ -7240,7 +7361,7 @@ export async function deleteBookListing(bookId: string): Promise<{ success: true
         revalidatePath('/profile/me');
         revalidatePath('/books');
         revalidatePath(`/books/${bookId}`);
-        
+
         return { success: true, message: "Book listing deleted successfully" };
     });
 }
@@ -7253,11 +7374,11 @@ export async function updateBookStatus(bookId: string, status: BookStatus): Prom
 
         // Get current book data
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
-        
+
         if (!book) {
             throw createAppError(ErrorType.NOT_FOUND, "Book listing not found");
         }
-        
+
         if (book.sellerId !== user.id) {
             throw createAppError(ErrorType.AUTHORIZATION, "You can only update your own listings");
         }
@@ -7265,7 +7386,7 @@ export async function updateBookStatus(bookId: string, status: BookStatus): Prom
         // Validate status transition
         const { isValidStatusTransition } = await import('@/lib/utils');
         const transition = isValidStatusTransition(book.status || 'active', status, book.type);
-        
+
         if (!transition.isValid) {
             throw createAppError(ErrorType.VALIDATION, transition.error || "Invalid status transition");
         }
@@ -7293,7 +7414,7 @@ export async function updateBookStatus(bookId: string, status: BookStatus): Prom
         if (book.type === 'exchange') {
             revalidatePath('/exchange');
         }
-        
+
         return { success: true, message: "Book status updated successfully" };
     });
 }
@@ -7306,11 +7427,11 @@ export async function renewBookListing(bookId: string): Promise<{ success: true;
 
         // Get current book data
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
-        
+
         if (!book) {
             throw createAppError(ErrorType.NOT_FOUND, "Book listing not found");
         }
-        
+
         if (book.sellerId !== user.id) {
             throw createAppError(ErrorType.AUTHORIZATION, "You can only renew your own listings");
         }
@@ -7325,7 +7446,7 @@ export async function renewBookListing(bookId: string): Promise<{ success: true;
         const now = new Date().toISOString();
         await db.collection("books").updateOne(
             { _id: new ObjectId(bookId) },
-            { 
+            {
                 $set: {
                     status: 'active',
                     updatedAt: now,
@@ -7341,7 +7462,7 @@ export async function renewBookListing(bookId: string): Promise<{ success: true;
         if (book.type === 'exchange') {
             revalidatePath('/exchange');
         }
-        
+
         return { success: true, message: "Book listing renewed successfully" };
     });
 }
@@ -7357,11 +7478,11 @@ export async function getBookForEdit(bookId: string) {
 
         // Get book data
         const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
-        
+
         if (!book) {
             throw createAppError(ErrorType.NOT_FOUND, "Book listing not found");
         }
-        
+
         if (book.sellerId !== user.id) {
             throw createAppError(ErrorType.AUTHORIZATION, "You can only edit your own listings");
         }
@@ -7379,15 +7500,15 @@ export async function getBookForEdit(bookId: string) {
 /**
  * Updates a book listing (only by the owner)
  */
-export async function updateBookListing(bookId: string, bookData: { 
-    title: string; 
-    author: string; 
-    description: string; 
-    genre: BookGenre; 
-    condition: 'new' | 'like-new' | 'used' | 'worn'; 
-    type: 'sell' | 'exchange'; 
-    price?: number; 
-    imageUrl?: string; 
+export async function updateBookListing(bookId: string, bookData: {
+    title: string;
+    author: string;
+    description: string;
+    genre: BookGenre;
+    condition: 'new' | 'like-new' | 'used' | 'worn';
+    type: 'sell' | 'exchange';
+    price?: number;
+    imageUrl?: string;
     city: string;
 }) {
     return withAuthenticatedAction(async ({ db, user, userId }) => {
@@ -7410,11 +7531,11 @@ export async function updateBookListing(bookId: string, bookData: {
 
         // Get current book data
         const existingBook = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
-        
+
         if (!existingBook) {
             throw createAppError(ErrorType.NOT_FOUND, "Book listing not found");
         }
-        
+
         if (existingBook.sellerId !== user.id) {
             throw createAppError(ErrorType.AUTHORIZATION, "You can only update your own listings");
         }
@@ -7422,7 +7543,7 @@ export async function updateBookListing(bookId: string, bookData: {
         // Check if title/author changed and validate for duplicates
         const titleChanged = existingBook.title !== validatedBookData.title;
         const authorChanged = existingBook.author !== validatedBookData.author;
-        
+
         if (titleChanged || authorChanged) {
             // Create new deduplication fields
             const titleNormalized = normalizeForDeduplication(validatedBookData.title);
@@ -7446,7 +7567,7 @@ export async function updateBookListing(bookId: string, bookData: {
 
                 if (similarity.isDuplicate) {
                     throw createAppError(
-                        ErrorType.VALIDATION, 
+                        ErrorType.VALIDATION,
                         `You already have a similar book listing: "${duplicateBook.title}" by ${duplicateBook.author}. Please remove that listing first or choose a different book.`
                     );
                 }
@@ -7498,7 +7619,7 @@ export async function updateBookListing(bookId: string, bookData: {
         if (bookData.type === 'exchange') {
             revalidatePath('/exchange');
         }
-        
+
         return { success: true, message: "Book listing updated successfully" };
     });
 }
@@ -7618,8 +7739,8 @@ export async function promoteToModerator(communityId: string, targetUserId: stri
         const current = community.members?.find((m) => m.userId === user.id);
         if (!(current?.role === 'admin' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
-          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
-          { $set: { 'members.$.role': 'moderator' } }
+            { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+            { $set: { 'members.$.role': 'moderator' } }
         );
         revalidatePath(`/community/${communityId}`);
         return { success: true };
@@ -7634,8 +7755,8 @@ export async function demoteModerator(communityId: string, targetUserId: string)
         const current = community.members?.find((m) => m.userId === user.id);
         if (!(current?.role === 'admin' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
-          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
-          { $set: { 'members.$.role': 'member' } }
+            { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+            { $set: { 'members.$.role': 'member' } }
         );
         revalidatePath(`/community/${communityId}`);
         return { success: true };
@@ -7650,8 +7771,8 @@ export async function banMember(communityId: string, targetUserId: string, reaso
         const current = community.members?.find((m) => m.userId === user.id);
         if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
-          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
-          { $set: { 'members.$.banned': true, 'members.$.banReason': reason || '', 'members.$.bannedAt': new Date().toISOString() } }
+            { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+            { $set: { 'members.$.banned': true, 'members.$.banReason': reason || '', 'members.$.bannedAt': new Date().toISOString() } }
         );
         revalidatePath(`/community/${communityId}`);
         return { success: true };
@@ -7666,8 +7787,8 @@ export async function unbanMember(communityId: string, targetUserId: string): Pr
         const current = community.members?.find((m) => m.userId === user.id);
         if (!(current?.role === 'admin' || current?.role === 'moderator' || community.createdBy === user.id)) throw new Error('Insufficient permissions');
         await db.collection('communities').updateOne(
-          { _id: new ObjectId(communityId), 'members.userId': targetUserId },
-          { $set: { 'members.$.banned': false }, $unset: { 'members.$.banReason': '', 'members.$.bannedAt': '' } as any }
+            { _id: new ObjectId(communityId), 'members.userId': targetUserId },
+            { $set: { 'members.$.banned': false }, $unset: { 'members.$.banReason': '', 'members.$.bannedAt': '' } as any }
         );
         revalidatePath(`/community/${communityId}`);
         return { success: true };
@@ -8381,3 +8502,189 @@ export async function removeReaction(communityId: string, postId: string, target
         return { message: 'Reaction removed' };
     });
 }
+
+/**
+ * Edits a comment in a community post.
+ */
+export async function editComment(communityId: string, commentId: string, newContent: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID format');
+        if (!ObjectId.isValid(commentId)) throw new Error('Invalid comment ID format');
+
+        const communityObjId = new ObjectId(communityId);
+        const commentObjId = new ObjectId(commentId);
+
+        const community = await db.collection("communities").findOne({
+            _id: communityObjId,
+            $or: [
+                { 'members.userId': user.id },
+                { 'members': user.id }
+            ]
+        });
+        if (!community) throw new Error("Not authorized to access this community");
+
+        const comment = await db.collection("comments").findOne({
+            _id: commentObjId,
+            communityId: communityObjId
+        });
+        if (!comment) throw new Error("Comment not found");
+
+        if (comment.authorId !== user.id) {
+            throw new Error("Unauthorized: You cannot edit this comment");
+        }
+
+        const trimmedContent = newContent.trim();
+        if (!trimmedContent) throw new Error("Comment content cannot be empty");
+        if (trimmedContent.length > 1000) throw new Error("Comment must be less than 1000 characters");
+
+        const sanitizedContent = sanitizeInput(trimmedContent);
+
+        await db.collection("comments").updateOne(
+            { _id: commentObjId },
+            { $set: { content: sanitizedContent, editedAt: new Date().toISOString() } }
+        );
+
+        return { success: true };
+    });
+}
+
+/**
+ * Deletes a comment.
+ */
+export async function deleteComment(communityId: string, commentId: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(communityId)) throw new Error('Invalid community ID format');
+        if (!ObjectId.isValid(commentId)) throw new Error('Invalid comment ID format');
+
+        const communityObjId = new ObjectId(communityId);
+        const commentObjId = new ObjectId(commentId);
+
+        const community = await db.collection("communities").findOne({
+            _id: communityObjId,
+            $or: [
+                { 'members.userId': user.id },
+                { 'members': user.id }
+            ]
+        });
+        if (!community) throw new Error("Not authorized to access this community");
+
+        const comment = await db.collection("comments").findOne({
+            _id: commentObjId,
+            communityId: communityObjId
+        });
+        if (!comment) throw new Error("Comment not found");
+
+        const isAdmin = user.role === 'admin';
+        const isCreator = community.createdBy === user.id;
+        const isAuthor = comment.authorId === user.id;
+
+        const member = community.members?.find((m: any) => m === user.id || (typeof m === 'object' && m.userId === user.id));
+        const hasModerationRole = typeof member === 'object' && (member.role === 'admin' || member.role === 'moderator');
+
+        if (!isAuthor && !isCreator && !isAdmin && !hasModerationRole) {
+            throw new Error("Unauthorized: You cannot delete this comment");
+        }
+
+        await db.collection("comments").deleteOne({ _id: commentObjId });
+        await db.collection("posts").updateOne({ _id: new ObjectId(comment.postId) }, { $inc: { commentCount: -1 } });
+
+        return { success: true };
+    });
+}
+
+/**
+ * Edits a community channel chat message.
+ */
+export async function editChatMessage(channelId: string, messageId: string, newContent: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(messageId)) throw new Error('Invalid message ID format');
+        const messageObjId = new ObjectId(messageId);
+
+        const message = await db.collection("chatMessages").findOne({ _id: messageObjId });
+        if (!message) throw new Error("Message not found");
+
+        if (message.authorId !== user.id) {
+            throw new Error("Unauthorized: You cannot edit this message");
+        }
+
+        const sanitizedContent = newContent.trim().replace(/[<>]/g, '').slice(0, 2000);
+        if (!sanitizedContent) throw new Error("Message content cannot be empty");
+
+        await db.collection("chatMessages").updateOne(
+            { _id: messageObjId },
+            { $set: { content: sanitizedContent, editedAt: new Date().toISOString() } }
+        );
+
+        return { success: true };
+    });
+}
+
+/**
+ * Deletes a community channel chat message.
+ */
+export async function deleteChatMessage(channelId: string, messageId: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(messageId)) throw new Error('Invalid message ID format');
+        const messageObjId = new ObjectId(messageId);
+
+        const message = await db.collection("chatMessages").findOne({ _id: messageObjId });
+        if (!message) throw new Error("Message not found");
+
+        if (message.authorId !== user.id) {
+            throw new Error("Unauthorized: You cannot delete this message");
+        }
+
+        await db.collection("chatMessages").deleteOne({ _id: messageObjId });
+
+        return { success: true };
+    });
+}
+
+/**
+ * Edits a personal chat message.
+ */
+export async function editPersonalMessage(messageId: string, newContent: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(messageId)) throw new Error('Invalid message ID format');
+        const messageObjId = new ObjectId(messageId);
+
+        const message = await db.collection("personalMessages").findOne({ _id: messageObjId });
+        if (!message) throw new Error("Message not found");
+
+        if (message.senderId !== user.id) {
+            throw new Error("Unauthorized: You cannot edit this message");
+        }
+
+        const sanitizedContent = newContent.trim().slice(0, 2000);
+        if (!sanitizedContent) throw new Error("Message content cannot be empty");
+
+        await db.collection("personalMessages").updateOne(
+            { _id: messageObjId },
+            { $set: { content: sanitizedContent, editedAt: new Date().toISOString() } }
+        );
+
+        return { success: true };
+    });
+}
+
+/**
+ * Deletes a personal chat message.
+ */
+export async function deletePersonalMessage(messageId: string) {
+    return withAuthenticatedAction(async ({ db, user }) => {
+        if (!ObjectId.isValid(messageId)) throw new Error('Invalid message ID format');
+        const messageObjId = new ObjectId(messageId);
+
+        const message = await db.collection("personalMessages").findOne({ _id: messageObjId });
+        if (!message) throw new Error("Message not found");
+
+        if (message.senderId !== user.id) {
+            throw new Error("Unauthorized: You cannot delete this message");
+        }
+
+        await db.collection("personalMessages").deleteOne({ _id: messageObjId });
+
+        return { success: true };
+    });
+}
+

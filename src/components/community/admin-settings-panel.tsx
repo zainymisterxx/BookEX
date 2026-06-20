@@ -44,12 +44,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
-import { Settings, Users, Clock, Shield, AlertTriangle, Loader2, Crown } from 'lucide-react';
+import { Settings, Users, Clock, Shield, AlertTriangle, Loader2, Crown, UploadCloud } from 'lucide-react';
 import type { Community, CommunityRole, JoinRequest, CommunityModerationLog } from '@/lib/types';
 import { MembershipManager } from './membership-manager';
 import { PendingRequestsPanel } from './pending-requests-panel';
 import { ModerationLogViewer } from './moderation-log-viewer';
 import { updateCommunitySettings, transferCommunityOwnership } from '@/app/community-admin-actions';
+import { uploadImageFile } from '@/lib/upload-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,12 +116,47 @@ export function AdminSettingsPanel({
   const [commentPerm, setCommentPerm] = useState<string>(community.commentPermissions ?? 'anyone');
   const [invitePerm, setInvitePerm] = useState<string>(community.invitePermissions ?? 'anyone');
 
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
+
   // Ownership transfer state
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [newOwnerIdInput, setNewOwnerIdInput] = useState('');
   const [confirmNameInput, setConfirmNameInput] = useState('');
 
   const communityId = String(community._id);
+
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setAvatarUploading(true);
+      try {
+        const response = await uploadImageFile(file, 'communityImage', 'community', communityId);
+        setImageUrl(response.url);
+        toast({ title: 'Avatar uploaded successfully' });
+      } catch (err: any) {
+        toast({ variant: 'destructive', title: 'Upload failed', description: err.message || 'Could not upload avatar image.' });
+      } finally {
+        setAvatarUploading(false);
+      }
+    }
+  };
+
+  const handleCoverFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setCoverUploading(true);
+      try {
+        const response = await uploadImageFile(file, 'communityImage', 'community', communityId);
+        setCoverImage(response.url);
+        toast({ title: 'Cover image uploaded successfully' });
+      } catch (err: any) {
+        toast({ variant: 'destructive', title: 'Upload failed', description: err.message || 'Could not upload cover image.' });
+      } finally {
+        setCoverUploading(false);
+      }
+    }
+  };
 
   // General settings save
   function handleSaveGeneralSettings() {
@@ -243,14 +279,77 @@ export function AdminSettingsPanel({
                   />
                   <p className="text-xs text-muted-foreground">{description.length}/1000</p>
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  {/* Avatar Upload */}
                   <div className="space-y-2">
-                    <Label htmlFor="comm-image">Avatar Image URL</Label>
-                    <Input id="comm-image" value={imageUrl} onChange={e => setImageUrl(e.target.value)} placeholder="https://..." />
+                    <Label>Community Avatar</Label>
+                    <div className="flex items-center gap-4">
+                      <div className="relative h-20 w-20 rounded-lg overflow-hidden border bg-muted flex items-center justify-center shrink-0">
+                        {imageUrl ? (
+                          <img src={imageUrl} alt="Avatar Preview" className="h-full w-full object-cover" />
+                        ) : (
+                          <Users className="h-8 w-8 text-muted-foreground" />
+                        )}
+                        {avatarUploading && (
+                          <div className="absolute inset-0 bg-background/80 flex items-center justify-center">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <Label htmlFor="comm-avatar-file" className="cursor-pointer">
+                          <div className="border border-dashed rounded-md p-3 text-center hover:border-primary transition-colors text-sm font-medium flex items-center justify-center gap-2">
+                            <UploadCloud className="h-4 w-4" />
+                            {imageUrl ? 'Change Avatar' : 'Upload Avatar'}
+                          </div>
+                        </Label>
+                        <Input
+                          id="comm-avatar-file"
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={handleAvatarFileChange}
+                          disabled={avatarUploading || isPending}
+                        />
+                        <p className="text-xs text-muted-foreground">PNG, JPG, or GIF up to 5MB</p>
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Cover Image Upload */}
                   <div className="space-y-2">
-                    <Label htmlFor="comm-cover">Cover Image URL</Label>
-                    <Input id="comm-cover" value={coverImage} onChange={e => setCoverImage(e.target.value)} placeholder="https://..." />
+                    <Label>Community Cover Image</Label>
+                    <div className="flex items-center gap-4">
+                      <div className="relative h-20 w-36 rounded-lg overflow-hidden border bg-muted flex items-center justify-center shrink-0">
+                        {coverImage ? (
+                          <img src={coverImage} alt="Cover Preview" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No Cover Image</span>
+                        )}
+                        {coverUploading && (
+                          <div className="absolute inset-0 bg-background/80 flex items-center justify-center">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <Label htmlFor="comm-cover-file" className="cursor-pointer">
+                          <div className="border border-dashed rounded-md p-3 text-center hover:border-primary transition-colors text-sm font-medium flex items-center justify-center gap-2">
+                            <UploadCloud className="h-4 w-4" />
+                            {coverImage ? 'Change Cover' : 'Upload Cover'}
+                          </div>
+                        </Label>
+                        <Input
+                          id="comm-cover-file"
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={handleCoverFileChange}
+                          disabled={coverUploading || isPending}
+                        />
+                        <p className="text-xs text-muted-foreground">PNG, JPG, or GIF up to 10MB</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-2">

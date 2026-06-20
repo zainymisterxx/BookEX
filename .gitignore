@@ -61,3 +61,5 @@ tests/e2e/.auth/
 # Mobile app (excluded)
 Mobile/
 Mobile.zip
+.playwright-mcp/
+test-results/
